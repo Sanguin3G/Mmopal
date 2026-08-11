@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Mmopal.Desktop</RootNamespace>
+    <AssemblyName>Mmopal.Desktop</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Mmopal.Contracts\Mmopal.Contracts.csproj" />
+    <ProjectReference Include="..\Mmopal.Infrastructure\Mmopal.Infrastructure.csproj" />
+    <ProjectReference Include="..\Mmopal.Worker\Mmopal.Worker.csproj" />
+  </ItemGroup>
+</Project>

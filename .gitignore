@@ -1,0 +1,43 @@
+# Build output
+**/bin/
+**/obj/
+.vs/
+.idea/workspace.xml
+
+# Runtime data and secrets
+data/
+debug/
+runtime-data/
+*.db
+*.db-shm
+*.db-wal
+**/settings.ini
+**/config.ini
+**/current_transactions.csv
+**/shoppinglist_*.csv
+**/custom_shoppinglist.csv
+**/blacklisted_items.csv
+**/license.json
+plugins/licensing/
+archive/recovered-debug/
+archive/recovered-ide/
+archive/native-api/html/
+archive/removed-games/
+
+# Recovered binaries and native dependencies
+*.dll
+*.exe
+*.lib
+*.exp
+*.pdb
+*.traineddata
+
+# IDE/user files
+.idea/
+.vscode/
+*.user
+*.suo
+
+# Test artifacts
+TestResults/
+coverage/

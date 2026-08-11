@@ -1,0 +1,11 @@
+{
+  "Name": "balanced",
+  "RunMode": "DryRun",
+  "Speed": "Balanced",
+  "MaxRetries": 3,
+  "ActionTimeoutSeconds": 10,
+  "ApiTransactionRefreshSeconds": 60,
+  "ApiBalanceRefreshSeconds": 120,
+  "OverbidScanIntervalSeconds": 30,
+  "MaxOverbidUpdatesPerPass": 3
+}
