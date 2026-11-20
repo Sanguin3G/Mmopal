@@ -11,7 +11,7 @@
 | OCR | `WindowsOcrReader` (`Windows.Media.Ocr`) |
 | Trading Post UI probe | `FrameTradingPostUiProbe` + `ScreenTradingPostObservationReader` |
 | GW2 orders & wallet | `Gw2OfficialDataProvider` (official GW2 v2 API with full pagination) |
-| Local input (unwired) | `Win32InputController` (`SendInput`, not constructed by the worker) |
+| Local input | `Win32InputController` (`SendInput`, used by the worker in armed Live mode) |
 
 `runtime/legacy/` stays on disk only as an unreferenced archive of the original distribution. Neither `Mmopal.Desktop` nor `Mmopal.Worker` loads `core.dll`, `lua.dll`, `tesseract55.dll`, or any file from `runtime/legacy/`.
 

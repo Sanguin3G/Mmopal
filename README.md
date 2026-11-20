@@ -8,9 +8,9 @@ The .NET 10 solution under `src/` is completely standalone and does not load or 
 - `assets/templates/tradingpost/` holds the Trading Post UI template images copied from the old scripts.
 - `runtime/legacy/` remains on disk only as an unreferenced archive of the old app and can be deleted whenever no longer needed for reference.
 
-Replay data, the offline sample, dry run, and **Screen observe** all run inside the .NET 10 worker using owned Win32 desktop capture, OpenCV template matching, Windows OCR, and the official Guild Wars 2 API. Fixture recording and raw frame capture stay optional. Live mode sends no clicks, keys, or orders.
+Replay data, the offline sample, dry run, and **Screen observe** all run inside the .NET 10 worker using owned Win32 desktop capture, OpenCV template matching, Windows OCR, and the official Guild Wars 2 API. Fixture recording and raw frame capture stay optional. **Live (Armed trading)** places, cancels and lists Trading Post orders through bounded, verified clicks and keystrokes, and only while **Arm live input** is checked.
 
-Start here: [docs/run.md](docs/run.md) and [docs/map.md](docs/map.md). Additional notes: [docs/gw2-trading-controller.md](docs/gw2-trading-controller.md), [docs/gw2-observation-replay.md](docs/gw2-observation-replay.md), and [docs/core-behavior.md](docs/core-behavior.md).
+Start here: [docs/run.md](docs/run.md) and [docs/map.md](docs/map.md). How it trades: [docs/trading-strategy.md](docs/trading-strategy.md) and [docs/gw2-trading-controller.md](docs/gw2-trading-controller.md). Additional notes: [docs/gw2-observation-replay.md](docs/gw2-observation-replay.md), and [docs/core-behavior.md](docs/core-behavior.md).
 
 ## Build
 

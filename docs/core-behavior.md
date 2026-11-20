@@ -69,7 +69,7 @@ The packed module stays a reference. The owned path uses current libraries:
 | --- | --- |
 | Template match and image preprocess | OpenCvSharp4, the OpenCV 4 binding. Match with `Cv2.MatchTemplate` and normalized correlation. |
 | OCR | `Windows.Media.Ocr`, the reader shipped with Windows. The abandoned `tesseract55.dll` stays out of the new app. |
-| Click and key | The existing `Win32InputController` (`SendInput`). It stays unwired until a live path is deliberately armed. |
+| Click and key | The existing `Win32InputController` (`SendInput`), used by Live mode only while Arm live input is checked. |
 | Prices, transactions, and balance | The official Guild Wars 2 API. |
 
 `Gw2OfficialDataProvider` fills each transaction's minimum sell and minimum buy from `v2/commerce/prices`: `sells.unit_price` is the lowest ask, and `buys.unit_price` is the highest bid. A missing side, or a unit price of zero or less, stays empty. `OrderBookReport` then says when a buy is behind that highest bid or a sell is behind that lowest ask. Those numbers do not place or cancel orders.
@@ -84,11 +84,11 @@ The packed module stays a reference. The owned path uses current libraries:
 | Pixel count | `core.GetPixels` on the live screen. | `FrameVision.CountPixels` counts inclusive blue, green, and red bounds in a saved frame. Alpha is ignored. |
 | Template match | `core.Image` / `core.GetCoordinates`. | `FrameTemplateMatcher` searches the supplied frame with OpenCV (`Cv2.ImRead`, supporting PNG/BMP). |
 | OCR | `core.PerformOCRAndParse`. | `WindowsOcrReader` reads the supplied frame with Windows OCR. |
-| Click and key | `core.ClickAtPosition` / `core.KeyPress`. | `Win32InputController` (`SendInput`), unwired in the worker. Tests verify the key plan and input struct size without sending input. |
+| Click and key | `core.ClickAtPosition` / `core.KeyPress`. | `Win32InputController` (`SendInput`), driven by `Gw2TradingPostUiDriver` in Live mode. Tests use a fake input controller and send no input. |
 
 Screen observe always uses `FrameTradingPostUiProbe` and `Gw2OfficialDataProvider` in process.
 
 ## What stays
 
-`Mmopal.LegacyBridge` has been removed and the solution no longer loads `core.dll` or reads from `runtime/legacy`. Template PNGs now live in `assets/templates/tradingpost`. Screen observe uses owned capture, OpenCV, Windows OCR, and the official Guild Wars 2 API. Live mode does not send input. `GW2_FishHack` stays retired.
+`Mmopal.LegacyBridge` has been removed and the solution no longer loads `core.dll` or reads from `runtime/legacy`. Template PNGs now live in `assets/templates/tradingpost`. Screen observe uses owned capture, OpenCV, Windows OCR, and the official Guild Wars 2 API. Live mode sends input only while armed; see [gw2-trading-controller.md](gw2-trading-controller.md). `GW2_FishHack` stays retired.
 
