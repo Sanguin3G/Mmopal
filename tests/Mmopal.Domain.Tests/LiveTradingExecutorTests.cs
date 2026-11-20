@@ -984,7 +984,11 @@ public sealed class LiveTradingExecutorTests
         // API wallet still shows 24g 70s 31c (247_031c) right after collecting 17g 96s 55c (179_655c)
         state.RecordTakeAllAttempt(deliveryCoinsCopper: 179_655, apiWalletBaselineCopper: 247_031, clickedTakeAll: true, nowUtc: t0);
         Assert.True(state.ShouldSkipStaleDeliveryCollection(179_655, 0, t0.AddSeconds(20)));
-        Assert.False(state.ShouldSkipStaleDeliveryCollection(179_655, 0, t0.AddSeconds(61)));
+        // The delivery API still lists the collected coins for up to its cache window: do not click Take All again.
+        Assert.True(state.ShouldSkipStaleDeliveryCollection(179_655, 0, t0.AddSeconds(80)));
+        Assert.False(state.ShouldSkipStaleDeliveryCollection(179_655, 0, t0.AddMinutes(5).AddSeconds(1)));
+        // A different amount means new proceeds arrived: collect right away.
+        Assert.False(state.ShouldSkipStaleDeliveryCollection(200_000, 0, t0.AddSeconds(80)));
 
         var staleSnapshot = new MarketSnapshot(Array.Empty<Transaction>(), new AccountBalance(247_031), t0.AddSeconds(10), "screen");
         var credited = state.ApplyEffectiveBalance(staleSnapshot, t0.AddSeconds(10));
@@ -994,6 +998,19 @@ public sealed class LiveTradingExecutorTests
         var syncedSnapshot = new MarketSnapshot(Array.Empty<Transaction>(), new AccountBalance(426_686), t0.AddMinutes(3), "screen");
         var afterSync = state.ApplyEffectiveBalance(syncedSnapshot, t0.AddMinutes(3));
         Assert.Equal(426_686, afterSync.Balance!.Copper);
+        Assert.Equal(0, state.PendingCreditCoinsCopper);
+    }
+
+    [Fact]
+    public void EffectiveBalanceState_RetriesFailedTakeAllAfterOneMinute()
+    {
+        var state = new WorkerRuntime.EffectiveBalanceState();
+        var t0 = new DateTimeOffset(2026, 11, 20, 5, 58, 0, TimeSpan.Zero);
+
+        state.RecordTakeAllAttempt(deliveryCoinsCopper: 60_294, apiWalletBaselineCopper: 3_286_250, clickedTakeAll: false, nowUtc: t0);
+
+        Assert.True(state.ShouldSkipStaleDeliveryCollection(60_294, 0, t0.AddSeconds(30)));
+        Assert.False(state.ShouldSkipStaleDeliveryCollection(60_294, 0, t0.AddSeconds(61)));
         Assert.Equal(0, state.PendingCreditCoinsCopper);
     }
 
@@ -1064,6 +1081,86 @@ public sealed class LiveTradingExecutorTests
         Assert.Contains(input.Clicks, c => c.X is >= 70 and <= 150 && c.Y is >= 530 and <= 560);
         Assert.DoesNotContain(input.Clicks, c => c.X > 600); // Never falsely clicked bright-blue READY!
         Assert.Empty(input.KeyPresses);
+    }
+
+    [Fact]
+    public async Task TryAdvanceLauncherOrCharacterSelectAsync_DoesNotClickLogInOnceLauncherMovedToNews()
+    {
+        const int width = 1024;
+        const int height = 768;
+        const int stride = width * 4;
+        var pixels = new byte[stride * height];
+        for (var y = 180; y <= 710; y++)
+        {
+            for (var x = 20; x <= 965; x++)
+            {
+                var i = y * stride + x * 4;
+                pixels[i] = 250; pixels[i + 1] = 250; pixels[i + 2] = 250; pixels[i + 3] = 255;
+            }
+        }
+
+        var frame = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, pixels, "Bgra32", stride);
+        var input = new FakeInputController();
+        var loginReads = 0;
+        // LOG IN is visible on the first frame only; by the time the driver is about to click,
+        // login has gone through and the launcher shows the news page instead.
+        var locator = new FakeUiTextLocator(region =>
+            region.X < 400 && Interlocked.Increment(ref loginReads) == 1
+                ? [new OcrTextBox("LOG IN", 72, 535, 76, 20)]
+                : Array.Empty<OcrTextBox>());
+
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => frame },
+            new FakeTemplateMatcher(),
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0, LaunchPlatform: Gw2ClientSettings.PlatformArenaNet),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        await driver.TryAdvanceLauncherOrCharacterSelectAsync();
+
+        Assert.True(loginReads >= 2);
+        Assert.DoesNotContain(input.Clicks, c => c.X < 400);
+    }
+
+    [Theory]
+    [InlineData(3_872L, 3_874L, false)]   // normal +2c overbid
+    [InlineData(3_872L, 3_990L, false)]   // small drift inside 3% tolerance
+    [InlineData(3_872L, 5_400L, true)]    // misclick onto a seller row: clearly overpaying
+    [InlineData(3_872L, 38_720L, false)]  // 10x off: OCR misread, do not block
+    [InlineData(3_872L, 3_800L, false)]   // top bid dropped a little: still a fillable bid
+    [InlineData(3_674L, 3_105L, true)]    // seen live: 15% under the top bid, can never fill
+    [InlineData(3_872L, null, false)]     // unreadable: place as before
+    public void EvaluateVisibleBuyPrice_aborts_only_on_plausible_overpay(long planned, long? visible, bool abort)
+    {
+        var check = Gw2TradingPostUiDriver.EvaluateVisibleBuyPrice(planned, overbidMaxCopper: 5, visible);
+
+        Assert.Equal(abort, check.Abort);
+        Assert.False(string.IsNullOrWhiteSpace(check.Message));
+    }
+
+    [Fact]
+    public void SelectSafeOutbidCancels_skips_orders_whose_search_would_show_several_of_our_buys()
+    {
+        var now = DateTimeOffset.UtcNow;
+        Transaction[] orders =
+        [
+            new(TransactionType.Buy, "Strong Ring", 3_874, 2, now, null, 3_880),                 // outbid, but "Strong Ring of Fire" also matches
+            new(TransactionType.Buy, "Strong Ring of Fire", 9_000, 1, now, null, 8_000),         // not outbid
+            new(TransactionType.Buy, "Mini Green Raptor Hatchling", 16_437, 2, now, null, 16_500), // outbid, duplicate below
+            new(TransactionType.Buy, "Mini Green Raptor Hatchling", 16_500, 1, now, null, 16_500), // the order that is on top
+            new(TransactionType.Buy, "Carrion Masquerade Boots", 3_674, 2, now, null, 3_700),    // outbid, unique: safe
+            new(TransactionType.Sell, "Strong Ring", 9_999, 1, now, 9_000, null)
+        ];
+
+        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, maxCancelsPerPass: 5, out var ambiguous);
+
+        Assert.Equal(["Carrion Masquerade Boots"], safe.Select(tx => tx.ItemName));
+        Assert.Equal(["Strong Ring", "Mini Green Raptor Hatchling"], ambiguous);
     }
 
     [Fact]

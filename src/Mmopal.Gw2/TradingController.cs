@@ -151,6 +151,12 @@ public sealed class TradingCycleController
     // so a 1c move in the API quote must not let the same item be ordered twice while current/buys lags.
     private readonly ConcurrentDictionary<string, DateTimeOffset> _recentActions = new(StringComparer.Ordinal);
 
+    // Live buys pick the first Trading Post search result, so "Slice of Allspice Cake" can open
+    // "Slice of Allspice Cake with Ice Cream". Items whose search proved to land on another item are
+    // remembered per run (item key -> the item that was actually ordered) and no longer bought.
+    private readonly ConcurrentDictionary<string, string> _boughtItems = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _searchMismatches = new(StringComparer.Ordinal);
+
     public TradingCycleController(
         CheckpointStore store,
         ILogger logger,
@@ -238,6 +244,7 @@ public sealed class TradingCycleController
             long? remainingSpendable = market.Balance is { Copper: > 0 } balance
                 ? Math.Max(0L, balance.Copper - Math.Max(0L, _options.MinimumBalanceCopper))
                 : null;
+            DetectSearchMismatches(runId, market.Transactions);
             decisions = SelectActionsForCycle(runId, decisions, remainingSpendable);
             foreach (var decision in decisions)
             {
@@ -290,6 +297,11 @@ public sealed class TradingCycleController
                 if (result.Status is TradingActionStatus.Simulated or TradingActionStatus.Observed or TradingActionStatus.Completed)
                 {
                     _recentActions[GetCooldownKey(runId, action)] = _options.UtcNow();
+                }
+
+                if (result.Status == TradingActionStatus.Completed && action.Kind == TradingActionKind.PlaceBuyOrder)
+                {
+                    _boughtItems[GetItemKey(runId, action.ItemName)] = action.ItemName.Trim();
                 }
 
                 if (result.Status == TradingActionStatus.Failed)
@@ -397,6 +409,16 @@ public sealed class TradingCycleController
                 continue;
             }
 
+            if (action.Kind == TradingActionKind.PlaceBuyOrder &&
+                _searchMismatches.TryGetValue(GetItemKey(runId, action.ItemName), out var orderedInstead))
+            {
+                selected.Add(CandidateDecision.Skip(
+                    decision.Candidate,
+                    $"Trading Post search for '{action.ItemName}' opens '{orderedInstead}' first (that is the order that appeared); skipped for this run so the wrong item is not bought again.",
+                    decision.Profitability));
+                continue;
+            }
+
             var key = GetCooldownKey(runId, action);
             if (_recentActions.TryGetValue(key, out var placedAt))
             {
@@ -486,6 +508,41 @@ public sealed class TradingCycleController
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{runId}|{action.Signature}|{attemptedAt.UtcTicks}"));
         return "gw2-" + Convert.ToHexString(hash).ToLowerInvariant();
     }
+
+    /// <summary>
+    /// Flags items we bought this run that never showed up under their own name in current/buys while an
+    /// order for a longer name containing it did — i.e. the search landed on a different item.
+    /// </summary>
+    private void DetectSearchMismatches(string runId, IReadOnlyList<Transaction> transactions)
+    {
+        var prefix = runId + "|";
+        var buyNames = transactions
+            .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
+            .Select(tx => tx.ItemName.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var (key, name) in _boughtItems)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal) ||
+                _searchMismatches.ContainsKey(key) ||
+                buyNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var other = buyNames.FirstOrDefault(buy => buy.Contains(name, StringComparison.OrdinalIgnoreCase));
+            if (other is not null && _searchMismatches.TryAdd(key, other))
+            {
+                _logger.LogWarning(
+                    "Bought '{Item}' but current/buys shows an order for '{Other}' instead: the Trading Post search opens the wrong item first. Skipping it for the rest of this run; consider blacklisting it.",
+                    name,
+                    other);
+            }
+        }
+    }
+
+    private static string GetItemKey(string runId, string itemName) =>
+        $"{runId}|{itemName.Trim().ToUpperInvariant()}";
 
     private static string GetCooldownKey(string runId, TradingAction action) =>
         $"{runId}|{action.Kind}|{action.ItemName.Trim().ToUpperInvariant()}";

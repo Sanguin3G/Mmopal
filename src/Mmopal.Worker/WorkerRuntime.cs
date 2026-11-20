@@ -432,7 +432,10 @@ public sealed class WorkerRuntime
                 _logger,
                 pollIntervalMs: _liveTemplateMatcher is null ? 150 : 5,
                 requireTemplateFilesOnDisk: _liveTemplateMatcher is null,
-                isPaused: () => IsPauseRequested);
+                isPaused: () => IsPauseRequested,
+                priceProbe: _liveTemplateMatcher is null
+                    ? new FrameTradingPostUiProbe(sharedScreenshots, sharedTemplates, new WindowsOcrReader())
+                    : null);
             executor = new LiveTradingActionExecutor(
                 liveDriver,
                 request.OverbidBufferMinCopper,
@@ -1746,6 +1749,7 @@ public sealed class WorkerRuntime
         public DateTimeOffset? CollectedAtUtc { get; private set; }
         private long _lastSeenDeliveryCoins;
         private DateTimeOffset? _lastTakeAllAttemptUtc;
+        private bool _lastTakeAllSucceeded;
 
         public void ClearDeliveryCleared()
         {
@@ -1753,6 +1757,7 @@ public sealed class WorkerRuntime
             CollectedAtUtc = null;
             _lastSeenDeliveryCoins = 0;
             _lastTakeAllAttemptUtc = null;
+            _lastTakeAllSucceeded = false;
         }
 
         public bool ShouldSkipStaleDeliveryCollection(long deliveryCoinsCopper, int itemCount, DateTimeOffset nowUtc)
@@ -1762,15 +1767,20 @@ public sealed class WorkerRuntime
                 return false;
             }
 
+            // After a successful Take All the delivery API keeps reporting the same coins until its ~5 min cache
+            // expires; re-collecting then clicks an empty box and double-counts the pickup in the session report.
+            // A failed click is retried sooner.
+            var window = _lastTakeAllSucceeded ? ApiCacheWindow : StaleCollectionCooldown;
             return deliveryCoinsCopper == _lastSeenDeliveryCoins &&
                    _lastTakeAllAttemptUtc.HasValue &&
-                   (nowUtc - _lastTakeAllAttemptUtc.Value) < StaleCollectionCooldown;
+                   (nowUtc - _lastTakeAllAttemptUtc.Value) < window;
         }
 
         public void RecordTakeAllAttempt(long deliveryCoinsCopper, long apiWalletBaselineCopper, bool clickedTakeAll, DateTimeOffset nowUtc)
         {
             _lastSeenDeliveryCoins = deliveryCoinsCopper;
             _lastTakeAllAttemptUtc = nowUtc;
+            _lastTakeAllSucceeded = clickedTakeAll;
             if (clickedTakeAll && deliveryCoinsCopper > 0)
             {
                 PendingCreditCoinsCopper = deliveryCoinsCopper;

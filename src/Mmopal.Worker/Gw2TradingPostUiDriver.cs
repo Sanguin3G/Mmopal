@@ -12,6 +12,7 @@ namespace Mmopal.Worker;
 /// </summary>
 public sealed class Gw2TradingPostUiDriver
 {
+    private const int MaxLoginClickAttempts = 3;
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 240, 80, 140);
     private static readonly CaptureRegion BuyTabRegion = new(475, 90, 175, 150);
@@ -42,6 +43,7 @@ public sealed class Gw2TradingPostUiDriver
     private readonly IInputController _input;
     private readonly IWindowController _windows;
     private readonly IUiTextLocator? _textLocator;
+    private readonly ITradingPostUiProbe? _priceProbe;
     private readonly string _templateRoot;
     private readonly Gw2ClientSettings _settings;
     private readonly ILogger _logger;
@@ -62,8 +64,10 @@ public sealed class Gw2TradingPostUiDriver
         int pollIntervalMs = 150,
         bool requireTemplateFilesOnDisk = true,
         Func<bool>? isPaused = null,
-        IUiTextLocator? textLocator = null)
+        IUiTextLocator? textLocator = null,
+        ITradingPostUiProbe? priceProbe = null)
     {
+        _priceProbe = priceProbe;
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _templates = templates ?? throw new ArgumentNullException(nameof(templates));
         _input = input ?? throw new ArgumentNullException(nameof(input));
@@ -80,6 +84,86 @@ public sealed class Gw2TradingPostUiDriver
     }
 
     private bool IsPaused => _isPaused?.Invoke() == true;
+
+    /// <summary>
+    /// Picks outbid buy orders that can be canceled safely. The cancel flow searches the item name in
+    /// My Transactions and clicks the first Cancel button, so an order is skipped whenever that search would
+    /// list more than one of our buy orders (a duplicate order for the same item, or another item whose name
+    /// contains this one) — otherwise the click could cancel the wrong order.
+    /// </summary>
+    internal static Transaction[] SelectSafeOutbidCancels(
+        IReadOnlyList<Transaction> transactions,
+        int maxCancelsPerPass,
+        out IReadOnlyList<string> ambiguousNames)
+    {
+        var buyNames = transactions
+            .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
+            .Select(tx => tx.ItemName.Trim())
+            .ToArray();
+        var skipped = new List<string>();
+        var safe = new List<Transaction>();
+        foreach (var tx in transactions)
+        {
+            if (safe.Count >= maxCancelsPerPass) break;
+            if (tx.Type != TransactionType.Buy ||
+                string.IsNullOrWhiteSpace(tx.ItemName) ||
+                tx.MinimumBuyPriceCopper is not { } topBid ||
+                topBid <= tx.PriceCopper)
+            {
+                continue;
+            }
+
+            var name = tx.ItemName.Trim();
+            var searchHits = buyNames.Count(other => other.Contains(name, StringComparison.OrdinalIgnoreCase));
+            if (searchHits > 1)
+            {
+                if (!skipped.Contains(name, StringComparer.OrdinalIgnoreCase)) skipped.Add(name);
+                continue;
+            }
+
+            safe.Add(tx);
+        }
+
+        ambiguousNames = skipped;
+        return safe.ToArray();
+    }
+
+    /// <summary>
+    /// Decides whether the price showing in the buy dialog is safe to submit. The planner priced the order from
+    /// the API (<paramref name="expectedCopper"/> = top bid + overbid) but the dialog is filled by clicking the
+    /// in-game order book, so a misclick can silently raise the bid (e.g. onto a seller row) or drop it under the top
+    /// bid where it never fills. Only a plausibly real reading aborts; unreadable or wildly-off readings are treated
+    /// as OCR misses so an uncalibrated reader can never stop all buying.
+    /// </summary>
+    internal static (bool Abort, string Message) EvaluateVisibleBuyPrice(long expectedCopper, int overbidMaxCopper, long? visibleCopper)
+    {
+        if (expectedCopper <= 0)
+        {
+            return (false, "No planned price to compare against; placing without a price check.");
+        }
+
+        if (visibleCopper is not { } visible || visible <= 0)
+        {
+            return (false, $"Visible price unreadable; placing at the in-game price (planned {MarketScanItem.FormatCoins(expectedCopper)}).");
+        }
+
+        var ceiling = expectedCopper + Math.Max(0, overbidMaxCopper) + Math.Max(5L, expectedCopper * 3 / 100);
+        if (visible > expectedCopper * 3 || visible * 3 < expectedCopper)
+        {
+            return (false, $"Visible price {MarketScanItem.FormatCoins(visible)} is implausible vs planned {MarketScanItem.FormatCoins(expectedCopper)}; treating it as an OCR misread.");
+        }
+
+        if (visible > ceiling)
+        {
+            return (true, $"visible price {MarketScanItem.FormatCoins(visible)} is above the ceiling {MarketScanItem.FormatCoins(ceiling)} (planned {MarketScanItem.FormatCoins(expectedCopper)}).");
+        }
+
+        // A bid this far under the top bid will not fill; it only sits there until Outbid Refresh cancels it.
+        var floor = expectedCopper * 9 / 10;
+        return visible < floor
+            ? (true, $"visible price {MarketScanItem.FormatCoins(visible)} is more than 10% under the planned {MarketScanItem.FormatCoins(expectedCopper)}; the order would sit below the top bid and not fill.")
+            : (false, $"Visible price {MarketScanItem.FormatCoins(visible)} OK (planned {MarketScanItem.FormatCoins(expectedCopper)}, ceiling {MarketScanItem.FormatCoins(ceiling)}).");
+    }
 
     public async Task<bool> HasErrorPopupAsync(CancellationToken cancellationToken = default)
     {
@@ -120,6 +204,7 @@ public sealed class Gw2TradingPostUiDriver
                 : Math.Max(_uiWaitMs, 100);
             var launcherDeadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(launcherWaitMs);
             DateTimeOffset? lastLoginClickUtc = null;
+            var loginClickAttempts = 0;
             var emptySignalPolls = 0;
 
             while (true)
@@ -147,28 +232,58 @@ public sealed class Gw2TradingPostUiDriver
                     break;
                 }
 
-                if (!_settings.IsSteamPlatform && snapshot.LoginPoint is { } loginPoint)
+                if (!_settings.IsSteamPlatform && snapshot.LoginPoint is { } detectedLoginPoint)
                 {
                     var nowUtc = DateTimeOffset.UtcNow;
-                    var loginRetryCooldownMs = _requireTemplateFilesOnDisk ? 1_800 : 3_500;
-                    if (!lastLoginClickUtc.HasValue || (nowUtc - lastLoginClickUtc.Value).TotalMilliseconds >= loginRetryCooldownMs)
+                    // The LOG IN label stays on screen for several seconds while the login request is in flight.
+                    // Retrying faster than that only produces clicks that land on the LATEST NEWS page (opening
+                    // the browser) once the launcher switches over, so wait out a realistic login before retrying.
+                    var loginRetryCooldownMs = _requireTemplateFilesOnDisk ? 6_000 : 3_500;
+                    var cooldownElapsed = !lastLoginClickUtc.HasValue ||
+                                          (nowUtc - lastLoginClickUtc.Value).TotalMilliseconds >= loginRetryCooldownMs;
+                    (int X, int Y)? loginPoint = null;
+                    if (cooldownElapsed && loginClickAttempts < MaxLoginClickAttempts)
                     {
-                        _logger.LogInformation("Launcher LOG IN button detected at ({X}, {Y}); clicking LOG IN with mouse only.", loginPoint.X, loginPoint.Y);
                         if (_requireTemplateFilesOnDisk)
                         {
                             await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
                         }
 
-                        await _input.ClickAsync(loginPoint.X, loginPoint.Y, cancellationToken).ConfigureAwait(false);
+                        // Re-check on a fresh frame right before clicking: the launcher may have moved on to the
+                        // news page while the previous frame was being inspected.
+                        frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+                        snapshot = await InspectLauncherFrameAsync(frame, cancellationToken).ConfigureAwait(false);
+                        if (snapshot.LoginPoint is { } confirmed &&
+                            Math.Abs(confirmed.X - detectedLoginPoint.X) <= 16 &&
+                            Math.Abs(confirmed.Y - detectedLoginPoint.Y) <= 16)
+                        {
+                            loginPoint = confirmed;
+                        }
+                        else
+                        {
+                            _logger.LogDebug("LOG IN no longer visible at ({X}, {Y}) on a fresh frame; not clicking.", detectedLoginPoint.X, detectedLoginPoint.Y);
+                        }
+                    }
+
+                    if (loginPoint is { } point)
+                    {
+                        loginClickAttempts++;
+                        _logger.LogInformation(
+                            "Launcher LOG IN button detected at ({X}, {Y}); clicking LOG IN with mouse only (attempt {Attempt}/{Max}).",
+                            point.X,
+                            point.Y,
+                            loginClickAttempts,
+                            MaxLoginClickAttempts);
+                        await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
                         if (_requireTemplateFilesOnDisk)
                         {
                             // Second tap ensures Coherent UI fires LOG IN even if the first tap was consumed
                             // activating the window or unfocusing the default password input caret.
                             await Task.Delay(120, cancellationToken).ConfigureAwait(false);
-                            await _input.ClickAsync(loginPoint.X, loginPoint.Y, cancellationToken).ConfigureAwait(false);
+                            await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
                         }
 
-                        lastLoginClickUtc = nowUtc;
+                        lastLoginClickUtc = DateTimeOffset.UtcNow;
                         advanced = true;
 
                         // Ensure enough time remains for login + Auto-Play countdown or PLAY button.
@@ -765,6 +880,29 @@ public sealed class Gw2TradingPostUiDriver
             return new TradingActionResult(action, TradingActionStatus.Failed, $"Place Order button was not visible for '{action.ItemName}'.");
         }
 
+        if (_priceProbe is not null)
+        {
+            VisiblePriceObservation? visible = null;
+            try
+            {
+                visible = await _priceProbe
+                    .ReadVisiblePriceAsync(new TradingPostUiProbeOptions(_templateRoot, VisibleItemName: action.ItemName), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogDebug(exception, "Visible price read failed for {Item}.", action.ItemName);
+            }
+
+            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visible?.Price?.Copper);
+            _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
+            if (check.Abort)
+            {
+                await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {check.Message}");
+            }
+        }
+
         await ClickCenterAsync(placeButton, cancellationToken).ConfigureAwait(false);
         await SettleAsync(cancellationToken).ConfigureAwait(false);
         await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
@@ -969,13 +1107,14 @@ public sealed class Gw2TradingPostUiDriver
         }
 
         // Only buy orders are canceled when outbid (canceling buys is 100% free; canceling sells burns 5% fee).
-        var outbidBuys = transactions
-            .Where(tx => tx.Type == TransactionType.Buy &&
-                         tx.MinimumBuyPriceCopper.HasValue &&
-                         tx.MinimumBuyPriceCopper.Value > tx.PriceCopper &&
-                         !string.IsNullOrWhiteSpace(tx.ItemName))
-            .Take(maxCancelsPerPass)
-            .ToArray();
+        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, out var ambiguousNames);
+        foreach (var name in ambiguousNames)
+        {
+            _logger.LogInformation(
+                "Outbid Refresh skipped {Item}: searching it would list more than one of your buy orders, so the first Cancel button might not be the outbid one.",
+                name);
+        }
+
         if (outbidBuys.Length == 0)
         {
             return 0;

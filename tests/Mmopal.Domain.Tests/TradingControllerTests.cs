@@ -448,6 +448,64 @@ public sealed class TradingControllerTests
         }
     }
 
+    [Fact]
+    public async Task Item_whose_search_lands_on_a_longer_named_item_is_not_bought_again()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"mmopal-mismatch-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new CheckpointStore(dbPath);
+            await store.InitializeAsync();
+
+            var now = new DateTimeOffset(2026, 11, 20, 6, 39, 0, TimeSpan.Zero);
+            var wrongOrder = new Transaction(TransactionType.Buy, "Slice of Allspice Cake with Ice Cream", 4_955, 2, now, null, 4_972);
+            var reader = new SwitchableMarketReader(new MarketSnapshot(Array.Empty<Transaction>(), new AccountBalance(1_000_000), now, "replay"));
+            var executor = new CompletingExecutor();
+            var controller = new TradingCycleController(
+                store,
+                NullLogger.Instance,
+                reader,
+                executor,
+                new TradingControllerOptions { UtcNow = () => now });
+            ItemCandidate[] candidates = [new("Slice of Allspice Cake", Quantity: 2, BuyPriceCopper: 5_404, SellPriceCopper: 10_562)];
+
+            await controller.RunCycleAsync("run-cake", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+            // Cooldown has passed, and the API shows the order that the search actually placed.
+            now = now.AddMinutes(8);
+            reader.Snapshot = new MarketSnapshot([wrongOrder], new AccountBalance(1_000_000), now, "replay");
+            var second = await controller.RunCycleAsync("run-cake", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+
+            Assert.Single(executor.Actions);
+            Assert.Empty(second.Actions);
+            var decision = Assert.Single(second.Decisions);
+            Assert.Contains("with Ice Cream", decision.Reason, StringComparison.Ordinal);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteDatabase(dbPath);
+        }
+    }
+
+    private sealed class SwitchableMarketReader(MarketSnapshot snapshot) : IGw2MarketReader
+    {
+        public MarketSnapshot Snapshot { get; set; } = snapshot;
+
+        public Task<MarketSnapshot> ReadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(Snapshot with { ObservedAt = DateTimeOffset.UtcNow });
+    }
+
+    private sealed class CompletingExecutor : ITradingActionExecutor
+    {
+        public List<TradingAction> Actions { get; } = new();
+
+        public Task<TradingActionResult> ExecuteAsync(TradingAction action, CancellationToken cancellationToken = default)
+        {
+            Actions.Add(action);
+            return Task.FromResult(new TradingActionResult(action, TradingActionStatus.Completed, "placed"));
+        }
+    }
+
     private static void DeleteDatabase(string databasePath)
     {
         File.Delete(databasePath);
