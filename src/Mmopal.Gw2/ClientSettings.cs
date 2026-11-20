@@ -32,9 +32,9 @@ public sealed record Gw2ClientSettings(
     bool AutoCloseAppOnSessionCap = true,
     bool ShutdownPcOnSessionCap = false,
     int PcShutdownCountdownSeconds = 60,
-    // How the buy price is set in the order dialog: ClickRow (click the top Current Buyers row, then tap the
-    // spinner) or TypeExact (type the exact gold/silver/copper from the live top bid and verify the total).
-    string PriceEntryMode = "ClickRow")
+    // How buy and sell prices are set in the order dialog: TypeExact (type the exact gold/silver/copper from the
+    // live top bid / lowest ask and verify the total; default) or ClickRow (click the top row, tap the spinner).
+    string PriceEntryMode = "TypeExact")
 {
     public const string PriceEntryClickRow = "ClickRow";
     public const string PriceEntryTypeExact = "TypeExact";

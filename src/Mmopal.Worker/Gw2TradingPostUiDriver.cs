@@ -31,8 +31,15 @@ public sealed class Gw2TradingPostUiDriver
     // Current Buyers list in the order dialog (rows from y~514, price column from x~405).
     private static readonly CaptureRegion BuyersListRegion = new(245, 505, 270, 190);
     private const int BuyersPriceColumnMinX = 395;
-    // "Total Price: 1 17 98" under Max. Price: plain text without spinners; gold is omitted when it is 0.
-    private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 400, 44);
+    // Current Sellers list (price column from x ~690); read before the seller-row click, which inserts our own
+    // "Selling 1/N" preview row at the top.
+    private static readonly CaptureRegion SellersListRegion = new(530, 505, 270, 190);
+    private const int SellersPriceColumnMinX = 680;
+    // Sell Items results: rows ~60 px apart (236 / 296 / 356 on a live frame).
+    private const int SellResultRowStride = 60;
+    // "Total Price: 1 17 98" under Max./Min. Price: plain text without spinners. Ends at x 640: the sell dialog
+    // prints "Listing Fee" / "Exchange Fee" from x ~658, which would garble the read.
+    private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 380, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     // Black Lion sidebar scales icon measured at (14..53, 215..234) on 1024x768 (Gem Store and TP tabs alike).
@@ -1121,7 +1128,14 @@ public sealed class Gw2TradingPostUiDriver
                 return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {choice.Message}");
             }
 
-            await TypeDialogPriceAsync(target, cancellationToken).ConfigureAwait(false);
+            var (confirmed, confirmMessage) = await TypeAndConfirmPriceAsync(target, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, confirmMessage);
+            if (!confirmed)
+            {
+                await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {confirmMessage}");
+            }
+
             typedUnitPrice = target;
         }
         else
@@ -1149,7 +1163,7 @@ public sealed class Gw2TradingPostUiDriver
             return new TradingActionResult(action, TradingActionStatus.Failed, $"Place Order button was not visible for '{action.ItemName}'.");
         }
 
-        if (_textLocator is not null)
+        if (_textLocator is not null && typedUnitPrice is null)
         {
             var (visibleUnitPrice, confident) = await ReadDialogUnitPriceAsync(qty, cancellationToken).ConfigureAwait(false);
             if (visibleUnitPrice is null)
@@ -1157,9 +1171,7 @@ public sealed class Gw2TradingPostUiDriver
                 await SaveDiagnosticFrameAsync("price-unreadable", cancellationToken).ConfigureAwait(false);
             }
 
-            var check = typedUnitPrice is { } typed
-                ? EvaluateTypedBuyPrice(typed, visibleUnitPrice, confident)
-                : EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice, confident);
+            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice, confident);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
             if (check.Abort)
             {
@@ -1232,7 +1244,10 @@ public sealed class Gw2TradingPostUiDriver
     /// Live top bid from the Current Buyers list, polled briefly while the order book loads. Row prices omit zero
     /// units ("69. 95." is 69s 95c, "2,721.69." is 2,721g 69s), so each reading is resolved against the API hint.
     /// </summary>
-    private async Task<long?> ReadTopBuyerPriceAsync(long hintCopper, CancellationToken cancellationToken)
+    private Task<long?> ReadTopBuyerPriceAsync(long hintCopper, CancellationToken cancellationToken) =>
+        ReadTopListPriceAsync(BuyersListRegion, BuyersPriceColumnMinX, hintCopper, cancellationToken);
+
+    private async Task<long?> ReadTopListPriceAsync(CaptureRegion listRegion, int priceColumnMinX, long hintCopper, CancellationToken cancellationToken)
     {
         var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(1_500, Math.Min(_uiWaitMs, 4_000)));
         while (true)
@@ -1244,20 +1259,20 @@ public sealed class Gw2TradingPostUiDriver
                 {
                     var variants = new List<IReadOnlyList<OcrTextBox>>
                     {
-                        await _textLocator.LocateLinesAsync(frame, BuyersListRegion, cancellationToken).ConfigureAwait(false)
+                        await _textLocator.LocateLinesAsync(frame, listRegion, cancellationToken).ConfigureAwait(false)
                     };
-                    if (FrameVision.EnhanceTextContrast(frame, BuyersListRegion) is { } enhanced)
+                    if (FrameVision.EnhanceTextContrast(frame, listRegion) is { } enhanced)
                     {
                         var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
                         variants.Add(lines
-                            .Select(line => line with { X = BuyersListRegion.X + line.X / 2, Y = BuyersListRegion.Y + line.Y / 2 })
+                            .Select(line => line with { X = listRegion.X + line.X / 2, Y = listRegion.Y + line.Y / 2 })
                             .ToArray());
                     }
 
                     foreach (var lines in variants)
                     {
                         var top = lines
-                            .Where(line => line.X >= BuyersPriceColumnMinX)
+                            .Where(line => line.X >= priceColumnMinX)
                             .OrderBy(line => line.Y)
                             .Select(line => ParseBuyerRowPrice(line.Text, hintCopper))
                             .FirstOrDefault(price => price is not null);
@@ -1336,6 +1351,74 @@ public sealed class Gw2TradingPostUiDriver
     }
 
     /// <summary>
+    /// Types the unit price and confirms it on the plain Total line (a whole multiple of the unit price, since the
+    /// quantity may be more than 1). A box that missed its click shows up as a different total; that is re-typed once
+    /// before giving up. An unreadable total proceeds: the typed value is deterministic and the API audit follows.
+    /// </summary>
+    private async Task<(bool Confirmed, string Message)> TypeAndConfirmPriceAsync(long unitCopper, CancellationToken cancellationToken)
+    {
+        long? lastSeen = null;
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await TypeDialogPriceAsync(unitCopper, cancellationToken).ConfigureAwait(false);
+            var totals = (await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false))
+                .Select(ParseTotalPrice)
+                .Where(total => total is > 0)
+                .Select(total => total!.Value)
+                .ToArray();
+            if (totals.Length == 0)
+            {
+                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)}; the dialog total could not be read to confirm it.");
+            }
+
+            if (totals.Any(total => IsWholeMultiple(total, unitCopper)))
+            {
+                return (true, attempt == 1
+                    ? $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed."
+                    : $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)}).");
+            }
+
+            lastSeen = totals[0];
+            if (attempt == 1)
+            {
+                _logger.LogInformation(
+                    "Dialog shows {Seen} after typing {Typed}; re-typing once.",
+                    MarketScanItem.FormatCoins(lastSeen.Value),
+                    MarketScanItem.FormatCoins(unitCopper));
+            }
+        }
+
+        return (false, $"typed {MarketScanItem.FormatCoins(unitCopper)} twice but the dialog total shows {MarketScanItem.FormatCoins(lastSeen ?? 0)}; the price boxes did not take the typed value.");
+    }
+
+    /// <summary>
+    /// Typed sell price: the live lowest ask (else the API's) minus the undercut, but never below break-even (what
+    /// Mmopal paid, covered after the 15% fees). If undercutting would go below break-even, the item is held.
+    /// </summary>
+    internal static (long? Target, string Message) ChooseTypedSellPrice(
+        long apiLowestAskCopper,
+        long? liveLowestAskCopper,
+        int undercutSteps,
+        long? breakEvenCopper)
+    {
+        var basis = liveLowestAskCopper ?? apiLowestAskCopper;
+        var target = Math.Max(1, basis - Math.Max(0, undercutSteps));
+        var source = liveLowestAskCopper is null
+            ? $"API lowest ask {MarketScanItem.FormatCoins(apiLowestAskCopper)} (live lowest ask unreadable)"
+            : $"live lowest ask {MarketScanItem.FormatCoins(basis)} (API {MarketScanItem.FormatCoins(apiLowestAskCopper)})";
+        if (breakEvenCopper is { } floor && target < floor)
+        {
+            return (null, $"holding: {source} - {undercutSteps}c = {MarketScanItem.FormatCoins(target)} is below break-even {MarketScanItem.FormatCoins(floor)}; checking again in 30 min.");
+        }
+
+        return (target, $"{source} - {undercutSteps}c -> typing {MarketScanItem.FormatCoins(target)}"
+                        + (breakEvenCopper is { } be ? $" (break-even {MarketScanItem.FormatCoins(be)})." : "."));
+    }
+
+    internal static bool IsWholeMultiple(long total, long unit) =>
+        unit > 0 && total % unit == 0 && total / unit is >= 1 and <= 250;
+
+    /// <summary>
     /// Clicks each Max. Price box (gold, silver, copper), selects its contents and types the value. Box positions are
     /// taken from the copper ▲ spinner (measured at (601, 304) on live frames), falling back to fixed coordinates.
     /// </summary>
@@ -1404,7 +1487,8 @@ public sealed class Gw2TradingPostUiDriver
         int maxItemsPerPass,
         int undercutMinCopper,
         int undercutMaxCopper,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, SellPricing>? pricing = null)
     {
         if (maxItemsPerPass <= 0 || allowedFlipItemNames is null || allowedFlipItemNames.Count == 0)
         {
@@ -1475,15 +1559,55 @@ public sealed class Gw2TradingPostUiDriver
                     continue;
                 }
 
-                var sellersAnchor = await OpenItemOrderWindowAsync(firstItem, "currentSellers.png", 0.72m, cancellationToken).ConfigureAwait(false);
+                // Bag search is a substring match too: open rows in order and list only the exact item.
+                TemplateMatch? sellersAnchor = null;
+                var wrongTitles = new List<string>();
+                for (var row = 0; row < MaxSearchRowsToTry; row++)
+                {
+                    var rowAnchor = firstItem with { Y = firstItem.Y + row * SellResultRowStride };
+                    sellersAnchor = await OpenItemOrderWindowAsync(rowAnchor, "currentSellers.png", 0.72m, cancellationToken).ConfigureAwait(false);
+                    if (sellersAnchor is null)
+                    {
+                        break;
+                    }
+
+                    var (titleCheck, seenTitle) = await CheckOpenedItemTitleAsync(targetItem, cancellationToken).ConfigureAwait(false);
+                    if (titleCheck != ItemTitleCheck.Mismatch)
+                    {
+                        break;
+                    }
+
+                    wrongTitles.Add(seenTitle ?? "?");
+                    _logger.LogInformation("Sell row {Row} for '{Item}' opened '{Other}'; trying the next row.", row + 1, targetItem, seenTitle);
+                    await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                    sellersAnchor = null;
+                }
+
                 if (sellersAnchor is null)
                 {
                     await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, "Order modal did not open."));
+                    results.Add(new SellPassItemResult(
+                        targetItem,
+                        SellPassItemOutcome.SkippedError,
+                        wrongTitles.Count > 0
+                            ? $"None of the bag rows opened '{targetItem}' (saw: {string.Join(", ", wrongTitles.Select(t => $"'{t}'"))}); not listing a different item."
+                            : "Order modal did not open."));
                     continue;
                 }
 
                 await SettleAsync(cancellationToken).ConfigureAwait(false);
+                SellPricing? itemPricing = null;
+                pricing?.TryGetValue(targetItem, out itemPricing);
+                var typeSellPrice = _settings.TypesExactPrice && _textLocator is not null && itemPricing?.ApiLowestAskCopper is > 0;
+                long? liveLowestAsk = null;
+                if (typeSellPrice)
+                {
+                    // Before the seller-row click, which inserts our own "Selling 1/N" preview row at the top.
+                    liveLowestAsk = await ReadTopListPriceAsync(SellersListRegion, SellersPriceColumnMinX, itemPricing!.ApiLowestAskCopper!.Value, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Clicking a Current Sellers row switches the dialog from "Sell Instantly" (the default, into the top buy
+                // order) to "List This Item".
                 await _input.ClickAsync(CenterX(sellersAnchor), CenterY(sellersAnchor) + 48, cancellationToken).ConfigureAwait(false);
                 await SettleShortAsync(cancellationToken).ConfigureAwait(false);
 
@@ -1495,23 +1619,49 @@ public sealed class Gw2TradingPostUiDriver
                 }
 
                 var undercutSteps = PickStepCount(undercutMinCopper, undercutMaxCopper);
-                var appliedSteps = 0;
-                for (var u = 0; u < undercutSteps; u++)
+                string? typedSellNote = null;
+                if (typeSellPrice)
                 {
-                    var downArrow = await FindPriceSpinnerArrowAsync("arrow_down.png", cancellationToken).ConfigureAwait(false);
-                    if (downArrow is null) break;
-                    await ClickCenterAsync(downArrow, cancellationToken).ConfigureAwait(false);
-                    appliedSteps++;
-                }
-
-                if (appliedSteps > 0 &&
-                    await TryFindOnceAsync("minimum_unit_price_reached.png", CaptureRegion.FullScreen1024x768, 0.78m, cancellationToken).ConfigureAwait(false) is not null)
-                {
-                    for (var r = 0; r < appliedSteps; r++)
+                    var choice = ChooseTypedSellPrice(itemPricing!.ApiLowestAskCopper!.Value, liveLowestAsk, undercutSteps, itemPricing.BreakEvenCopper);
+                    _logger.LogInformation("Typed sell price for {Item}: {Message}", targetItem, choice.Message);
+                    if (choice.Target is not { } sellTarget)
                     {
-                        var upArrow = await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false);
-                        if (upArrow is null) break;
-                        await ClickCenterAsync(upArrow, cancellationToken).ConfigureAwait(false);
+                        await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                        results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.Held, choice.Message));
+                        continue;
+                    }
+
+                    var (confirmed, confirmMessage) = await TypeAndConfirmPriceAsync(sellTarget, cancellationToken).ConfigureAwait(false);
+                    _logger.LogInformation("Sell price check for {Item}: {Message}", targetItem, confirmMessage);
+                    if (!confirmed)
+                    {
+                        await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                        results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, $"Listing aborted: {confirmMessage}"));
+                        continue;
+                    }
+
+                    typedSellNote = $" at {MarketScanItem.FormatCoins(sellTarget)} (typed)";
+                }
+                else
+                {
+                    var appliedSteps = 0;
+                    for (var u = 0; u < undercutSteps; u++)
+                    {
+                        var downArrow = await FindPriceSpinnerArrowAsync("arrow_down.png", cancellationToken).ConfigureAwait(false);
+                        if (downArrow is null) break;
+                        await ClickCenterAsync(downArrow, cancellationToken).ConfigureAwait(false);
+                        appliedSteps++;
+                    }
+
+                    if (appliedSteps > 0 &&
+                        await TryFindOnceAsync("minimum_unit_price_reached.png", CaptureRegion.FullScreen1024x768, 0.78m, cancellationToken).ConfigureAwait(false) is not null)
+                    {
+                        for (var r = 0; r < appliedSteps; r++)
+                        {
+                            var upArrow = await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false);
+                            if (upArrow is null) break;
+                            await ClickCenterAsync(upArrow, cancellationToken).ConfigureAwait(false);
+                        }
                     }
                 }
 
@@ -1528,7 +1678,7 @@ public sealed class Gw2TradingPostUiDriver
                 {
                     await ClickCenterAsync(listButton, cancellationToken).ConfigureAwait(false);
                     await SettleAsync(cancellationToken).ConfigureAwait(false);
-                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.Listed, "Sell listing placed."));
+                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.Listed, $"Sell listing placed{typedSellNote}."));
                 }
                 else
                 {

@@ -1537,10 +1537,10 @@
                                             </Grid>
                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                                 <StackPanel Width="320">
-                                                    <TextBlock Text="BUY PRICE ENTRY" Style="{StaticResource FieldLabel}" />
-                                                    <ComboBox x:Name="PriceEntryModeSelector" SelectedIndex="0" ToolTip="Click top buyer row: the current method. Type exact price: reads the live top bid in the order dialog, types the exact gold/silver/copper and checks the Total Price before placing. More reliable on high ping; adds a few seconds per order.">
-                                                        <ComboBoxItem Content="Click top buyer row (current)" Tag="ClickRow" />
-                                                        <ComboBoxItem Content="Type exact price (new)" Tag="TypeExact" />
+                                                    <TextBlock Text="PRICE ENTRY (BUY &amp; SELL)" Style="{StaticResource FieldLabel}" />
+                                                    <ComboBox x:Name="PriceEntryModeSelector" SelectedIndex="0" ToolTip="Type exact price: reads the live top bid / lowest ask in the order dialog, types the exact gold/silver/copper, and checks the Total before placing (sells never below break-even). Click top row: the older method, clicks the first row and taps the spinner; less reliable on high ping.">
+                                                        <ComboBoxItem Content="Type exact price (recommended)" Tag="TypeExact" />
+                                                        <ComboBoxItem Content="Click top row (older)" Tag="ClickRow" />
                                                     </ComboBox>
                                                 </StackPanel>
                                             </StackPanel>
@@ -1906,7 +1906,7 @@
                                         <Border Grid.Column="2" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">
                                             <StackPanel>
                                                 <TextBlock Text="3. VERIFY SCREEN OBSERVE" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="Park characters next to a Trading Post NPC and click Launch &amp; snap GW2. Try Observe only first; for Live, Data source switches to Screen observe on its own, then tick Arm live input." Style="{StaticResource HintText}" />
+                                                <TextBlock Text="Park characters next to a Trading Post NPC and click Launch &amp; snap GW2. Try Observe only first; choosing Live switches Data source to Screen observe and ticks Arm live input on its own." Style="{StaticResource HintText}" />
                                             </StackPanel>
                                         </Border>
                                         <Border Grid.Column="3" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12">

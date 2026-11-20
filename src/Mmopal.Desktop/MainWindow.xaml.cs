@@ -294,10 +294,17 @@ public partial class MainWindow : Window
     {
         if (_loadingUi) return;
 
-        // Live trading acts on the real game, so it always reads the real game screen.
-        if (IsSelectedTag(ModeSelector, nameof(RunMode.Live)) && SourceSelector is not null && !IsSelectedTag(SourceSelector, "screen"))
+        // Live trading acts on the real game, so it always reads the real game screen and arms input; any other mode
+        // sends no input, so it disarms.
+        var isLive = IsSelectedTag(ModeSelector, nameof(RunMode.Live));
+        if (isLive && SourceSelector is not null && !IsSelectedTag(SourceSelector, "screen"))
         {
             SelectByTag(SourceSelector, "screen");
+        }
+
+        if (ArmLiveInputCheckBox is not null)
+        {
+            ArmLiveInputCheckBox.IsChecked = isLive;
         }
 
         UpdateSafeModePill();
@@ -3459,7 +3466,7 @@ public partial class MainWindow : Window
             AutoCloseAppOnSessionCap: AutoCloseAppOnCapCheckBox.IsChecked == true,
             ShutdownPcOnSessionCap: ShutdownPcOnCapCheckBox.IsChecked == true,
             PcShutdownCountdownSeconds: shutdownCountdownSeconds,
-            PriceEntryMode: (PriceEntryModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? Gw2ClientSettings.PriceEntryClickRow);
+            PriceEntryMode: (PriceEntryModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? Gw2ClientSettings.PriceEntryTypeExact);
         SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
             ? $"Session cap: {settings.FormatMaxSessionHours()}h"
             : "Session cap: disabled";

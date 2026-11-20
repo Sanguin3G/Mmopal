@@ -390,7 +390,7 @@ public sealed class LiveTradingExecutorTests
             input,
             new FakeWindowController(),
             templateRoot: string.Empty,
-            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0, PriceEntryMode: Gw2ClientSettings.PriceEntryClickRow),
             NullLogger.Instance,
             pollIntervalMs: 5,
             requireTemplateFilesOnDisk: false,
@@ -435,7 +435,7 @@ public sealed class LiveTradingExecutorTests
             input,
             new FakeWindowController(),
             templateRoot: string.Empty,
-            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0, PriceEntryMode: Gw2ClientSettings.PriceEntryClickRow),
             NullLogger.Instance,
             pollIntervalMs: 5,
             requireTemplateFilesOnDisk: false,
@@ -612,6 +612,104 @@ public sealed class LiveTradingExecutorTests
         Assert.Contains("69", input.TextsSent);
         Assert.Contains("97", input.TextsSent);
         Assert.DoesNotContain((601, 304), input.Clicks); // no spinner taps in this mode
+    }
+
+    [Theory]
+    [InlineData("Total Price: 14e 6e", 1_406L)]        // live List This Item dialog, enhanced read
+    [InlineData("Total Price: 144 6.", null)]         // raw read of the same line: coin icon read as "4"; rejected
+    [InlineData("Total Price: 10• 21 e", 1_021L)]     // live Sell Instantly dialog
+    public void ParseTotalPrice_handles_the_sell_dialog_total(string text, long? expected)
+    {
+        Assert.Equal(expected, Gw2TradingPostUiDriver.ParseTotalPrice(text));
+    }
+
+    [Fact]
+    public void ChooseTypedSellPrice_undercuts_the_lowest_ask_but_never_below_break_even()
+    {
+        var normal = Gw2TradingPostUiDriver.ChooseTypedSellPrice(1_406, liveLowestAskCopper: 1_406, undercutSteps: 1, breakEvenCopper: 1_200);
+        var apiOnly = Gw2TradingPostUiDriver.ChooseTypedSellPrice(1_406, liveLowestAskCopper: null, undercutSteps: 2, breakEvenCopper: null);
+        var held = Gw2TradingPostUiDriver.ChooseTypedSellPrice(1_406, liveLowestAskCopper: 1_406, undercutSteps: 1, breakEvenCopper: 1_500);
+
+        Assert.Equal(1_405, normal.Target);
+        Assert.Equal(1_404, apiOnly.Target);
+        Assert.Null(held.Target);
+        Assert.Contains("break-even", held.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(1_000L, 1_177L)]   // 1,177c - 59c listing - 118c exchange = 1,000c
+    [InlineData(5_404L, 6_358L)]
+    [InlineData(1L, 3L)]           // 1c minimum fees
+    public void BreakEvenListingPrice_covers_cost_after_fees(long cost, long expected)
+    {
+        var price = SellPricing.BreakEvenListingPrice(cost);
+        var engine = new ProfitabilityEngine();
+
+        Assert.Equal(expected, price);
+        Assert.True(engine.Evaluate(cost, price, new ProfitabilityPolicy()).ProfitCopper >= 0);
+        Assert.True(engine.Evaluate(cost, price - 1, new ProfitabilityPolicy()).ProfitCopper < 0);
+    }
+
+    [Fact]
+    public void Held_sell_targets_wait_thirty_minutes()
+    {
+        var tracker = new PendingSellInventoryTracker();
+        var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        tracker.RecordNewBuyFill(["Mist-Infused Maintenance Oil"], now);
+
+        tracker.RecordSellPassResults([new SellPassItemResult("Mist-Infused Maintenance Oil", SellPassItemOutcome.Held, "below break-even")], now);
+
+        Assert.Empty(tracker.GetReadyTargets(now.AddMinutes(20), 3));
+        Assert.Single(tracker.GetReadyTargets(now.AddMinutes(31), 3));
+    }
+
+    [Fact]
+    public async Task SellInventoryPass_TypeExactMode_ListsAtTheLiveLowestAskMinusUndercut()
+    {
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["items_tab.png"] = new(710, 75, 58, 63, 1.00m),
+            ["search.png"] = new(74, 191, 44, 16, 1.00m),
+            ["item.png"] = new(389, 182, 37, 18, 0.95m),
+            ["currentSellers.png"] = new(535, 466, 123, 24, 1.00m),
+            ["arrow_up.png"] = new(596, 300, 10, 8, 1.00m),
+            ["ListThisItem.png"] = new(392, 396, 110, 18, 0.95m)
+        });
+        var locator = new FakeUiTextLocator(region => (region.X, region.Y) switch
+        {
+            (325, 240) => [new OcrTextBox("Mist-Infused Maintenance Oil", 393, 290, 150, 12)],
+            (330, 165) => [new OcrTextBox("Mist-Infused Maintenance Oil", 347, 175, 300, 24)],
+            (530, 505) => [new OcrTextBox("14. 6.", 727, 522, 50, 13), new OcrTextBox("14. 7.", 727, 550, 50, 13)],
+            (260, 330) => [new OcrTextBox("Total Price: 14e 5e", 273, 341, 220, 22)],   // 14s 05c after typing
+            _ => Array.Empty<OcrTextBox>()
+        });
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+        var pricing = new Dictionary<string, SellPricing>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Mist-Infused Maintenance Oil"] = new(ApiLowestAskCopper: 1_406, BreakEvenCopper: 1_200)
+        };
+
+        var results = await driver.SellInventoryPassDetailedAsync(["Mist-Infused Maintenance Oil"], 3, 1, 1, CancellationToken.None, pricing);
+
+        var listed = Assert.Single(results);
+        Assert.Equal(SellPassItemOutcome.Listed, listed.Outcome);
+        Assert.Contains("14s 05c (typed)", listed.Details, StringComparison.Ordinal);
+        Assert.Contains("14", input.TextsSent);
+        Assert.Contains("5", input.TextsSent);
+        Assert.Contains((447, 405), input.Clicks); // List This Item
+        Assert.DoesNotContain(input.Clicks, c => c == (601, 315)); // never taps the down spinner in typed mode
     }
 
     [Fact]

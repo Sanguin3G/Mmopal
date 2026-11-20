@@ -789,7 +789,8 @@ public sealed class WorkerRuntime
                             cancellationToken);
                         if (IsPauseRequested) continue;
                         readyTargets = pendingSellTracker.GetReadyTargets(_utcNow(), Math.Max(1, profile.MaxOverbidUpdatesPerPass));
-                        readyTargets = await KeepProfitableSellTargetsAsync(readyTargets, candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
+                        IReadOnlyDictionary<string, SellPricing> sellPricing;
+                        (readyTargets, sellPricing) = await KeepProfitableSellTargetsAsync(readyTargets, candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
                         if (readyTargets.Count > 0)
                         {
                             var sellResults = await liveDriver.SellInventoryPassDetailedAsync(
@@ -797,7 +798,8 @@ public sealed class WorkerRuntime
                                 Math.Max(1, profile.MaxOverbidUpdatesPerPass),
                                 request.UndercutBufferMinCopper,
                                 request.UndercutBufferMaxCopper,
-                                cancellationToken);
+                                cancellationToken,
+                                sellPricing);
                             var postSellNow = _utcNow();
                             pendingSellTracker.RecordSellPassResults(sellResults, postSellNow);
                             foreach (var outcome in sellResults)
@@ -1361,15 +1363,16 @@ public sealed class WorkerRuntime
     /// item (its planned buy price; else the shopping list's buy price). Held items stay queued and are rechecked
     /// on later passes, so they list once the market recovers. Unknown cost or quote: listed as before.
     /// </summary>
-    private async Task<IReadOnlyList<string>> KeepProfitableSellTargetsAsync(
+    private async Task<(IReadOnlyList<string> Targets, IReadOnlyDictionary<string, SellPricing> Pricing)> KeepProfitableSellTargetsAsync(
         IReadOnlyList<string> targets,
         IReadOnlyList<ItemCandidate> candidates,
         int undercutMinCopper,
         CancellationToken cancellationToken)
     {
+        var pricing = new Dictionary<string, SellPricing>(StringComparer.OrdinalIgnoreCase);
         if (targets.Count == 0 || _marketData is not Gw2OfficialDataProvider officialData || _ledgerStore is null)
         {
-            return targets;
+            return (targets, pricing);
         }
 
         try
@@ -1396,6 +1399,13 @@ public sealed class WorkerRuntime
             var keep = new List<string>(targets.Count);
             foreach (var name in targets)
             {
+                // Typed sell pricing: API lowest ask (resolves the row text, fallback price) and the break-even floor.
+                long? apiLowestAsk = ids.TryGetValue(name.Trim(), out var pricedId) && quotes.TryGetValue(pricedId, out var pricedQuote) && pricedQuote.LowestSellCopper > 0
+                    ? pricedQuote.LowestSellCopper
+                    : null;
+                long? breakEven = costs.TryGetValue(name.Trim(), out var knownCost) ? SellPricing.BreakEvenListingPrice(knownCost) : null;
+                pricing[name.Trim()] = new SellPricing(apiLowestAsk, breakEven);
+
                 if (!costs.TryGetValue(name.Trim(), out var cost) ||
                     !ids.TryGetValue(name.Trim(), out var id) ||
                     !quotes.TryGetValue(id, out var quote) ||
@@ -1425,12 +1435,12 @@ public sealed class WorkerRuntime
                 }
             }
 
-            return keep;
+            return (keep, pricing);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Sell profit check skipped for this pass.");
-            return targets;
+            return (targets, pricing);
         }
     }
 
@@ -1674,7 +1684,8 @@ public sealed class WorkerRuntime
                 if (request.EnableInventorySellPass)
                 {
                     var finalTargets = pendingSellTracker.GetReadyTargets(_utcNow(), Math.Max(1, profile.MaxOverbidUpdatesPerPass));
-                    finalTargets = await KeepProfitableSellTargetsAsync(finalTargets, request.EffectiveCandidates, request.UndercutBufferMinCopper, ct).ConfigureAwait(false);
+                    IReadOnlyDictionary<string, SellPricing> finalPricing;
+                    (finalTargets, finalPricing) = await KeepProfitableSellTargetsAsync(finalTargets, request.EffectiveCandidates, request.UndercutBufferMinCopper, ct).ConfigureAwait(false);
                     if (finalTargets.Count > 0)
                     {
                         var sellResults = await liveDriver.SellInventoryPassDetailedAsync(
@@ -1682,7 +1693,8 @@ public sealed class WorkerRuntime
                             Math.Max(1, profile.MaxOverbidUpdatesPerPass),
                             request.UndercutBufferMinCopper,
                             request.UndercutBufferMaxCopper,
-                            ct).ConfigureAwait(false);
+                            ct,
+                            finalPricing).ConfigureAwait(false);
                         pendingSellTracker.RecordSellPassResults(sellResults, _utcNow());
                         foreach (var s in sellResults.Where(r => r.Outcome == SellPassItemOutcome.Listed))
                         {

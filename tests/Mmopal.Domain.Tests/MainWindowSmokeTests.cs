@@ -191,15 +191,16 @@ public sealed class MainWindowSmokeTests
                 Assert.False(armLiveBox.IsChecked == true);
                 Assert.False(autoSellBox.IsChecked == true);
 
-                mode.SelectedIndex = 2; // Live (Armed trading)
-                armLiveBox.IsChecked = true;
+                mode.SelectedIndex = 2; // Live (Armed trading) arms live input by itself
                 PumpDispatcher();
+                Assert.True(armLiveBox.IsChecked == true);
                 Assert.Contains("ARMED", safeModePillText.Text, StringComparison.OrdinalIgnoreCase);
                 Assert.Equal("screen", Assert.IsType<ComboBoxItem>(source.SelectedItem).Tag); // Live pairs with Screen observe
 
                 source.SelectedIndex = 0; // Replay data cannot drive live clicks
                 PumpDispatcher();
                 Assert.Equal("DryRun", Assert.IsType<ComboBoxItem>(mode.SelectedItem).Tag);
+                Assert.False(armLiveBox.IsChecked == true); // leaving Live disarms
 
                 armLiveBox.IsChecked = false;
                 mode.SelectedIndex = 0;

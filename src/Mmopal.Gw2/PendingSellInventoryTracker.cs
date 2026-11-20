@@ -4,7 +4,36 @@ public enum SellPassItemOutcome
 {
     Listed,
     NotFoundInBags,
-    SkippedError
+    SkippedError,
+    // Listing now would be below break-even; checked again later.
+    Held
+}
+
+/// <summary>
+/// What the worker knows about a sell target before the UI opens: the API lowest ask (resolves the ambiguous
+/// Current Sellers row text and is the fallback price) and the lowest listing price that still covers what Mmopal
+/// paid after the 15% fees.
+/// </summary>
+public sealed record SellPricing(long? ApiLowestAskCopper, long? BreakEvenCopper)
+{
+    /// <summary>Lowest listing price whose net after the 5% listing and 10% exchange fees covers the cost.</summary>
+    public static long BreakEvenListingPrice(long costCopper)
+    {
+        if (costCopper <= 0)
+        {
+            return 1;
+        }
+
+        var engine = new ProfitabilityEngine();
+        var policy = new ProfitabilityPolicy();
+        var price = (long)Math.Ceiling(costCopper / 0.85m);
+        for (var guard = 0; guard < 10_000 && engine.Evaluate(costCopper, price, policy).ProfitCopper < 0; guard++)
+        {
+            price++;
+        }
+
+        return price;
+    }
 }
 
 public sealed record SellPassItemResult(
@@ -20,6 +49,7 @@ public sealed class PendingSellInventoryTracker
 {
     private static readonly TimeSpan NotFoundRetryBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ErrorRetryBackoff = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan HeldRetryBackoff = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan DoubleMissSuppression = TimeSpan.FromMinutes(15);
 
     private readonly Dictionary<string, PendingEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
@@ -140,6 +170,12 @@ public sealed class PendingSellInventoryTracker
                         errEntry.NextEligibleAttemptUtc = nowUtc + ErrorRetryBackoff;
                     }
 
+                    break;
+                case SellPassItemOutcome.Held:
+                    if (_entries.TryGetValue(name, out var heldEntry))
+                    {
+                        heldEntry.NextEligibleAttemptUtc = nowUtc + HeldRetryBackoff;
+                    }
                     break;
             }
         }
