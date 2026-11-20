@@ -1,11 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <RootNamespace>Mmopal.Desktop</RootNamespace>
     <AssemblyName>Mmopal.Desktop</AssemblyName>
+    <ApplicationIcon>Assets\mmopal.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mmopal.Domain.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\mmopal.ico" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mmopal.Contracts\Mmopal.Contracts.csproj" />
     <ProjectReference Include="..\Mmopal.Infrastructure\Mmopal.Infrastructure.csproj" />

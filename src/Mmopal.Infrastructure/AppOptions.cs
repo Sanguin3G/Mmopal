@@ -7,6 +7,12 @@ public sealed class MmopalOptions
     public string DefaultProfile { get; set; } = "balanced";
 }
 
+public sealed class NativeOptions
+{
+    public string TemplateRoot { get; set; } = "assets/templates/tradingpost";
+    public string Gw2ApiKey { get; set; } = string.Empty;
+}
+
 public sealed class RunProfile
 {
     public string Name { get; set; } = "balanced";

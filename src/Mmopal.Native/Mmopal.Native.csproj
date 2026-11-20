@@ -1,10 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <RootNamespace>Mmopal.Native</RootNamespace>
     <AssemblyName>Mmopal.Native</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mmopal.Contracts\Mmopal.Contracts.csproj" />
+    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20261107" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20261107" />
+    <InternalsVisibleTo Include="Mmopal.Domain.Tests" />
   </ItemGroup>
 </Project>

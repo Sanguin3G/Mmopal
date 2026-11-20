@@ -9,6 +9,10 @@ namespace Mmopal.Worker;
 
 public sealed class NamedPipeWorkerServer
 {
+    private static readonly JsonSerializerOptions InputJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
     private readonly string _pipeName;
     private readonly WorkerRuntime _runtime;
     private readonly ILogger _logger;
@@ -31,7 +35,7 @@ public sealed class NamedPipeWorkerServer
                     PipeDirection.InOut,
                     1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
                 _logger.LogInformation("Waiting for desktop connection on pipe {PipeName}.", _pipeName);
                 await pipe.WaitForConnectionAsync(cancellationToken);
@@ -47,9 +51,23 @@ public sealed class NamedPipeWorkerServer
 
                 var sender = Task.Run(async () =>
                 {
-                    await foreach (var workerEvent in events.Reader.ReadAllAsync(connectionCancellation.Token))
+                    try
                     {
-                        await SendAsync(pipe, workerEvent, connectionCancellation.Token);
+                        await foreach (var workerEvent in events.Reader.ReadAllAsync(connectionCancellation.Token))
+                        {
+                            await SendAsync(pipe, workerEvent, connectionCancellation.Token);
+                        }
+                    }
+                    catch (OperationCanceledException) when (connectionCancellation.IsCancellationRequested)
+                    {
+                    }
+                    catch (IOException)
+                    {
+                        connectionCancellation.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        connectionCancellation.Cancel();
                     }
                 }, connectionCancellation.Token);
 
@@ -63,7 +81,7 @@ public sealed class NamedPipeWorkerServer
                     WorkerCommand? command;
                     try
                     {
-                        command = JsonSerializer.Deserialize<WorkerCommand>(line);
+                        command = JsonSerializer.Deserialize<WorkerCommand>(line, InputJsonOptions);
                     }
                     catch (JsonException exception)
                     {

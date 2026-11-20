@@ -1,13 +1,16 @@
 # Mmopal
 
-Mmopal is a Windows desktop automation research project focused on Guild Wars 2 Trading Post and fishing workflows.
+Mmopal is a Windows desktop automation project focused on Guild Wars 2 Trading Post and fishing workflows.
 
-The repository contains two generations:
+The .NET 10 solution under `src/` is completely standalone and does not load or depend on the old `core.dll` runtime:
 
-- `src/` is the new .NET 10 architecture: desktop control panel, restartable worker, typed GW2 domain logic, native integration boundaries, persistence, and optional licensing.
-- The recovered Lua/native runtime remains available as a compatibility reference while the new worker is developed.
+- `src/` contains the WPF control panel, restartable worker process, typed GW2 trading logic, owned Windows capture/OpenCV/Windows OCR vision, official GW2 API client, persistence, and optional licensing.
+- `assets/templates/tradingpost/` holds the Trading Post UI template images copied from the old scripts.
+- `runtime/legacy/` remains on disk only as an unreferenced archive of the old app and can be deleted whenever no longer needed for reference.
 
-The new application is deliberately safe to start in dry-run mode. Live game interaction is not enabled by this scaffold until the native compatibility adapter and replay tests have been validated.
+Replay data, the offline sample, dry run, and **Screen observe** all run inside the .NET 10 worker using owned Win32 desktop capture, OpenCV template matching, Windows OCR, and the official Guild Wars 2 API. Fixture recording and raw frame capture stay optional. Live mode sends no clicks, keys, or orders.
+
+Start here: [docs/run.md](docs/run.md) and [docs/map.md](docs/map.md). Additional notes: [docs/gw2-trading-controller.md](docs/gw2-trading-controller.md), [docs/gw2-observation-replay.md](docs/gw2-observation-replay.md), and [docs/core-behavior.md](docs/core-behavior.md).
 
 ## Build
 

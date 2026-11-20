@@ -31,6 +31,28 @@ public sealed class TradingDomainTests
     }
 
     [Fact]
+    public void Cheap_item_fees_never_drop_below_one_copper()
+    {
+        var engine = new ProfitabilityEngine();
+
+        var cheap = engine.Evaluate(buyPriceCopper: 1, sellPriceCopper: 4, new ProfitabilityPolicy());
+        Assert.True(cheap.IsValid);
+        Assert.Equal(1, cheap.ListingFeeCopper);
+        Assert.Equal(1, cheap.ExchangeFeeCopper);
+        Assert.Equal(2, cheap.NetSaleCopper);
+        Assert.Equal(1, cheap.ProfitCopper);
+        Assert.True(cheap.IsProfitable);
+
+        var breakEven = engine.Evaluate(buyPriceCopper: 2, sellPriceCopper: 4, new ProfitabilityPolicy());
+        Assert.Equal(0, breakEven.ProfitCopper);
+        Assert.False(breakEven.IsProfitable);
+
+        var zeroFee = engine.Evaluate(buyPriceCopper: 1, sellPriceCopper: 4, new ProfitabilityPolicy(ListingFeeBasisPoints: 0, ExchangeFeeBasisPoints: 0));
+        Assert.Equal(0, zeroFee.ListingFeeCopper);
+        Assert.Equal(0, zeroFee.ExchangeFeeCopper);
+    }
+
+    [Fact]
     public void Invalid_price_is_a_safe_non_action()
     {
         var result = new ProfitabilityEngine().Evaluate(0, 10_000, new ProfitabilityPolicy());

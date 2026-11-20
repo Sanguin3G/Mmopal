@@ -7,6 +7,5 @@
   <ItemGroup>
     <ProjectReference Include="..\Mmopal.Contracts\Mmopal.Contracts.csproj" />
     <ProjectReference Include="..\Mmopal.Infrastructure\Mmopal.Infrastructure.csproj" />
-    <ProjectReference Include="..\Mmopal.Native\Mmopal.Native.csproj" />
   </ItemGroup>
 </Project>

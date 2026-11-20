@@ -1,14 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Mmopal.Desktop\Mmopal.Desktop.csproj" />
+    <ProjectReference Include="..\..\src\Mmopal.Worker\Mmopal.Worker.csproj" />
     <ProjectReference Include="..\..\src\Mmopal.Contracts\Mmopal.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Mmopal.Gw2\Mmopal.Gw2.csproj" />
     <ProjectReference Include="..\..\src\Mmopal.Infrastructure\Mmopal.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\src\Mmopal.Licensing\Mmopal.Licensing.csproj" />
+    <ProjectReference Include="..\..\src\Mmopal.Native\Mmopal.Native.csproj" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20261107" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.0" />

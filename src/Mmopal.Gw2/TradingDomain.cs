@@ -120,8 +120,10 @@ public sealed class ProfitabilityEngine
 
     private static long CalculateFee(long price, int basisPoints, bool round)
     {
+        if (price <= 0 || basisPoints <= 0) return 0;
         var amount = price * basisPoints / 10_000m;
-        return round ? (long)Math.Floor(amount + 0.5m) : (long)Math.Floor(amount);
+        var fee = round ? (long)Math.Floor(amount + 0.5m) : (long)Math.Floor(amount);
+        return Math.Max(1L, fee);
     }
 
     private static ProfitabilityResult Invalid(long buy, long sell, string reason) => new(
@@ -203,21 +205,9 @@ public sealed class CandidatePlanner
         ProfitabilityPolicy policy,
         bool preserveInputOrder = true)
     {
-        var results = candidates
-            .Where(candidate => !blacklist.IsBlocked(candidate.ItemName))
-            .Where(candidate => !transactions.Contains(candidate.ItemName, TransactionType.Buy))
-            .Where(candidate => candidate.BuyPriceCopper.HasValue && candidate.SellPriceCopper.HasValue)
-            .Select(candidate =>
-            {
-                var result = _profitability.Evaluate(
-                    candidate.BuyPriceCopper!.Value,
-                    candidate.SellPriceCopper!.Value,
-                    policy,
-                    candidate.MinimumProfitPercentage);
-                return (candidate, result);
-            })
-            .Where(pair => pair.result.IsProfitable)
-            .Select(pair => pair.candidate)
+        var results = Evaluate(candidates, transactions, blacklist, policy)
+            .Where(decision => decision.Action is not null)
+            .Select(decision => decision.Candidate)
             .ToList();
 
         if (!preserveInputOrder)
@@ -228,4 +218,110 @@ public sealed class CandidatePlanner
 
         return results;
     }
+
+    public IReadOnlyList<CandidateDecision> Evaluate(
+        IEnumerable<ItemCandidate> candidates,
+        TransactionIndex transactions,
+        BlacklistMatcher blacklist,
+        ProfitabilityPolicy policy)
+    {
+        var decisions = new List<CandidateDecision>();
+        foreach (var candidate in candidates)
+        {
+            if (blacklist.IsBlocked(candidate.ItemName))
+            {
+                decisions.Add(CandidateDecision.Skip(candidate, "Item is blacklisted."));
+                continue;
+            }
+
+            if (transactions.Contains(candidate.ItemName, TransactionType.Buy))
+            {
+                decisions.Add(CandidateDecision.Skip(candidate, "A buy order already exists for this item."));
+                continue;
+            }
+
+            if (!candidate.BuyPriceCopper.HasValue || !candidate.SellPriceCopper.HasValue)
+            {
+                decisions.Add(CandidateDecision.Skip(candidate, "Buy and sell prices are incomplete."));
+                continue;
+            }
+
+            var maximumPrice = policy.MaximumBuyPriceCopper;
+            if (candidate.MaximumPriceCopper.HasValue)
+            {
+                maximumPrice = maximumPrice.HasValue
+                    ? Math.Min(maximumPrice.Value, candidate.MaximumPriceCopper.Value)
+                    : candidate.MaximumPriceCopper.Value;
+            }
+
+            var effectivePolicy = policy with { MaximumBuyPriceCopper = maximumPrice };
+            var profitability = _profitability.Evaluate(
+                candidate.BuyPriceCopper.Value,
+                candidate.SellPriceCopper.Value,
+                effectivePolicy,
+                candidate.MinimumProfitPercentage);
+            if (!profitability.IsValid || !profitability.IsProfitable)
+            {
+                decisions.Add(CandidateDecision.Skip(candidate, profitability.Reason ?? "Candidate is not profitable.", profitability));
+                continue;
+            }
+
+            var quantity = candidate.Quantity ?? 1;
+            if (quantity <= 0)
+            {
+                decisions.Add(CandidateDecision.Skip(candidate, "Quantity must be positive.", profitability));
+                continue;
+            }
+
+            decisions.Add(CandidateDecision.Accept(
+                candidate,
+                new TradingAction(
+                    TradingActionKind.PlaceBuyOrder,
+                    candidate.ItemName,
+                    candidate.BuyPriceCopper.Value,
+                    quantity,
+                    "Candidate passed blacklist, existing-order, price, and profitability checks."),
+                profitability));
+        }
+
+        return decisions;
+    }
+}
+
+public enum TradingActionKind
+{
+    PlaceBuyOrder,
+    PlaceSellOrder,
+    CancelBuyOrder,
+    CancelSellOrder
+}
+
+public sealed record TradingAction(
+    TradingActionKind Kind,
+    string ItemName,
+    long PriceCopper,
+    long Quantity,
+    string Reason)
+{
+    public string Signature => $"{Kind}|{ItemNameNormalizer.Normalize(ItemName)}|{PriceCopper}|{Quantity}";
+}
+
+public enum CandidateDecisionKind
+{
+    Accepted,
+    Skipped
+}
+
+public sealed record CandidateDecision(
+    ItemCandidate Candidate,
+    CandidateDecisionKind Kind,
+    TradingAction? Action,
+    ProfitabilityResult? Profitability,
+    string Reason)
+{
+    public static CandidateDecision Accept(ItemCandidate candidate, TradingAction action, ProfitabilityResult profitability) =>
+        new(candidate, CandidateDecisionKind.Accepted, action, profitability, action.Reason);
+
+    public static CandidateDecision Skip(ItemCandidate candidate, string reason, ProfitabilityResult? profitability = null) =>
+        new(candidate, CandidateDecisionKind.Skipped, null, profitability, reason);
 }

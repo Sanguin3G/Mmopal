@@ -51,6 +51,12 @@ public sealed class TradingStateMachine
 
     public void Stop() => State = TradingState.Stopped;
 
+    public void TransitionTo(TradingState state)
+    {
+        if (state == TradingState.Idle) throw new ArgumentException("A running trading machine cannot transition back to Idle.", nameof(state));
+        State = state;
+    }
+
     public TradingState Advance(bool clientReady, bool tradingPostReady, bool marketAvailable, bool workAvailable)
     {
         State = State switch

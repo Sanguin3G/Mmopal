@@ -1,7 +1,9 @@
-using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
-using Mmopal.Licensing;
+using Microsoft.Extensions.Logging;
+using Mmopal.Gw2;
 using Mmopal.Infrastructure;
+using Mmopal.Licensing;
 
 namespace Mmopal.Worker;
 
@@ -11,6 +13,7 @@ internal static class Program
     {
         var pipeName = GetArgument(args, "--pipe") ?? "Mmopal.Worker";
         var dataRoot = GetArgument(args, "--data-root");
+        var parentPidText = GetArgument(args, "--parent-pid");
         var paths = RuntimePaths.Create(dataRoot);
         paths.EnsureDirectories();
 
@@ -21,6 +24,7 @@ internal static class Program
             .Build();
 
         var licensingOptions = configuration.GetSection("Licensing").Get<LicensingOptions>() ?? new LicensingOptions();
+        var nativeOptions = configuration.GetSection("Native").Get<NativeOptions>() ?? new NativeOptions();
         var licenseProvider = new LicenseProviderFactory().Create(licensingOptions);
         var licenseService = new LicenseService(licenseProvider, licensingOptions);
 
@@ -44,14 +48,68 @@ internal static class Program
                 logger.LogWarning(task.Exception.GetBaseException(), "License refresh failed; continuing without gating the worker.");
             }
         }, TaskScheduler.Default);
+
         var store = new CheckpointStore(paths.Database);
         await store.InitializeAsync();
+        var ledgerStore = new TradingLedgerStore(paths.Database);
+        await ledgerStore.InitializeAsync();
+        var sessionReportStore = new SessionReportStore(paths.Database);
+        await sessionReportStore.InitializeAsync();
 
-        var runtime = new WorkerRuntime(store, logger);
+        var templateRoot = ResolveConfiguredDirectory(nativeOptions.TemplateRoot);
+        using var guildWars = new HttpClient { BaseAddress = new Uri("https://api.guildwars2.com/"), Timeout = TimeSpan.FromSeconds(120) };
+        var runtime = new WorkerRuntime(
+            store,
+            logger,
+            new Gw2OfficialDataProvider(guildWars, nativeOptions.Gw2ApiKey),
+            templateRoot,
+            ledgerStore: ledgerStore,
+            sessionReportStore: sessionReportStore);
+
+        using var shutdownCancellation = new CancellationTokenSource();
+        Task? parentWatchdog = null;
+        if (int.TryParse(parentPidText, out var parentPid) && parentPid > 0)
+        {
+            parentWatchdog = WatchParentProcessAsync(parentPid, shutdownCancellation, logger);
+        }
+
         var server = new NamedPipeWorkerServer(pipeName, runtime, logger);
-        await server.RunAsync();
+        await server.RunAsync(shutdownCancellation.Token);
+
+        shutdownCancellation.Cancel();
+        if (parentWatchdog is not null)
+        {
+            try { await parentWatchdog; } catch (OperationCanceledException) { }
+        }
 
         await runtime.StopAsync(CancellationToken.None);
+    }
+
+    private static async Task WatchParentProcessAsync(
+        int parentPid,
+        CancellationTokenSource shutdownCancellation,
+        ILogger logger)
+    {
+        try
+        {
+            using var parent = Process.GetProcessById(parentPid);
+            await parent.WaitForExitAsync(shutdownCancellation.Token);
+            logger.LogWarning("Parent desktop process {ParentPid} exited; shutting down worker.", parentPid);
+            shutdownCancellation.Cancel();
+        }
+        catch (ArgumentException)
+        {
+            logger.LogWarning("Parent desktop process {ParentPid} is no longer running; shutting down worker.", parentPid);
+            shutdownCancellation.Cancel();
+        }
+        catch (InvalidOperationException)
+        {
+            logger.LogWarning("Parent desktop process {ParentPid} has already exited; shutting down worker.", parentPid);
+            shutdownCancellation.Cancel();
+        }
+        catch (OperationCanceledException) when (shutdownCancellation.IsCancellationRequested)
+        {
+        }
     }
 
     private static string? GetArgument(string[] args, string name)
@@ -62,5 +120,20 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static string ResolveConfiguredDirectory(string value)
+    {
+        var expanded = Environment.ExpandEnvironmentVariables(value);
+        if (Path.IsPathRooted(expanded)) return Path.GetFullPath(expanded);
+
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var depth = 0; depth < 8 && current is not null; depth++, current = current.Parent)
+        {
+            var candidate = Path.Combine(current.FullName, expanded);
+            if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
+        }
+
+        return Path.GetFullPath(expanded, AppContext.BaseDirectory);
     }
 }

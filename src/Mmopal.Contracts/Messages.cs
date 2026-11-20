@@ -31,4 +31,5 @@ public static class WorkerEventTypes
     public const string Log = "log";
     public const string Error = "error";
     public const string Health = "health";
+    public const string SessionReport = "session-report";
 }

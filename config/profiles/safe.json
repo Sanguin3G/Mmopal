@@ -3,9 +3,9 @@
   "RunMode": "DryRun",
   "Speed": "Safe",
   "MaxRetries": 3,
-  "ActionTimeoutSeconds": 15,
-  "ApiTransactionRefreshSeconds": 60,
-  "ApiBalanceRefreshSeconds": 120,
-  "OverbidScanIntervalSeconds": 30,
-  "MaxOverbidUpdatesPerPass": 3
+  "ActionTimeoutSeconds": 20,
+  "ApiTransactionRefreshSeconds": 90,
+  "ApiBalanceRefreshSeconds": 180,
+  "OverbidScanIntervalSeconds": 90,
+  "MaxOverbidUpdatesPerPass": 2
 }

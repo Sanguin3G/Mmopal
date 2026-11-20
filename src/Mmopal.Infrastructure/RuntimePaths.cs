@@ -8,6 +8,8 @@ public sealed record RuntimePaths(
     string Profiles,
     string Screenshots)
 {
+    public string Reports => Path.Combine(Root, "reports");
+
     public static RuntimePaths Create(string? root = null)
     {
         var resolvedRoot = string.IsNullOrWhiteSpace(root)
@@ -30,5 +32,6 @@ public sealed record RuntimePaths(
         Directory.CreateDirectory(Checkpoints);
         Directory.CreateDirectory(Profiles);
         Directory.CreateDirectory(Screenshots);
+        Directory.CreateDirectory(Reports);
     }
 }

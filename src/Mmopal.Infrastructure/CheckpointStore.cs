@@ -19,7 +19,8 @@ public sealed class CheckpointStore
         {
             DataSource = databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+            Cache = SqliteCacheMode.Shared,
+            DefaultTimeout = 5
         }.ToString();
     }
 
@@ -30,6 +31,7 @@ public sealed class CheckpointStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             PRAGMA journal_mode=WAL;
+            PRAGMA busy_timeout=5000;
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
                 bot TEXT NOT NULL,
@@ -116,6 +118,18 @@ public sealed class CheckpointStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<bool> HasCompletedActionAsync(
+        string actionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM actions WHERE id = $id AND status IN ('Simulated', 'Observed', 'Completed') LIMIT 1;";
+        command.Parameters.AddWithValue("$id", actionId);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
+    }
+
     public async Task SaveActionAsync(
         string actionId,
         string runId,
@@ -131,7 +145,13 @@ public sealed class CheckpointStore
         command.CommandText = """
             INSERT INTO actions(id, run_id, action_type, item_name, status, payload, created_at)
             VALUES ($id, $runId, $actionType, $itemName, $status, $payload, $createdAt)
-            ON CONFLICT(id) DO UPDATE SET status = excluded.status, completed_at = $completedAt;
+            ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                payload = excluded.payload,
+                completed_at = CASE
+                    WHEN excluded.status IN ('Simulated', 'Observed', 'Completed', 'Failed', 'Skipped') THEN $completedAt
+                    ELSE actions.completed_at
+                END;
             """;
         command.Parameters.AddWithValue("$id", actionId);
         command.Parameters.AddWithValue("$runId", runId);

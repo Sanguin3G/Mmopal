@@ -44,6 +44,15 @@ public enum PriceSource
     Unknown
 }
 
+public enum TradingPostObservationStatus
+{
+    Ready,
+    Partial,
+    NotReady,
+    Unavailable,
+    Failed
+}
+
 public enum LicenseFeature
 {
     CustomProfiles,
@@ -60,7 +69,8 @@ public sealed record ItemCandidate(
     long? MaximumPriceCopper = null,
     decimal? Roi = null,
     long? SellPriceCopper = null,
-    long? BuyPriceCopper = null);
+    long? BuyPriceCopper = null,
+    int? ItemId = null);
 
 public sealed record Transaction(
     TransactionType Type,
@@ -87,6 +97,28 @@ public sealed record MarketSnapshot(
     AccountBalance? Balance,
     DateTimeOffset ObservedAt,
     string Source);
+
+public sealed record TradingPostUiSnapshot(
+    bool TradingPostOpen,
+    bool ItemWindowOpen,
+    IReadOnlyDictionary<string, bool> DetectedTemplates,
+    DateTimeOffset ObservedAt);
+
+public sealed record VisiblePriceObservation(
+    string? ItemName,
+    PriceQuote? Price,
+    string? Error = null);
+
+public sealed record TradingPostObservation(
+    string Source,
+    DateTimeOffset ObservedAt,
+    MarketSnapshot Market,
+    TradingPostObservationStatus Status,
+    TradingPostUiSnapshot Ui,
+    VisiblePriceObservation? VisiblePrice,
+    IReadOnlyDictionary<string, long> TimingsMilliseconds,
+    IReadOnlyDictionary<string, string> Diagnostics,
+    string? Error = null);
 
 public sealed record ProfitabilityResult(
     bool IsValid,
