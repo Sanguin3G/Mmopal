@@ -17,6 +17,10 @@ public sealed class Gw2TradingPostUiDriver
     // Measured on live 1024x768 screenshots: results header "Item" at y~227, result rows 58 px apart.
     private const int SearchResultRowStride = 58;
     private static readonly CaptureRegion SearchResultsHeaderRegion = new(320, 195, 470, 60);
+    // Centered in-game message box text (above its OK button).
+    private static readonly CaptureRegion PopupTextRegion = new(340, 305, 400, 120);
+    // Right-hand result list (Buy/Sell Items rows, My Transactions rows); excludes the category panel on the left.
+    private static readonly CaptureRegion SearchResultsListRegion = new(325, 240, 450, 300);
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
     private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
     private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(380, 294, 250, 34);
@@ -650,11 +654,38 @@ public sealed class Gw2TradingPostUiDriver
         return await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Clicks OK on an in-game message box (e.g. the frequent "unable to gain access to the log-in server ...
+    /// Code=42:..." notice on Asia→EU routes, which does not affect trading) and logs its text. Returns true when one
+    /// was dismissed. Call before starting a UI step; the popup is modal and swallows clicks meant for the TP.
+    /// </summary>
+    private async Task<bool> DismissTransientPopupAsync(string context, CancellationToken cancellationToken)
+    {
+        var okButton = await TryFindOnceAsync("ok.png", CaptureRegion.FullScreen1024x768, 0.90m, cancellationToken).ConfigureAwait(false);
+        if (okButton is null)
+        {
+            return false;
+        }
+
+        var lines = await ReadTextVariantsAsync(PopupTextRegion, cancellationToken).ConfigureAwait(false);
+        var message = lines.Count == 0 ? "(text unreadable)" : string.Join(" ", lines.Skip(lines.Count / 2).Take(3));
+        _logger.LogInformation("Dismissed in-game popup during {Context}: {Message}", context, message);
+        await ClickCenterAsync(okButton, cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     public async Task<(bool Ready, string Message)> EnsureTradingPostOpenAsync(CancellationToken cancellationToken = default)
     {
-        if (await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
+        for (var dismissals = 0; await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false); dismissals++)
         {
-            return (false, "In-game error dialog ('ok.png') is visible; halted safely.");
+            if (dismissals >= 2)
+            {
+                return (false, "In-game error dialog ('ok.png') keeps reappearing after OK; handing over to recovery.");
+            }
+
+            await DismissTransientPopupAsync("Trading Post check", cancellationToken).ConfigureAwait(false);
+            await SettleAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var width = _settings.WindowWidth > 0 ? _settings.WindowWidth : 1024;
@@ -692,9 +723,10 @@ public sealed class Gw2TradingPostUiDriver
                 return (false, "Paused by operator while opening Trading Post.");
             }
 
-            if (await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
+            if (await DismissTransientPopupAsync("opening the Trading Post", cancellationToken).ConfigureAwait(false) &&
+                await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
             {
-                return (false, "In-game error dialog appeared while opening the Trading Post.");
+                return (false, "In-game error dialog appeared while opening the Trading Post and did not close.");
             }
 
             if (await IsLauncherStillActiveAsync(cancellationToken).ConfigureAwait(false))
@@ -936,6 +968,8 @@ public sealed class Gw2TradingPostUiDriver
             return new TradingActionResult(action, TradingActionStatus.Skipped, "Paused by operator before submitting buy order.");
         }
 
+        // A message box over the dialog would swallow the Place Order click while the order is reported as placed.
+        await DismissTransientPopupAsync("buy order", cancellationToken).ConfigureAwait(false);
         var placeButton = await WaitForTemplateAsync("placeOrder.png", CaptureRegion.FullScreen1024x768, 0.72m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
         if (placeButton is null)
         {
@@ -1045,6 +1079,7 @@ public sealed class Gw2TradingPostUiDriver
             foreach (var targetItem in targets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                await DismissTransientPopupAsync("sell pass", cancellationToken).ConfigureAwait(false);
                 if (IsPaused || await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, "Paused or error popup active."));
@@ -1221,6 +1256,7 @@ public sealed class Gw2TradingPostUiDriver
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (IsPaused) break;
+            await DismissTransientPopupAsync("Outbid Refresh", cancellationToken).ConfigureAwait(false);
             if (!await SearchItemAsync(order.ItemName, cancellationToken).ConfigureAwait(false))
             {
                 continue;
@@ -2223,7 +2259,89 @@ public sealed class Gw2TradingPostUiDriver
         await ReplaceFieldTextAsync(itemName.Trim(), cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+        await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>
+    /// On high ping the previous search's rows stay on screen for a while after Enter, and the "Item" header is
+    /// always visible, so without this the next click lands on a stale row (a previous, similarly named item, or
+    /// for Outbid Refresh a different order's Cancel button). Polls the result list until a row shows the searched
+    /// name; on timeout it carries on (the buy flow still verifies the opened item's title) and logs it.
+    /// </summary>
+    private async Task WaitForSearchResultsAsync(string itemName, CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return;
+        }
+
+        var query = NormalizeItemName(itemName);
+        var timeoutMs = _requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs, 4_000) : _uiWaitMs;
+        var deadline = _utcNow() + TimeSpan.FromMilliseconds(timeoutMs);
+        var started = _utcNow();
+        while (true)
+        {
+            await DismissTransientPopupAsync("search", cancellationToken).ConfigureAwait(false);
+            if (await TryFindOnceAsync("no_items.png", SearchResultsListRegion, 0.80m, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                // "Sorry, no items match this filter." — the search answered; there is simply nothing to click.
+                return;
+            }
+
+            var texts = await ReadTextVariantsAsync(SearchResultsListRegion, cancellationToken).ConfigureAwait(false);
+            if (texts.Any(text => FuzzyContains(NormalizeItemName(text), query)))
+            {
+                var waited = (_utcNow() - started).TotalMilliseconds;
+                if (waited > 1_500)
+                {
+                    _logger.LogInformation("Search results for '{Item}' appeared after {Ms:0} ms.", itemName, waited);
+                }
+
+                return;
+            }
+
+            if (_utcNow() >= deadline)
+            {
+                _logger.LogInformation(
+                    "Search results for '{Item}' were not confirmed within {Ms} ms; continuing (the opened item is still verified).",
+                    itemName,
+                    timeoutMs);
+                return;
+            }
+
+            await Task.Delay(Math.Max(_pollMs, 250), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>True when <paramref name="text"/> contains <paramref name="query"/>, allowing ~15% OCR noise.</summary>
+    internal static bool FuzzyContains(string text, string query)
+    {
+        if (query.Length == 0 || text.Length == 0)
+        {
+            return false;
+        }
+
+        if (text.Contains(query, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (text.Length < query.Length * 0.8)
+        {
+            return false;
+        }
+
+        for (var start = 0; start <= Math.Max(0, text.Length - query.Length); start++)
+        {
+            var window = text.Substring(start, Math.Min(query.Length, text.Length - start));
+            if (NameSimilarity(window, query) >= 0.85)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task ReplaceFieldTextAsync(string text, CancellationToken cancellationToken)

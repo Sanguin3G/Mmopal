@@ -418,6 +418,49 @@ public sealed class LiveTradingExecutorTests
         Assert.Equal(outcome, result.ToString());
     }
 
+    [Fact]
+    public async Task EnsureTradingPostOpenAsync_DismissesLoginServerNoticeAndCarriesOn()
+    {
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["tradingpost_tab.png"] = new(90, 20, 80, 24, 0.95m)
+        });
+        // "Unable to gain access to the log-in server ... (Code=42:...)" over the TP; OK measured at (608, 460).
+        templates.DynamicMatches["ok.png"] = () =>
+            input.Clicks.Contains((671, 469)) ? null : new TemplateMatch(608, 460, 127, 19, 0.98m);
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(),
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false);
+
+        var (ready, message) = await driver.EnsureTradingPostOpenAsync();
+
+        Assert.True(ready, message);
+        Assert.Contains((671, 469), input.Clicks);
+    }
+
+    [Theory]
+    [InlineData("Slice of Allspice Cake with Ice Cream", "Slice of Allspice Cake", true)]
+    [InlineData("S•undtrack Single—Visions of Eternity", "Soundtrack Single—Visions of Eternity", true)] // raw OCR seen live
+    [InlineData("Superior Rure of the Scourge", "Superior Rune of the Scourge", true)]
+    [InlineData("Strong Ring", "Carrion Masquerade Boots", false)]   // stale row from the previous search
+    [InlineData("Eternity", "Eternity", true)]
+    public void FuzzyContains_recognizes_fresh_search_rows(string row, string query, bool expected)
+    {
+        Assert.Equal(
+            expected,
+            Gw2TradingPostUiDriver.FuzzyContains(
+                Gw2TradingPostUiDriver.NormalizeItemName(row),
+                Gw2TradingPostUiDriver.NormalizeItemName(query)));
+    }
+
     [Theory]
     [InlineData("3469: 69: • 67:", 34_696_967L)]     // raw OCR of the Max. Price row (Eternity)
     [InlineData("3469: e 69: • 67:", 34_696_967L)]
