@@ -1912,21 +1912,21 @@
                                         <Border x:Name="ResetTile" Grid.Column="1" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
                                             <StackPanel>
                                                 <TextBlock Text="DAILY RESET WINDOW" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource SuccessBrush}" />
-                                                <TextBlock x:Name="ResetTimeText" Text="22:00–02:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
+                                                <TextBlock x:Name="ResetTimeText" Text="00:00–01:30 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
                                                 <TextBlock x:Name="ResetHintText" Text="Peak global fills" Style="{StaticResource HintText}" />
                                             </StackPanel>
                                         </Border>
                                         <Border x:Name="NaPrimeTile" Grid.Column="2" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
                                             <StackPanel>
                                                 <TextBlock Text="NA PRIME + OVERNIGHT" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource GoldAccentBrush}" />
-                                                <TextBlock x:Name="NaPrimeTimeText" Text="02:00–05:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
+                                                <TextBlock x:Name="NaPrimeTimeText" Text="22:00–04:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
                                                 <TextBlock x:Name="NaPrimeHintText" Text="Overnight 8–10h flips" Style="{StaticResource HintText}" />
                                             </StackPanel>
                                         </Border>
                                         <Border x:Name="OffPeakTile" Grid.Column="3" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
                                             <StackPanel>
                                                 <TextBlock Text="GLOBAL OFF-PEAK" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                <TextBlock x:Name="OffPeakTimeText" Text="05:00–17:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
+                                                <TextBlock x:Name="OffPeakTimeText" Text="04:00–17:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
                                                 <TextBlock x:Name="OffPeakHintText" Text="Hold sells, thin book" Style="{StaticResource HintText}" />
                                             </StackPanel>
                                         </Border>

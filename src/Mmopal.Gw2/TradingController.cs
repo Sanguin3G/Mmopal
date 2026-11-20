@@ -248,12 +248,27 @@ public sealed class TradingCycleController
             decisions = SelectActionsForCycle(runId, decisions, remainingSpendable);
             foreach (var decision in decisions)
             {
-                _logger.LogInformation(
+                // ~150 skip lines per cycle buried the log; skips go to Debug and are summarized below.
+                _logger.Log(
+                    decision.Action is null ? LogLevel.Debug : LogLevel.Information,
                     "GW2 decision {Outcome} for {Item}: {Reason}",
                     decision.Kind,
                     decision.Candidate.ItemName,
                     decision.Reason);
             }
+
+            var skippedSummary = decisions
+                .Where(decision => decision.Action is null)
+                .GroupBy(decision => SummarizeReason(decision.Reason))
+                .OrderByDescending(group => group.Count())
+                .Take(4)
+                .Select(group => $"{group.Count()} {group.Key}")
+                .ToArray();
+            _logger.LogInformation(
+                "GW2 cycle plan: {Accepted} accepted, {Skipped} skipped ({Reasons}).",
+                decisions.Count(decision => decision.Action is not null),
+                decisions.Count(decision => decision.Action is null),
+                skippedSummary.Length == 0 ? "none" : string.Join("; ", skippedSummary));
 
             machine.TransitionTo(TradingState.Checkpoint);
             await _store.SaveCheckpointAsync(
@@ -427,7 +442,7 @@ public sealed class TradingCycleController
                 {
                     selected.Add(CandidateDecision.Skip(
                         decision.Candidate,
-                        $"Order placed {(int)(now - placedAt).TotalSeconds}s ago; waiting {(int)Math.Ceiling(remaining.TotalSeconds)}s more for the GW2 API to show it.",
+                        $"Order placed recently, waiting for the GW2 API to show it (placed {(int)(now - placedAt).TotalSeconds}s ago, {(int)Math.Ceiling(remaining.TotalSeconds)}s left).",
                         decision.Profitability));
                     continue;
                 }
@@ -539,6 +554,19 @@ public sealed class TradingCycleController
                     other);
             }
         }
+    }
+
+    /// <summary>Strips per-item details (amounts, names in quotes) so skip reasons group into a short summary.</summary>
+    private static string SummarizeReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return "no reason";
+        }
+
+        var cut = reason.IndexOfAny(['(', ';', '\'']);
+        var head = (cut > 0 ? reason[..cut] : reason).Trim().TrimEnd('.', ':', ',').Trim();
+        return head.Length > 60 ? head[..60] + "…" : head;
     }
 
     private static string GetItemKey(string runId, string itemName) =>

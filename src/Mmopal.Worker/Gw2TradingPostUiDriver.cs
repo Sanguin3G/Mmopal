@@ -13,6 +13,7 @@ namespace Mmopal.Worker;
 public sealed class Gw2TradingPostUiDriver
 {
     private const int MaxLoginClickAttempts = 3;
+    internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 240, 80, 140);
     private static readonly CaptureRegion BuyTabRegion = new(475, 90, 175, 150);
@@ -25,6 +26,8 @@ public sealed class Gw2TradingPostUiDriver
     private static readonly CaptureRegion LauncherPlayOcrRegion = new(540, 510, 484, 258);
     private static readonly CaptureRegion CharSelectPlayRegion = new(680, 680, 220, 88);
     private static readonly CaptureRegion CharSelectBottomBarRegion = new(0, 680, 1024, 88);
+    // Large name of the selected character on the left of Character Select (e.g. "Mesmerising Rizzo" at ~57,400).
+    private static readonly CaptureRegion CharSelectNameRegion = new(40, 375, 440, 50);
     private static readonly CaptureRegion InGameInteractRegion = new(250, 220, 550, 500);
     private static readonly CaptureRegion ModalPriceSpinnerRegion = new(545, 265, 80, 65);
     private static readonly CaptureRegion ModalCloseButtonRegion = new(720, 120, 90, 80);
@@ -44,6 +47,7 @@ public sealed class Gw2TradingPostUiDriver
     private readonly IWindowController _windows;
     private readonly IUiTextLocator? _textLocator;
     private readonly ITradingPostUiProbe? _priceProbe;
+    private readonly Func<DateTimeOffset> _utcNow;
     private readonly string _templateRoot;
     private readonly Gw2ClientSettings _settings;
     private readonly ILogger _logger;
@@ -65,9 +69,11 @@ public sealed class Gw2TradingPostUiDriver
         bool requireTemplateFilesOnDisk = true,
         Func<bool>? isPaused = null,
         IUiTextLocator? textLocator = null,
-        ITradingPostUiProbe? priceProbe = null)
+        ITradingPostUiProbe? priceProbe = null,
+        Func<DateTimeOffset>? utcNow = null)
     {
         _priceProbe = priceProbe;
+        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _templates = templates ?? throw new ArgumentNullException(nameof(templates));
         _input = input ?? throw new ArgumentNullException(nameof(input));
@@ -90,11 +96,15 @@ public sealed class Gw2TradingPostUiDriver
     /// My Transactions and clicks the first Cancel button, so an order is skipped whenever that search would
     /// list more than one of our buy orders (a duplicate order for the same item, or another item whose name
     /// contains this one) — otherwise the click could cancel the wrong order.
+    /// Orders younger than <see cref="MinOrderAgeBeforeOutbidCancel"/> are kept: competing bots undercut by a few
+    /// copper within minutes, and cancelling on every undercut meant no buy order ever stayed up long enough to fill.
     /// </summary>
     internal static Transaction[] SelectSafeOutbidCancels(
         IReadOnlyList<Transaction> transactions,
         int maxCancelsPerPass,
-        out IReadOnlyList<string> ambiguousNames)
+        DateTimeOffset nowUtc,
+        out IReadOnlyList<string> ambiguousNames,
+        out int keptYoungCount)
     {
         var buyNames = transactions
             .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
@@ -102,6 +112,7 @@ public sealed class Gw2TradingPostUiDriver
             .ToArray();
         var skipped = new List<string>();
         var safe = new List<Transaction>();
+        keptYoungCount = 0;
         foreach (var tx in transactions)
         {
             if (safe.Count >= maxCancelsPerPass) break;
@@ -110,6 +121,12 @@ public sealed class Gw2TradingPostUiDriver
                 tx.MinimumBuyPriceCopper is not { } topBid ||
                 topBid <= tx.PriceCopper)
             {
+                continue;
+            }
+
+            if (nowUtc - tx.Created < MinOrderAgeBeforeOutbidCancel)
+            {
+                keptYoungCount++;
                 continue;
             }
 
@@ -1107,7 +1124,23 @@ public sealed class Gw2TradingPostUiDriver
         }
 
         // Only buy orders are canceled when outbid (canceling buys is 100% free; canceling sells burns 5% fee).
-        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, out var ambiguousNames);
+        var nowUtc = _utcNow();
+        if (Gw2MarketCycle.Describe(nowUtc).PhaseName == "Daily Reset Spike")
+        {
+            // The reset window is when sellers dump into buy orders; keep every order standing to catch those fills.
+            _logger.LogDebug("Outbid Refresh paused during the daily reset window.");
+            return 0;
+        }
+
+        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung);
+        if (keptYoung > 0)
+        {
+            _logger.LogInformation(
+                "Outbid Refresh kept {Count} outbid buy order(s) younger than {Minutes} min so they can still fill.",
+                keptYoung,
+                (int)MinOrderAgeBeforeOutbidCancel.TotalMinutes);
+        }
+
         foreach (var name in ambiguousNames)
         {
             _logger.LogInformation(
@@ -1245,9 +1278,29 @@ public sealed class Gw2TradingPostUiDriver
         var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
         var portraitY = DeterministicCharSlotOnePoint.Y;
 
-        _logger.LogInformation("Selecting parked character slot #{Slot} at ({X}, {Y}).", slotOffset + 1, portraitX, portraitY);
+        var previousName = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Selecting parked character slot #{Slot} at ({X}, {Y}); currently selected: {Previous}.",
+            slotOffset + 1,
+            portraitX,
+            portraitY,
+            previousName ?? "(name unreadable)");
         await _input.ClickAsync(portraitX, portraitY, cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+
+        var selectedName = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+        if (selectedName is not null && previousName is not null &&
+            string.Equals(selectedName, previousName, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Character Select still shows '{Name}' after clicking slot #{Slot}; the portrait click may have missed, so this swap re-enters the same character.",
+                selectedName,
+                slotOffset + 1);
+        }
+        else if (selectedName is not null)
+        {
+            _logger.LogInformation("Character Select now shows '{Name}' (slot #{Slot}).", selectedName, slotOffset + 1);
+        }
 
         await EnterCharacterSlotAsync(
             playBtn,
@@ -1258,9 +1311,41 @@ public sealed class Gw2TradingPostUiDriver
         await SettleAsync(cancellationToken).ConfigureAwait(false);
 
         var (reopened, openMsg) = await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
+        var who = selectedName is null ? $"slot #{slotOffset + 1}" : $"'{selectedName}' (slot #{slotOffset + 1})";
         return reopened
-            ? (true, $"Swapped to parked character slot #{slotOffset + 1} and reopened Trading Post.")
-            : (false, $"Swapped to parked character slot #{slotOffset + 1}, but could not reopen Trading Post: {openMsg}");
+            ? (true, $"Swapped to parked character {who} and reopened Trading Post.")
+            : (false, $"Swapped to parked character {who}, but could not reopen Trading Post: {openMsg}");
+    }
+
+    /// <summary>Reads the large name of the currently selected character on Character Select, or null if unreadable.</summary>
+    private async Task<string?> ReadSelectedCharacterNameAsync(CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            if (frame.Pixels.Length == 0)
+            {
+                return null;
+            }
+
+            var lines = await _textLocator.LocateLinesAsync(frame, CharSelectNameRegion, cancellationToken).ConfigureAwait(false);
+            var name = lines
+                .Where(line => line.Text.Trim().Length >= 3)
+                .OrderByDescending(line => line.Height)
+                .Select(line => line.Text.Trim())
+                .FirstOrDefault();
+            return name;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "Could not read the selected character name.");
+            return null;
+        }
     }
 
     /// <summary>

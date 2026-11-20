@@ -244,7 +244,7 @@ public sealed class AfkCharacterSwapSchedule
         var mode = _randomizeCharacter ? "random character" : "next character";
         if (remaining <= TimeSpan.Zero)
         {
-            return $"AFK character swap due now ({mode}; live input is disarmed).";
+            return $"AFK character swap due now ({mode}).";
         }
 
         return $"Next AFK swap ({mode}) in {Math.Ceiling(remaining.TotalMinutes):0}m at {NextSwapAt.Value.ToLocalTime():t}.";

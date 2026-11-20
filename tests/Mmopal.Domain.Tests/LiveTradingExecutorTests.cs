@@ -123,6 +123,7 @@ public sealed class LiveTradingExecutorTests
     [Fact]
     public async Task CancelOutbidBuyOrdersAsync_OnlyCancelsOutbidBuys_NeverCancelsSellListings()
     {
+        var noonUtc = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
         var input = new FakeInputController();
         var screenshots = new FakeScreenshotProvider();
         var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
@@ -146,13 +147,15 @@ public sealed class LiveTradingExecutorTests
             settings,
             NullLogger.Instance,
             pollIntervalMs: 5,
-            requireTemplateFilesOnDisk: false);
+            requireTemplateFilesOnDisk: false,
+            utcNow: () => noonUtc);
 
+        var placed = noonUtc.AddHours(-1);
         var transactions = new[]
         {
-            new Transaction(TransactionType.Buy, "Outbid Ectoplasm", 1_000, 2, DateTimeOffset.UtcNow, null, 1_050),
-            new Transaction(TransactionType.Buy, "Top Buy Ore", 1_000, 2, DateTimeOffset.UtcNow, null, 1_000),
-            new Transaction(TransactionType.Sell, "Undercut Sell Sword", 5_000, 1, DateTimeOffset.UtcNow, 4_900, 4_000)
+            new Transaction(TransactionType.Buy, "Outbid Ectoplasm", 1_000, 2, placed, null, 1_050),
+            new Transaction(TransactionType.Buy, "Top Buy Ore", 1_000, 2, placed, null, 1_000),
+            new Transaction(TransactionType.Sell, "Undercut Sell Sword", 5_000, 1, placed, 4_900, 4_000)
         };
 
         var canceled = await driver.CancelOutbidBuyOrdersAsync(transactions, maxCancelsPerPass: 5);
@@ -1147,20 +1150,64 @@ public sealed class LiveTradingExecutorTests
     public void SelectSafeOutbidCancels_skips_orders_whose_search_would_show_several_of_our_buys()
     {
         var now = DateTimeOffset.UtcNow;
+        var placed = now.AddHours(-1);
         Transaction[] orders =
         [
-            new(TransactionType.Buy, "Strong Ring", 3_874, 2, now, null, 3_880),                 // outbid, but "Strong Ring of Fire" also matches
-            new(TransactionType.Buy, "Strong Ring of Fire", 9_000, 1, now, null, 8_000),         // not outbid
-            new(TransactionType.Buy, "Mini Green Raptor Hatchling", 16_437, 2, now, null, 16_500), // outbid, duplicate below
-            new(TransactionType.Buy, "Mini Green Raptor Hatchling", 16_500, 1, now, null, 16_500), // the order that is on top
-            new(TransactionType.Buy, "Carrion Masquerade Boots", 3_674, 2, now, null, 3_700),    // outbid, unique: safe
-            new(TransactionType.Sell, "Strong Ring", 9_999, 1, now, 9_000, null)
+            new(TransactionType.Buy, "Strong Ring", 3_874, 2, placed, null, 3_880),                 // outbid, but "Strong Ring of Fire" also matches
+            new(TransactionType.Buy, "Strong Ring of Fire", 9_000, 1, placed, null, 8_000),         // not outbid
+            new(TransactionType.Buy, "Mini Green Raptor Hatchling", 16_437, 2, placed, null, 16_500), // outbid, duplicate below
+            new(TransactionType.Buy, "Mini Green Raptor Hatchling", 16_500, 1, placed, null, 16_500), // the order that is on top
+            new(TransactionType.Buy, "Carrion Masquerade Boots", 3_674, 2, placed, null, 3_700),    // outbid, unique: safe
+            new(TransactionType.Sell, "Strong Ring", 9_999, 1, placed, 9_000, null)
         ];
 
-        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, maxCancelsPerPass: 5, out var ambiguous);
+        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, maxCancelsPerPass: 5, now, out var ambiguous, out _);
 
         Assert.Equal(["Carrion Masquerade Boots"], safe.Select(tx => tx.ItemName));
         Assert.Equal(["Strong Ring", "Mini Green Raptor Hatchling"], ambiguous);
+    }
+
+    [Fact]
+    public void SelectSafeOutbidCancels_keeps_young_orders_so_they_can_fill()
+    {
+        var now = new DateTimeOffset(2026, 11, 20, 6, 50, 0, TimeSpan.Zero);
+        Transaction[] orders =
+        [
+            // Seen live: undercut by 1c two minutes after placing. Keep it.
+            new(TransactionType.Buy, "Carrion Exalted Mantle", 5_035, 2, now.AddMinutes(-2), null, 5_036),
+            // Still outbid after 25 minutes: refresh it.
+            new(TransactionType.Buy, "Superior Rune of the Scourge", 9_270, 2, now.AddMinutes(-25), null, 9_277)
+        ];
+
+        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, maxCancelsPerPass: 5, now, out _, out var keptYoung);
+
+        Assert.Equal(["Superior Rune of the Scourge"], safe.Select(tx => tx.ItemName));
+        Assert.Equal(1, keptYoung);
+    }
+
+    [Fact]
+    public async Task CancelOutbidBuyOrdersAsync_KeepsEveryOrderDuringDailyResetWindow()
+    {
+        var resetUtc = new DateTimeOffset(2026, 11, 21, 0, 30, 0, TimeSpan.Zero);
+        var input = new FakeInputController();
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(),
+            new FakeTemplateMatcher(),
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            utcNow: () => resetUtc);
+
+        var canceled = await driver.CancelOutbidBuyOrdersAsync(
+            [new Transaction(TransactionType.Buy, "Outbid Ectoplasm", 1_000, 2, resetUtc.AddHours(-2), null, 1_050)],
+            maxCancelsPerPass: 5);
+
+        Assert.Equal(0, canceled);
+        Assert.Empty(input.Clicks);
     }
 
     [Fact]

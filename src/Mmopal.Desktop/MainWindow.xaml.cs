@@ -1436,8 +1436,8 @@ public partial class MainWindow : Window
         OverbidMaxBox.Text = preset.OverbidMaxCopper.ToString(CultureInfo.InvariantCulture);
         UndercutMinBox.Text = preset.UndercutMinCopper.ToString(CultureInfo.InvariantCulture);
         UndercutMaxBox.Text = preset.UndercutMaxCopper.ToString(CultureInfo.InvariantCulture);
-        MaxSessionHoursBox.Text = preset.MaxSessionHours.ToString(CultureInfo.InvariantCulture);
-        SwapCharacterHoursBox.Text = preset.SwapCharacterHours.ToString(CultureInfo.InvariantCulture);
+        // Session cap and character-swap interval are the operator's own schedule, not a function of wallet size,
+        // so Auto-Tune leaves them as configured.
     }
 
     private void ScanMarket_Click(object sender, RoutedEventArgs e) => RunMarketScanAsync(useCachedPrices: false);
