@@ -214,8 +214,8 @@
                                     Margin="0,0,6,4"
                                     ToolTip="Elapsed time for the current trade session">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="SessionClockIcon" Text="&#xE916;" Style="{StaticResource GlyphIcon}" FontSize="11" Foreground="{DynamicResource AccentBrush}" Margin="0,0,5,0" />
-                                    <TextBlock x:Name="SessionClockText" Text="00:00:00" FontFamily="Cascadia Mono, Consolas, Segoe UI" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                    <TextBlock x:Name="SessionClockIcon" Text="&#xE916;" Style="{StaticResource GlyphIcon}" FontSize="11" Foreground="{DynamicResource AccentBrush}" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="SessionClockText" Text="00:00:00" FontFamily="Segoe UI" FontSize="11.5" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
                             <Border x:Name="MarketCyclePillBorder"
@@ -341,48 +341,59 @@
                     </Border>
 
                     <!-- Health KPI Row -->
+                    <!-- KPI cards: one large value to read at a glance, a short muted detail line, full text in tooltips. -->
                     <UniformGrid x:Name="SessionKpiGrid" Grid.Row="3" Columns="4" Margin="0,0,0,6">
-                        <Border Style="{StaticResource KpiCard}" Margin="0,0,10,8">
+                        <Border x:Name="StatusCard" Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBlock Text="&#xE9D2;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource AccentBrush}" Margin="0,0,7,0" />
                                     <TextBlock Text="STATUS" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="StatusText" Text="Idle — waiting for a session" FontSize="13.5" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse x:Name="StatusStateDot" Width="9" Height="9" Fill="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" Margin="0,1,8,0" />
+                                    <TextBlock x:Name="StatusStateText" Text="Idle" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock x:Name="StatusText" Text="Idle — waiting for a session" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" MaxHeight="34" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
 
-                        <Border Style="{StaticResource KpiCard}" Margin="0,0,10,8">
+                        <Border x:Name="GameCard" Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                    <TextBlock Text="&#xE7B3;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,7,0" />
-                                    <TextBlock Text="CLIENT &amp; UI" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="&#xE7FC;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,7,0" />
+                                    <TextBlock Text="GAME" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="ObservationSourceText" Text="No source selected yet" FontSize="13.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="ObservationUiText" Text="No UI state reported" Style="{StaticResource HintText}" Margin="0,4,0,0" />
+                                <TextBlock x:Name="GameHeadlineText" Text="—" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock x:Name="ObservationSourceText" Text="No source yet" Style="{StaticResource HintText}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="ObservationUiText" Text="" Style="{StaticResource HintText}" Visibility="Collapsed" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 
-                        <Border Style="{StaticResource KpiCard}" Margin="0,0,10,8">
+                        <Border x:Name="OrdersCard" Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBlock Text="&#xE8D4;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,7,0" />
-                                    <TextBlock Text="PRICE &amp; ORDERS" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="ORDERS" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="ObservationPriceText" Text="—" FontSize="19" FontWeight="Bold" Foreground="{DynamicResource GoldAccentBrush}" />
-                                <TextBlock x:Name="ObservationOrdersText" Text="No orders reported" Style="{StaticResource HintText}" Margin="0,3,0,0" />
+                                <TextBlock x:Name="OrdersHeadlineText" Text="—" FontSize="19" FontWeight="Bold" Foreground="{DynamicResource GoldAccentBrush}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="OrdersDetailText" Text="No orders reported" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="ObservationPriceText" Text="-" Visibility="Collapsed" />
+                                <TextBlock x:Name="ObservationOrdersText" Text="No orders reported" Visibility="Collapsed" />
                             </StackPanel>
                         </Border>
 
-                        <Border Style="{StaticResource KpiCard}" Margin="0,0,0,8">
+                        <Border x:Name="ScheduleCard" Style="{StaticResource KpiCard}" Margin="0,0,0,8">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                                     <TextBlock Text="&#xE823;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource WarningBrush}" Margin="0,0,7,0" />
-                                    <TextBlock Text="SCHEDULE &amp; PING" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="SCHEDULE" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="ObservationTimingText" Text="No timing data yet" Style="{StaticResource HintText}" />
-                                <TextBlock x:Name="AfkSwapStatusText" Text="AFK swap disabled" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,4,0,0" />
-                                <TextBlock x:Name="SessionCapStatusText" Text="Session cap: 10h" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" />
+                                <TextBlock x:Name="ScheduleHeadlineText" Text="No AFK swap" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="SessionCapStatusText" Text="Session cap: 10h" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="ObservationTimingText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="AfkSwapStatusText" Text="AFK swap disabled" Visibility="Collapsed" />
                             </StackPanel>
                         </Border>
                     </UniformGrid>

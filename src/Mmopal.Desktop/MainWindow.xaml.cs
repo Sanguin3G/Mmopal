@@ -2279,8 +2279,9 @@ public partial class MainWindow : Window
             if (status is not null)
             {
                 _lastWorkerState = status.State;
-                StatusText.Text = $"{status.State} - {status.Message ?? status.LastAction}";
-                UpdateSidebarStatus(status.State, status.State.ToString());
+                StatusText.Text = status.Message ?? status.LastAction ?? string.Empty;
+                var stateLabel = UpdateStatusCard(status.State, status.Message ?? status.LastAction);
+                UpdateSidebarStatus(status.State, stateLabel);
                 UpdateSessionButtonStates(status.State);
                 var statusDetail = status.Message ?? status.LastAction;
                 AddLog(
@@ -2301,6 +2302,12 @@ public partial class MainWindow : Window
             var root = document.RootElement;
             var src = root.TryGetProperty("source", out var source) ? source.GetString() ?? "-" : "-";
             ObservationSourceText.Text = src;
+            ObservationSourceText.Text = src switch
+            {
+                "screen" => "Screen observe",
+                "replay" => "replay",
+                _ => src
+            };
 
             bool? tpOpen = null;
             if (root.TryGetProperty("ui", out var ui) && ui.ValueKind == JsonValueKind.Object)
@@ -2309,6 +2316,11 @@ public partial class MainWindow : Window
                 var item = ui.TryGetProperty("itemWindowOpen", out var itemWindowOpen) && itemWindowOpen.GetBoolean();
                 tpOpen = open;
                 ObservationUiText.Text = $"Trading Post: {(open ? "open" : "closed")}; item: {(item ? "open" : "closed")}";
+                GameHeadlineText.Text = open ? "TP open" : "TP closed";
+                GameHeadlineText.Foreground = open
+                    ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
+                    : ResolveBrush("WarningBrush", Brushes.DarkOrange);
+                GameCard.ToolTip = ObservationUiText.Text;
             }
 
             if (root.TryGetProperty("visiblePrice", out var visiblePrice) &&
@@ -2330,8 +2342,8 @@ public partial class MainWindow : Window
                 if (timings.ValueKind == JsonValueKind.Object)
                 {
                     var parts = new List<string>();
-                    if (timings.TryGetProperty("api", out var apiMs)) parts.Add($"api: {apiMs}ms");
-                    if (timings.TryGetProperty("ui", out var uiMs)) parts.Add($"ui: {uiMs}ms");
+                    if (timings.TryGetProperty("api", out var apiMs)) parts.Add($"api {FormatMs(apiMs)}");
+                    if (timings.TryGetProperty("ui", out var uiMs)) parts.Add($"ui {FormatMs(uiMs)}");
                     timingSummary = parts.Count > 0 ? string.Join(" · ", parts) : timings.ToString();
                 }
                 else
@@ -2341,6 +2353,7 @@ public partial class MainWindow : Window
             }
 
             ObservationTimingText.Text = timingSummary;
+            ObservationTimingText.ToolTip = "Last cycle: GW2 API round trip and screen read time.";
 
             var buyPausedLowGold = root.TryGetProperty("buyPausedLowGold", out var lowGoldProp) &&
                                    lowGoldProp.ValueKind == JsonValueKind.True;
@@ -2358,9 +2371,13 @@ public partial class MainWindow : Window
                 ObservationOrdersText.Text = orderBookText;
             }
 
+            UpdateOrdersCard(ObservationOrdersText.Text, buyPausedLowGold);
+
             if (root.TryGetProperty("characterSwap", out var swap) && swap.ValueKind == JsonValueKind.String)
             {
                 AfkSwapStatusText.Text = swap.GetString() ?? "AFK swap disabled";
+                ScheduleHeadlineText.Text = ShortSwapHeadline(AfkSwapStatusText.Text);
+                ScheduleCard.ToolTip = AfkSwapStatusText.Text;
             }
 
             if (root.TryGetProperty("sessionCap", out var sessionCap) && sessionCap.ValueKind == JsonValueKind.String)
@@ -2502,6 +2519,61 @@ public partial class MainWindow : Window
         "Daily Reset Spike" => "Reset spike",
         _ => phase
     };
+
+    private static string FormatMs(JsonElement value) =>
+        value.TryGetDouble(out var ms)
+            ? ms >= 1000 ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + "s" : ms.ToString("0", CultureInfo.InvariantCulture) + "ms"
+            : value.ToString();
+
+    private string UpdateStatusCard(WorkerState state, string? detail)
+    {
+        var (label, brushKey) = state switch
+        {
+            WorkerState.ProcessingTrading or WorkerState.TradingPostReady => ("Trading", "SuccessBrush"),
+            WorkerState.Starting => ("Starting", "AccentBrush"),
+            WorkerState.LaunchingClient or WorkerState.WaitingForLogin => ("Launching", "AccentBrush"),
+            WorkerState.Fishing => ("Fishing", "SuccessBrush"),
+            WorkerState.Stopping => ("Stopping", "TextMutedBrush"),
+            WorkerState.Faulted => ("Faulted", "DangerBrush"),
+            WorkerState.Paused => ("Paused", "WarningBrush"),
+            WorkerState.Recovering => ("Recovering", "WarningBrush"),
+            WorkerState.NeedsAttention => ("Needs attention", "DangerBrush"),
+            WorkerState.Stopped => ("Stopped", "TextMutedBrush"),
+            WorkerState.Idle => ("Idle", "TextMutedBrush"),
+            _ => (state.ToString(), "TextMutedBrush")
+        };
+        var brush = ResolveBrush(brushKey, Brushes.Gray);
+        StatusStateText.Text = label;
+        StatusStateDot.Fill = brush;
+        StatusCard.ToolTip = string.IsNullOrWhiteSpace(detail) ? label : $"{label}: {detail}";
+        return label;
+    }
+
+    /// <summary>"72 buys and 14 sells. 7 buys are behind the top bid. 12 sells are behind the lowest ask." -> headline + detail.</summary>
+    private void UpdateOrdersCard(string? orderBook, bool buysPaused)
+    {
+        var text = orderBook ?? string.Empty;
+        var counts = System.Text.RegularExpressions.Regex.Match(text, @"(\d+) buys? and (\d+) sells?");
+        var behindBuys = System.Text.RegularExpressions.Regex.Match(text, @"(\d+) buys? (?:is|are) behind");
+        var behindSells = System.Text.RegularExpressions.Regex.Match(text, @"(\d+) sells? (?:is|are) behind");
+        OrdersHeadlineText.Text = counts.Success ? $"{counts.Groups[1].Value} buys · {counts.Groups[2].Value} sells" : "—";
+        var detail = new List<string>();
+        if (buysPaused) detail.Add("buys paused (gold floor)");
+        if (behindBuys.Success) detail.Add($"{behindBuys.Groups[1].Value} outbid");
+        if (behindSells.Success) detail.Add($"{behindSells.Groups[1].Value} undercut");
+        OrdersDetailText.Text = detail.Count > 0 ? string.Join(" · ", detail) : counts.Success ? "all at the top of the book" : "No orders reported";
+        OrdersCard.ToolTip = string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>"Next AFK swap (random character) in 61m at 7:33 CH." -> "Swap in 61m".</summary>
+    private static string ShortSwapHeadline(string swapText)
+    {
+        if (swapText.Contains("disabled", StringComparison.OrdinalIgnoreCase)) return "No AFK swap";
+        if (swapText.Contains("due now", StringComparison.OrdinalIgnoreCase)) return "Swap due";
+        var minutes = System.Text.RegularExpressions.Regex.Match(swapText, @"in (\d+)m");
+        if (!minutes.Success || !int.TryParse(minutes.Groups[1].Value, out var total)) return "AFK swap on";
+        return total >= 60 ? $"Swap in {total / 60}h {total % 60:00}m" : $"Swap in {total}m";
+    }
 
     private void SetScheduleTileHighlight(Border tile, bool isActive)
     {

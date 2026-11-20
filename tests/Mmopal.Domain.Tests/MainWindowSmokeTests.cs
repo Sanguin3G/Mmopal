@@ -129,7 +129,8 @@ public sealed class MainWindowSmokeTests
 
                 RequireButton(window, "Start session").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpDispatcher();
-                Assert.Equal("Starting - Session started", status.Text);
+                Assert.Equal("Session started", status.Text);
+                Assert.Equal("Starting", Assert.IsType<TextBlock>(window.FindName("StatusStateText")).Text);
                 Assert.Equal(WorkerCommandTypes.Start, supervisor.Commands[0].Type);
                 Assert.Equal(BotKind.TradingPost, supervisor.Commands[0].Bot);
                 Assert.Equal(RunMode.DryRun, supervisor.Commands[0].Mode);
@@ -164,7 +165,8 @@ public sealed class MainWindowSmokeTests
 
                 RequireButton(window, "Stop").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpDispatcher();
-                Assert.Equal("Stopped - Session stopped", status.Text);
+                Assert.Equal("Session stopped", status.Text);
+                Assert.Equal("Stopped", Assert.IsType<TextBlock>(window.FindName("StatusStateText")).Text);
                 Assert.Equal(WorkerCommandTypes.Stop, supervisor.Commands[1].Type);
                 Assert.Equal(2, supervisor.Commands.Count);
 
