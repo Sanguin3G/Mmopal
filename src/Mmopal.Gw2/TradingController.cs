@@ -156,6 +156,13 @@ public sealed class TradingCycleController
     // remembered per run (item key -> the item that was actually ordered) and no longer bought.
     private readonly ConcurrentDictionary<string, string> _boughtItems = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _searchMismatches = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _blockedUntil = new(StringComparer.Ordinal);
+    private static readonly TimeSpan FailedItemCooldown = TimeSpan.FromMinutes(30);
+
+    private static bool IsItemSpecificBuyFailure(string? message) =>
+        message is not null &&
+        (message.StartsWith("Buy order aborted", StringComparison.Ordinal) ||
+         message.StartsWith("None of the search rows opened", StringComparison.Ordinal));
 
     public TradingCycleController(
         CheckpointStore store,
@@ -319,6 +326,13 @@ public sealed class TradingCycleController
                     _boughtItems[GetItemKey(runId, action.ItemName)] = action.ItemName.Trim();
                 }
 
+                if (result.Status == TradingActionStatus.Failed && IsItemSpecificBuyFailure(result.Message))
+                {
+                    // The same dialog shows the same wrong price / wrong item next cycle too (Pyre Dye was aborted
+                    // four cycles in a row); give the slot to other items for a while.
+                    _blockedUntil[GetItemKey(runId, action.ItemName)] = _options.UtcNow() + FailedItemCooldown;
+                }
+
                 if (result.Status == TradingActionStatus.Failed)
                 {
                     _logger.LogWarning(
@@ -430,6 +444,15 @@ public sealed class TradingCycleController
                 selected.Add(CandidateDecision.Skip(
                     decision.Candidate,
                     $"Trading Post search for '{action.ItemName}' opens '{orderedInstead}' first (that is the order that appeared); skipped for this run so the wrong item is not bought again.",
+                    decision.Profitability));
+                continue;
+            }
+
+            if (_blockedUntil.TryGetValue(GetItemKey(runId, action.ItemName), out var blockedUntil) && blockedUntil > now)
+            {
+                selected.Add(CandidateDecision.Skip(
+                    decision.Candidate,
+                    $"Last buy attempt was aborted (wrong price or item in the dialog); retrying after {(int)Math.Ceiling((blockedUntil - now).TotalMinutes)} min.",
                     decision.Profitability));
                 continue;
             }

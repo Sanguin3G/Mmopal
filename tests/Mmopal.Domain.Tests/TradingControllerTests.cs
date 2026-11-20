@@ -511,6 +511,81 @@ public sealed class TradingControllerTests
         }
     }
 
+    [Fact]
+    public async Task Ordered_item_costs_take_the_highest_completed_buy_price()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"mmopal-costs-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new CheckpointStore(dbPath);
+            await store.InitializeAsync();
+            TradingActionResult Result(long price, TradingActionStatus status) => new(
+                new TradingAction(TradingActionKind.PlaceBuyOrder, "Valkyrie Draconic Coat", price, 2, "profitable"), status, "placed");
+            await store.SaveActionAsync("c1", "run", "PlaceBuyOrder", "Valkyrie Draconic Coat", "Completed", Result(7_700, TradingActionStatus.Completed));
+            await store.SaveActionAsync("c2", "run", "PlaceBuyOrder", "Valkyrie Draconic Coat", "Completed", Result(7_811, TradingActionStatus.Completed));
+            await store.SaveActionAsync("c3", "run", "PlaceBuyOrder", "Valkyrie Draconic Coat", "Failed", Result(9_999, TradingActionStatus.Failed));
+
+            var costs = await store.GetOrderedItemCostsAsync(DateTimeOffset.UtcNow.AddDays(-30));
+
+            Assert.Equal(7_811, costs["Valkyrie Draconic Coat"]);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteDatabase(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task Item_whose_buy_was_aborted_waits_thirty_minutes_before_another_try()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"mmopal-aborted-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new CheckpointStore(dbPath);
+            await store.InitializeAsync();
+            var now = new DateTimeOffset(2026, 11, 20, 10, 42, 0, TimeSpan.Zero);
+            var executor = new AbortingExecutor();
+            var controller = new TradingCycleController(
+                store,
+                NullLogger.Instance,
+                new ReplayMarketReader(new MarketSnapshot(Array.Empty<Transaction>(), new AccountBalance(1_000_000), now, "replay")),
+                executor,
+                new TradingControllerOptions { UtcNow = () => now });
+            ItemCandidate[] candidates = [new("Pyre Dye", Quantity: 2, BuyPriceCopper: 6_996, SellPriceCopper: 12_000)];
+
+            await controller.RunCycleAsync("run-pyre", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+            now = now.AddMinutes(10);
+            var soon = await controller.RunCycleAsync("run-pyre", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+            now = now.AddMinutes(25);
+            var later = await controller.RunCycleAsync("run-pyre", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+
+            Assert.Empty(soon.Actions);
+            Assert.Contains("aborted", Assert.Single(soon.Decisions).Reason, StringComparison.Ordinal);
+            Assert.Single(later.Actions);
+            Assert.Equal(2, executor.Attempts);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteDatabase(dbPath);
+        }
+    }
+
+    private sealed class AbortingExecutor : ITradingActionExecutor
+    {
+        public int Attempts { get; private set; }
+
+        public Task<TradingActionResult> ExecuteAsync(TradingAction action, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            return Task.FromResult(new TradingActionResult(
+                action,
+                TradingActionStatus.Failed,
+                "Buy order aborted: visible price 57s 96c is more than 10% under the planned 69s 96c; the order would sit below the top bid and not fill."));
+        }
+    }
+
     private sealed class SwitchableMarketReader(MarketSnapshot snapshot) : IGw2MarketReader
     {
         public MarketSnapshot Snapshot { get; set; } = snapshot;

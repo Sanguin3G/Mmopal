@@ -727,6 +727,14 @@ public sealed class Gw2TradingPostUiDriver
 
         var lines = await ReadTextVariantsAsync(PopupTextRegion, cancellationToken).ConfigureAwait(false);
         var message = lines.Count == 0 ? "(text unreadable)" : string.Join(" ", lines.Skip(lines.Count / 2).Take(3));
+        var normalized = NormalizeItemName(string.Join(" ", lines));
+        if (FuzzyContains(normalized, "lostitsconnection") || FuzzyContains(normalized, "waitafewminutes"))
+        {
+            // "The game client lost its connection to the server. Please wait a few minutes before restarting"
+            // (Code=7:...). Reconnecting at once risks another kick; recovery waits first.
+            ServerDisconnectSeenUtc = _utcNow();
+        }
+
         _logger.LogInformation("Dismissed in-game popup during {Context}: {Message}", context, message);
         await ClickCenterAsync(okButton, cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
@@ -922,6 +930,9 @@ public sealed class Gw2TradingPostUiDriver
     /// <summary>True when the last <see cref="CollectDeliveryBoxAsync"/> found the box locked to a trader NPC.</summary>
     public bool DeliveryNeedsTraderNpc { get; private set; }
 
+    /// <summary>When a "lost its connection ... wait a few minutes" message box was last dismissed, if ever.</summary>
+    public DateTimeOffset? ServerDisconnectSeenUtc { get; set; }
+
     /// <summary>Closes the TP and opens it again through the nearest NPC (F first), so the Delivery Box unlocks.</summary>
     public async Task<(bool Ready, string Message)> ReopenTradingPostAtTraderAsync(CancellationToken cancellationToken = default)
     {
@@ -943,7 +954,8 @@ public sealed class Gw2TradingPostUiDriver
 
             var lines = await _textLocator.LocateLinesAsync(frame, DeliveryPanelRegion, cancellationToken).ConfigureAwait(false);
             var header = lines.FirstOrDefault(line => FuzzyContains(NormalizeItemName(line.Text), "deliverybox"));
-            return header is null ? null : (header.X + header.Width / 2, header.Y + header.Height / 2);
+            // Collapsed, the header sits at the bottom (y~681); expanded it is at y~475, where a click would collapse it.
+            return header is null || header.Y < 600 ? null : (header.X + header.Width / 2, header.Y + header.Height / 2);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -2427,7 +2439,7 @@ public sealed class Gw2TradingPostUiDriver
             {
                 await _input.ClickAsync(DeterministicLeftSidebarTpPoint.X, DeterministicLeftSidebarTpPoint.Y, cancellationToken).ConfigureAwait(false);
                 await SettleAsync(cancellationToken).ConfigureAwait(false);
-                return await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false);
+                return await WaitForTradingPostTabAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -2439,7 +2451,31 @@ public sealed class Gw2TradingPostUiDriver
         _logger.LogInformation("Switching Black Lion window from Gem Store to Trading Post tab via sidebar icon.");
         await ClickCenterAsync(sidebarTp, cancellationToken).ConfigureAwait(false);
         await SettleAsync(cancellationToken).ConfigureAwait(false);
-        return await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false);
+        return await WaitForTradingPostTabAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// After the sidebar switch the TP tab can take seconds to load on high ping. A single check used to fail, the
+    /// opening loop then pressed Esc and fell back to O, and an O-opened TP leaves the Delivery Box locked
+    /// ("speak to a Black Lion Trading Company NPC"). So poll for the whole UI wait before giving up.
+    /// </summary>
+    private async Task<bool> WaitForTradingPostTabAsync(CancellationToken cancellationToken)
+    {
+        var deadline = _utcNow() + TimeSpan.FromMilliseconds(_uiWaitMs);
+        while (true)
+        {
+            if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            if (_utcNow() >= deadline || IsPaused)
+            {
+                return false;
+            }
+
+            await Task.Delay(Math.Max(_pollMs, 200), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<bool> WaitForTradingPostOrSidebarAsync(CancellationToken cancellationToken)

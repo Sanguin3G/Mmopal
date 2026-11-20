@@ -141,6 +141,33 @@ public sealed class CheckpointStore
         return names;
     }
 
+    /// <summary>Highest planned price per unit Mmopal placed a completed buy order at, per item, since a time.</summary>
+    public async Task<IReadOnlyDictionary<string, long>> GetOrderedItemCostsAsync(
+        DateTimeOffset sinceUtc,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT item_name, MAX(CAST(json_extract(payload, '$.Action.PriceCopper') AS INTEGER)) FROM actions
+            WHERE action_type = 'PlaceBuyOrder' AND status = 'Completed' AND item_name IS NOT NULL AND created_at >= $since
+            GROUP BY item_name;
+            """;
+        command.Parameters.AddWithValue("$since", sinceUtc.ToUniversalTime().ToString("O"));
+        var costs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (!reader.IsDBNull(1))
+            {
+                costs[reader.GetString(0)] = reader.GetInt64(1);
+            }
+        }
+
+        return costs;
+    }
+
     public async Task<bool> HasCompletedActionAsync(
         string actionId,
         CancellationToken cancellationToken = default)

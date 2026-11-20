@@ -24,7 +24,14 @@ public sealed class WorkerRuntime
     private readonly string? _diagnosticsDirectory;
     private bool _warnedInventoryUnavailable;
     private Gw2ClientSettings _activeClientSettings = new();
-    private int _deliveryNpcStrikes;
+    private readonly Dictionary<string, DateTimeOffset> _sellHoldLoggedUtc = new(StringComparer.OrdinalIgnoreCase);
+    private DateTimeOffset _lastDeliveryUnlockAttemptUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastCharacterSwapUtc = DateTimeOffset.MinValue;
+    private static readonly TimeSpan DeliveryUnlockBackoff = TimeSpan.FromMinutes(10);
+    // Logging out and in repeatedly gets the account disconnected by the server ("lost its connection ... wait a
+    // few minutes before restarting", Code=7:11:3:202:101 after ~12 swaps in 40 minutes).
+    private static readonly TimeSpan MinTimeBetweenRecoverySwaps = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan ServerDisconnectCooldown = TimeSpan.FromMinutes(5);
     private string? _lastLoggedBagFlipItems;
     private readonly ITemplateMatcher? _liveTemplateMatcher;
     private readonly IWindowController? _liveWindowController;
@@ -324,7 +331,8 @@ public sealed class WorkerRuntime
         var profile = LoadProfile(profileName);
         var effectiveClientSettings = request.ClientSettings ?? new Gw2ClientSettings();
         _activeClientSettings = effectiveClientSettings;
-        _deliveryNpcStrikes = 0;
+        _lastDeliveryUnlockAttemptUtc = DateTimeOffset.MinValue;
+        _lastCharacterSwapUtc = DateTimeOffset.MinValue;
         var templateRoot = string.IsNullOrWhiteSpace(request.TemplateRoot)
             ? _templateRoot ?? string.Empty
             : Path.GetFullPath(Environment.ExpandEnvironmentVariables(request.TemplateRoot));
@@ -742,6 +750,7 @@ public sealed class WorkerRuntime
                             cancellationToken);
                         if (IsPauseRequested) continue;
                         readyTargets = pendingSellTracker.GetReadyTargets(_utcNow(), Math.Max(1, profile.MaxOverbidUpdatesPerPass));
+                        readyTargets = await KeepProfitableSellTargetsAsync(readyTargets, candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
                         if (readyTargets.Count > 0)
                         {
                             var sellResults = await liveDriver.SellInventoryPassDetailedAsync(
@@ -807,6 +816,7 @@ public sealed class WorkerRuntime
                 {
                     if (liveDriver is not null && effectiveClientSettings.ParkedCharacterCount > 1)
                     {
+                        _lastCharacterSwapUtc = now;
                         var (swapped, swapMsg) = await liveDriver.RotateParkedCharacterAsync(
                             afkSwapSchedule.RandomizeCharacter,
                             effectiveClientSettings.ParkedCharacterCount,
@@ -1240,10 +1250,6 @@ public sealed class WorkerRuntime
                 {
                     collectedUi = await UnlockDeliveryAtTraderAsync(liveDriver, cancellationToken).ConfigureAwait(false);
                 }
-                else if (collectedUi)
-                {
-                    _deliveryNpcStrikes = 0;
-                }
 
                 effectiveBalance.RecordTakeAllAttempt(delivery.CoinsCopper, apiWalletBaseline, collectedUi, now, delivery.Items.Count);
                 if (collectedUi)
@@ -1282,49 +1288,115 @@ public sealed class WorkerRuntime
     }
 
     /// <summary>
-    /// The Delivery Box only pays out next to a Black Lion trader. First reopen the TP through the NPC and retry;
-    /// if a later cycle is still locked, this character is not parked by a trader, so switch parked character.
+    /// The Delivery Box only pays out when the TP was opened at a Black Lion trader. Reopen it through the NPC at
+    /// most once every 10 minutes; otherwise leave the coins for later (buying and selling still work). This never
+    /// switches characters: doing that on every locked cycle caused ~12 logouts in 40 minutes and a server kick.
     /// </summary>
     private async Task<bool> UnlockDeliveryAtTraderAsync(Gw2TradingPostUiDriver liveDriver, CancellationToken cancellationToken)
     {
-        _deliveryNpcStrikes++;
-        if (_deliveryNpcStrikes == 1)
+        var now = _utcNow();
+        if (now - _lastDeliveryUnlockAttemptUtc < DeliveryUnlockBackoff)
         {
-            var (reopened, message) = await liveDriver.ReopenTradingPostAtTraderAsync(cancellationToken).ConfigureAwait(false);
-            if (!reopened)
-            {
-                _logger.LogWarning("Could not reopen the Trading Post at the trader: {Message}", message);
-                return false;
-            }
+            return false;
         }
-        else if (_activeClientSettings.ParkedCharacterCount > 1)
+
+        _lastDeliveryUnlockAttemptUtc = now;
+        var (reopened, message) = await liveDriver.ReopenTradingPostAtTraderAsync(cancellationToken).ConfigureAwait(false);
+        if (!reopened)
         {
-            _logger.LogWarning("Delivery Box still needs a Black Lion trader; this character is not parked next to one. Switching parked character.");
-            var (swapped, swapMessage) = await liveDriver.RotateParkedCharacterAsync(
-                _activeClientSettings.RandomizeCharacterSelection,
-                _activeClientSettings.ParkedCharacterCount,
-                cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("{Message}", swapMessage);
-            if (!swapped)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            _logger.LogWarning("Delivery Box still needs a Black Lion trader and only one character is parked; move it next to a Black Lion trader.");
+            _logger.LogWarning("Could not reopen the Trading Post at the trader: {Message}", message);
             return false;
         }
 
         var collected = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
-        if (collected)
-        {
-            _deliveryNpcStrikes = 0;
-            _logger.LogInformation("Delivery Box unlocked at the trader and collected.");
-        }
-
+        _logger.LogInformation(
+            collected
+                ? "Delivery Box unlocked at the trader and collected."
+                : "Delivery Box still locked after reopening at the trader; trying again in 10 minutes. Make sure each parked character stands right next to a Black Lion trader.");
         return collected;
     }
+
+    /// <summary>
+    /// Drops sell targets whose listing would not cover what was paid. The sell pass lists at the lowest ask minus
+    /// the undercut; after the 5% listing and 10% exchange fees that must still cover the most Mmopal paid for the
+    /// item (its planned buy price; else the shopping list's buy price). Held items stay queued and are rechecked
+    /// on later passes, so they list once the market recovers. Unknown cost or quote: listed as before.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> KeepProfitableSellTargetsAsync(
+        IReadOnlyList<string> targets,
+        IReadOnlyList<ItemCandidate> candidates,
+        int undercutMinCopper,
+        CancellationToken cancellationToken)
+    {
+        if (targets.Count == 0 || _marketData is not Gw2OfficialDataProvider officialData || _ledgerStore is null)
+        {
+            return targets;
+        }
+
+        try
+        {
+            var costs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in candidates)
+            {
+                if (candidate.BuyPriceCopper is { } buy && buy > 0)
+                {
+                    costs[candidate.ItemName.Trim()] = buy;
+                }
+            }
+
+            foreach (var (name, paid) in await _store.GetOrderedItemCostsAsync(_utcNow().AddDays(-30), cancellationToken).ConfigureAwait(false))
+            {
+                costs[name.Trim()] = Math.Max(paid, costs.GetValueOrDefault(name.Trim()));
+            }
+
+            var ids = await _ledgerStore.GetItemIdsByNamesAsync(targets.ToArray(), cancellationToken).ConfigureAwait(false);
+            var quotes = ids.Count == 0
+                ? new Dictionary<int, Gw2LivePriceQuote>()
+                : await officialData.GetLiveMarketQuotesAsync(ids.Values.Distinct().ToArray(), cancellationToken).ConfigureAwait(false);
+            var profitability = new ProfitabilityEngine();
+            var keep = new List<string>(targets.Count);
+            foreach (var name in targets)
+            {
+                if (!costs.TryGetValue(name.Trim(), out var cost) ||
+                    !ids.TryGetValue(name.Trim(), out var id) ||
+                    !quotes.TryGetValue(id, out var quote) ||
+                    quote.LowestSellCopper <= 0)
+                {
+                    keep.Add(name);
+                    continue;
+                }
+
+                var listPrice = Math.Max(1, quote.LowestSellCopper - Math.Max(0, undercutMinCopper));
+                var outcome = profitability.Evaluate(cost, listPrice, new ProfitabilityPolicy());
+                if (outcome.IsValid && outcome.ProfitCopper >= 0)
+                {
+                    keep.Add(name);
+                    continue;
+                }
+
+                if (!_sellHoldLoggedUtc.TryGetValue(name, out var logged) || _utcNow() - logged > TimeSpan.FromMinutes(30))
+                {
+                    _sellHoldLoggedUtc[name] = _utcNow();
+                    _logger.LogInformation(
+                        "Holding {Item}: listing at {List} would lose {Loss} after fees against the {Cost} paid; will retry when the price recovers.",
+                        name,
+                        MarketScanItem.FormatCoins(listPrice),
+                        MarketScanItem.FormatCoins(Math.Abs(outcome.ProfitCopper)),
+                        MarketScanItem.FormatCoins(cost));
+                }
+            }
+
+            return keep;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Sell profit check skipped for this pass.");
+            return targets;
+        }
+    }
+
+    /// <summary>Recovery may switch parked character at most once per <see cref="MinTimeBetweenRecoverySwaps"/>.</summary>
+    private bool CanSwapCharacterForRecovery(DateTimeOffset nowUtc) => nowUtc - _lastCharacterSwapUtc >= MinTimeBetweenRecoverySwaps;
 
     private async Task SyncOwnedFlipInventoryFromApiAsync(
         Gw2TradingPostUiDriver? liveDriver,
@@ -1352,14 +1424,9 @@ public sealed class WorkerRuntime
         }
 
         setLastSyncUtc(now);
+        // Only the shopping list and items Mmopal itself ordered. The synced buy history holds every TP purchase on
+        // the account, including personal ones (an old "Holographic Super Cheese" was being put up for sale).
         var allowedFlipNames = new HashSet<string>(candidateNameSet, StringComparer.OrdinalIgnoreCase);
-        foreach (var tx in ledgerHistory)
-        {
-            if (tx.Kind == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
-            {
-                allowedFlipNames.Add(tx.ItemName.Trim());
-            }
-        }
 
         // Items Mmopal itself ordered are flip items even after a re-scan drops them from the shopping list and
         // before the buy history is synced; without this, fills from an older list were never listed.
@@ -1525,6 +1592,7 @@ public sealed class WorkerRuntime
                 if (request.EnableInventorySellPass)
                 {
                     var finalTargets = pendingSellTracker.GetReadyTargets(_utcNow(), Math.Max(1, profile.MaxOverbidUpdatesPerPass));
+                    finalTargets = await KeepProfitableSellTargetsAsync(finalTargets, request.EffectiveCandidates, request.UndercutBufferMinCopper, ct).ConfigureAwait(false);
                     if (finalTargets.Count > 0)
                     {
                         var sellResults = await liveDriver.SellInventoryPassDetailedAsync(
@@ -1745,6 +1813,20 @@ public sealed class WorkerRuntime
         var lastError = initialError;
         var isLiveTemplates = _liveTemplateMatcher is null;
 
+        if (liveDriver.ServerDisconnectSeenUtc is { } disconnectedAt && _utcNow() - disconnectedAt < TimeSpan.FromMinutes(10))
+        {
+            // GW2 asks to wait a few minutes after a server disconnect; logging straight back in risks another kick.
+            liveDriver.ServerDisconnectSeenUtc = null;
+            var wait = isLiveTemplates ? ServerDisconnectCooldown : TimeSpan.FromMilliseconds(5);
+            _logger.LogWarning("Disconnected by the server; waiting {Minutes} minutes before reconnecting.", (int)wait.TotalMinutes);
+            SetStatusIfNotPaused(WorkerState.Recovering, BotKind.TradingPost, mode, profileName, "Waiting after disconnect", $"Server disconnect; reconnecting in {(int)wait.TotalMinutes} min.");
+            await WaitIntervalOrPauseAsync(wait, cancellationToken).ConfigureAwait(false);
+            if (IsPauseRequested)
+            {
+                return (false, "Paused by operator while waiting after a server disconnect.");
+            }
+        }
+
         for (var retry = 1; retry <= maxRecoveryRetries; retry++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1774,8 +1856,10 @@ public sealed class WorkerRuntime
 
             bool ok;
             string recoverMsg;
-            if (retry == 1 && liveDriver.LastTradingPostOpenFailed && settings.ParkedCharacterCount > 1)
+            if (retry == 1 && liveDriver.LastTradingPostOpenFailed && settings.ParkedCharacterCount > 1 &&
+                CanSwapCharacterForRecovery(_utcNow()))
             {
+                _lastCharacterSwapUtc = _utcNow();
                 // Every key was tried on this character (e.g. a bank NPC next to the trader keeps winning F), so
                 // retrying in place or restarting into the same character repeats the failure. Switch characters.
                 _logger.LogWarning("Trading Post would not open on this character; switching to another parked character first.");
