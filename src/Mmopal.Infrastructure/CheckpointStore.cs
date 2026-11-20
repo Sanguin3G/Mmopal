@@ -118,6 +118,29 @@ public sealed class CheckpointStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Names of items Mmopal placed live buy orders for since <paramref name="sinceUtc"/>.</summary>
+    public async Task<IReadOnlyList<string>> GetOrderedItemNamesAsync(
+        DateTimeOffset sinceUtc,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT DISTINCT item_name FROM actions
+            WHERE action_type = 'PlaceBuyOrder' AND status = 'Completed' AND item_name IS NOT NULL AND created_at >= $since;
+            """;
+        command.Parameters.AddWithValue("$since", sinceUtc.ToUniversalTime().ToString("O"));
+        var names = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            names.Add(reader.GetString(0));
+        }
+
+        return names;
+    }
+
     public async Task<bool> HasCompletedActionAsync(
         string actionId,
         CancellationToken cancellationToken = default)

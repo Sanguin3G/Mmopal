@@ -18,15 +18,19 @@ public sealed class Gw2TradingPostUiDriver
     // Measured on live 1024x768 screenshots: results header "Item" at y~227, result rows 58 px apart.
     private const int SearchResultRowStride = 58;
     private static readonly CaptureRegion SearchResultsHeaderRegion = new(320, 195, 470, 60);
+    // Delivery Box panel on the TP's left column, expanded (header y~475) or collapsed under a long category list (y~681).
+    private static readonly CaptureRegion DeliveryPanelRegion = new(60, 455, 260, 300);
     // Centered in-game message box text (above its OK button).
     private static readonly CaptureRegion PopupTextRegion = new(340, 305, 400, 120);
     // Right-hand result list (Buy/Sell Items rows, My Transactions rows); excludes the category panel on the left.
     private static readonly CaptureRegion SearchResultsListRegion = new(325, 240, 450, 300);
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
     private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
-    private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(380, 294, 250, 34);
-    // "Total Price: 3,469 69 67" line under Max. Price (plain text, not an editable box).
-    private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(380, 333, 290, 36);
+    // Rows include their "Max. Price" / "Total Price:" labels: on live frames Windows OCR read nothing from tighter
+    // crops of just the digits.
+    private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(260, 290, 400, 44);
+    // "Total Price: 1 17 98" under Max. Price: plain text without spinners; gold is omitted when it is 0.
+    private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 400, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     // Black Lion sidebar scales icon measured at (14..53, 215..234) on 1024x768 (Gem Store and TP tabs alike).
@@ -63,7 +67,7 @@ public sealed class Gw2TradingPostUiDriver
     private readonly IUiTextLocator? _textLocator;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly string? _diagnosticsDirectory;
-    private int _diagnosticFramesSaved;
+    private readonly Dictionary<string, int> _diagnosticFramesSaved = new(StringComparer.Ordinal);
     private readonly string _templateRoot;
     private readonly Gw2ClientSettings _settings;
     private readonly ILogger _logger;
@@ -168,7 +172,15 @@ public sealed class Gw2TradingPostUiDriver
     /// bid where it never fills. Only a plausibly real reading aborts; unreadable or wildly-off readings are treated
     /// as OCR misses so an uncalibrated reader can never stop all buying.
     /// </summary>
-    internal static (bool Abort, string Message) EvaluateVisibleBuyPrice(long expectedCopper, int overbidMaxCopper, long? visibleCopper)
+    internal static (bool Abort, string Message) EvaluateVisibleBuyPrice(long expectedCopper, int overbidMaxCopper, long? visibleCopper, bool confident = true)
+    {
+        var verdict = EvaluateVisibleBuyPriceCore(expectedCopper, overbidMaxCopper, visibleCopper);
+        return verdict.Abort && !confident
+            ? (false, $"Possible {verdict.Message} Only the price boxes were readable (their spinners garble digits), so placing anyway.")
+            : verdict;
+    }
+
+    private static (bool Abort, string Message) EvaluateVisibleBuyPriceCore(long expectedCopper, int overbidMaxCopper, long? visibleCopper)
     {
         if (expectedCopper <= 0)
         {
@@ -862,17 +874,82 @@ public sealed class Gw2TradingPostUiDriver
         }
     }
 
+    /// <summary>
+    /// Clicks Take All. Handles the two live cases that left the box untouched: the panel collapsed under a longer
+    /// category list (Take All hidden; the header is clicked to expand it), and a TP opened away from a Black Lion
+    /// trader, where the box says "Speak to a Black Lion Trading Company NPC ..." and Take All collects nothing
+    /// (<see cref="DeliveryNeedsTraderNpc"/> is set and nothing is clicked).
+    /// </summary>
     public async Task<bool> CollectDeliveryBoxAsync(CancellationToken cancellationToken = default)
     {
+        DeliveryNeedsTraderNpc = false;
+        await DismissTransientPopupAsync("Delivery Box", cancellationToken).ConfigureAwait(false);
         var takeAll = await TryFindOnceAsync("take_all.png", CaptureRegion.FullScreen1024x768, 0.72m, cancellationToken).ConfigureAwait(false);
+        if (takeAll is null && _textLocator is not null)
+        {
+            var header = await FindDeliveryHeaderAsync(cancellationToken).ConfigureAwait(false);
+            if (header is { } point)
+            {
+                _logger.LogInformation("Delivery Box panel is collapsed; expanding it to reach Take All.");
+                await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+                await SettleAsync(cancellationToken).ConfigureAwait(false);
+                takeAll = await TryFindOnceAsync("take_all.png", CaptureRegion.FullScreen1024x768, 0.72m, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         if (takeAll is null)
         {
+            _logger.LogInformation("Delivery Box has something to collect but Take All is not visible.");
             return false;
+        }
+
+        if (_textLocator is not null)
+        {
+            var panelText = NormalizeItemName(string.Join(" ", await ReadTextVariantsAsync(DeliveryPanelRegion, cancellationToken).ConfigureAwait(false)));
+            if (FuzzyContains(panelText, "blackliontradingcompanynpc") || FuzzyContains(panelText, "pickupyouritems"))
+            {
+                DeliveryNeedsTraderNpc = true;
+                _logger.LogWarning("Delivery Box says to speak to a Black Lion Trading Company NPC: the TP was opened away from a trader, so Take All would collect nothing.");
+                return false;
+            }
         }
 
         await ClickCenterAsync(takeAll, cancellationToken).ConfigureAwait(false);
         await SettleAsync(cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>True when the last <see cref="CollectDeliveryBoxAsync"/> found the box locked to a trader NPC.</summary>
+    public bool DeliveryNeedsTraderNpc { get; private set; }
+
+    /// <summary>Closes the TP and opens it again through the nearest NPC (F first), so the Delivery Box unlocks.</summary>
+    public async Task<(bool Ready, string Message)> ReopenTradingPostAtTraderAsync(CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Reopening the Trading Post through the trader NPC so the Delivery Box can be collected.");
+        await CloseAllTpWindowsAsync(cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        return await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(int X, int Y)?> FindDeliveryHeaderAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            if (frame.Pixels.Length == 0 || _textLocator is null)
+            {
+                return null;
+            }
+
+            var lines = await _textLocator.LocateLinesAsync(frame, DeliveryPanelRegion, cancellationToken).ConfigureAwait(false);
+            var header = lines.FirstOrDefault(line => FuzzyContains(NormalizeItemName(line.Text), "deliverybox"));
+            return header is null ? null : (header.X + header.Width / 2, header.Y + header.Height / 2);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "Could not look for the Delivery Box header.");
+            return null;
+        }
     }
 
     public async Task<TradingActionResult> PlaceBuyOrderAsync(
@@ -1055,13 +1132,13 @@ public sealed class Gw2TradingPostUiDriver
 
         if (_textLocator is not null)
         {
-            var visibleUnitPrice = await ReadDialogUnitPriceAsync(qty, cancellationToken).ConfigureAwait(false);
+            var (visibleUnitPrice, confident) = await ReadDialogUnitPriceAsync(qty, cancellationToken).ConfigureAwait(false);
             if (visibleUnitPrice is null)
             {
                 await SaveDiagnosticFrameAsync("price-unreadable", cancellationToken).ConfigureAwait(false);
             }
 
-            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice);
+            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice, confident);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
             if (check.Abort)
             {
@@ -1492,8 +1569,9 @@ public sealed class Gw2TradingPostUiDriver
     /// reads in one session), so it retries once and then falls back to the plain "Total Price" line divided by the
     /// quantity, accepted only when it divides exactly.
     /// </remarks>
-    private async Task<long?> ReadDialogUnitPriceAsync(long quantity, CancellationToken cancellationToken)
+    private async Task<(long? Unit, bool Confident)> ReadDialogUnitPriceAsync(long quantity, CancellationToken cancellationToken)
     {
+        long? fromBoxes = null;
         for (var pass = 0; pass < 2; pass++)
         {
             if (pass > 0)
@@ -1501,24 +1579,21 @@ public sealed class Gw2TradingPostUiDriver
                 await Task.Delay(Math.Max(150, _settleMs / 3), cancellationToken).ConfigureAwait(false);
             }
 
-            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogMaxPriceRegion, cancellationToken).ConfigureAwait(false))
+            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false))
             {
-                if (ParseDialogPrice(text) is { } unit)
+                if (ParseTotalPrice(text) is { } total && quantity > 0 && total % quantity == 0)
                 {
-                    return unit;
+                    return (total / quantity, true);
                 }
             }
 
-            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false))
+            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogMaxPriceRegion, cancellationToken).ConfigureAwait(false))
             {
-                if (ParseDialogPrice(text) is { } total && quantity > 0 && total % quantity == 0)
-                {
-                    return total / quantity;
-                }
+                fromBoxes ??= ParseDialogPrice(text);
             }
         }
 
-        return null;
+        return (fromBoxes, false);
     }
 
     /// <summary>
@@ -1558,10 +1633,10 @@ public sealed class Gw2TradingPostUiDriver
         }
     }
 
-    /// <summary>Saves up to 3 full frames per session (e.g. an unreadable price) for calibration.</summary>
+    /// <summary>Saves up to 3 full frames per kind per session (e.g. an unreadable price) for calibration.</summary>
     private async Task SaveDiagnosticFrameAsync(string tag, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_diagnosticsDirectory) || _diagnosticFramesSaved >= 3)
+        if (string.IsNullOrWhiteSpace(_diagnosticsDirectory) || _diagnosticFramesSaved.GetValueOrDefault(tag) >= 3)
         {
             return;
         }
@@ -1572,7 +1647,7 @@ public sealed class Gw2TradingPostUiDriver
             var path = Path.Combine(_diagnosticsDirectory, $"{tag}-{_utcNow():yyyyMMdd-HHmmss}.png");
             if (FrameImageFile.TrySavePng(frame, path))
             {
-                _diagnosticFramesSaved++;
+                _diagnosticFramesSaved[tag] = _diagnosticFramesSaved.GetValueOrDefault(tag) + 1;
                 _logger.LogInformation("Saved a calibration screenshot: {Path}", path);
             }
         }
@@ -1653,29 +1728,79 @@ public sealed class Gw2TradingPostUiDriver
     }
 
     /// <summary>Parses the dialog's "gold : silver : copper" boxes, e.g. "3469: 69: • 67:" → 34,696,967c.</summary>
+    /// <summary>
+    /// Parses the Max. Price gold/silver/copper boxes. Live OCR reads gold 0 as "o", 1 as "I", and often reads the
+    /// ▴▾ spinner after a box as an extra "2" ("o: 582 e 99:" for 0 · 58 · 99): a 3-digit silver or copper value
+    /// loses its last digit. Gold cannot be corrected that way, so callers treat this reading as unconfirmed.
+    /// </summary>
     internal static long? ParseDialogPrice(string? text)
+    {
+        var groups = PriceDigitGroups(text);
+        if (groups.Count < 3 || !long.TryParse(groups[0], out var gold) || gold is < 0 or > 100_000)
+        {
+            return null;
+        }
+
+        var silver = SpinnerCorrected(groups[1]);
+        var copper = SpinnerCorrected(groups[2]);
+        return silver is null || copper is null ? null : gold * 10_000 + silver.Value * 100L + copper.Value;
+    }
+
+    /// <summary>
+    /// Parses the "Total Price:" line, e.g. "Total Price: I e 17 • 98." (1g 17s 98c) or "Total Price: 47. 34 e"
+    /// (47s 34c: the game omits gold when it is 0). No spinners on this line, so values are taken as read.
+    /// </summary>
+    internal static long? ParseTotalPrice(string? text)
+    {
+        var groups = PriceDigitGroups(text);
+        if (groups.Count is 0 or > 3)
+        {
+            return null;
+        }
+
+        var values = new long[3];
+        for (var i = 0; i < groups.Count; i++)
+        {
+            if (!long.TryParse(groups[i], out values[3 - groups.Count + i]))
+            {
+                return null;
+            }
+        }
+
+        var (gold, silver, copper) = (values[0], values[1], values[2]);
+        return silver > 99 || copper > 99 || gold > 1_000_000 ? null : gold * 10_000 + silver * 100 + copper;
+    }
+
+    private static int? SpinnerCorrected(string digits)
+    {
+        if (!int.TryParse(digits, out var value) || value < 0)
+        {
+            return null;
+        }
+
+        return value <= 99 ? value : value <= 999 ? value / 10 : null;
+    }
+
+    /// <summary>Digit groups after the "Price" label, with OCR letter look-alikes mapped (o/O → 0, I/l/| → 1).</summary>
+    private static List<string> PriceDigitGroups(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
-            return null;
+            return [];
         }
 
-        var numbers = System.Text.RegularExpressions.Regex.Matches(text, @"\d[\d,]*")
+        var labelEnd = text.LastIndexOf("rice", StringComparison.OrdinalIgnoreCase);
+        var values = labelEnd >= 0 ? text[(labelEnd + 4)..] : text;
+        var mapped = new string(values.Select(c => c switch
+        {
+            'o' or 'O' => '0',
+            'I' or 'l' or '|' => '1',
+            _ => c
+        }).ToArray());
+        return System.Text.RegularExpressions.Regex.Matches(mapped, @"\d[\d,]*")
             .Select(match => match.Value.Replace(",", string.Empty, StringComparison.Ordinal))
             .Where(value => value.Length > 0)
-            .ToArray();
-        if (numbers.Length < 3 ||
-            !long.TryParse(numbers[0], out var gold) ||
-            !int.TryParse(numbers[1], out var silver) ||
-            !int.TryParse(numbers[2], out var copper) ||
-            silver is < 0 or > 99 ||
-            copper is < 0 or > 99 ||
-            gold is < 0 or > 100_000)
-        {
-            return null;
-        }
-
-        return gold * 10_000 + silver * 100L + copper;
+            .ToList();
     }
 
     internal static string NormalizeItemName(string? name) =>
@@ -2484,6 +2609,7 @@ public sealed class Gw2TradingPostUiDriver
                     "Search results for '{Item}' were not confirmed within {Ms} ms; continuing (the opened item is still verified).",
                     itemName,
                     timeoutMs);
+                await SaveDiagnosticFrameAsync("search-unconfirmed", cancellationToken).ConfigureAwait(false);
                 return;
             }
 

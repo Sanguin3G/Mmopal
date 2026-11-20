@@ -380,7 +380,7 @@ public sealed class LiveTradingExecutorTests
             return region.X switch
             {
                 330 => [new OcrTextBox(secondRowOpened ? "Slice of Allspice Cake" : "Slice of Allspice Cake with Ice Cream", 347, 175, 300, 24)],
-                380 => [new OcrTextBox("0: 54: • 05:", 406, 302, 150, 20)],
+                260 => [new OcrTextBox("Max. Rice o: 54: • 05:", 273, 302, 250, 20)],
                 _ => Array.Empty<OcrTextBox>()
             };
         });
@@ -424,8 +424,8 @@ public sealed class LiveTradingExecutorTests
         {
             (325, 240) => [new OcrTextBox("Slice of Allspice Cake", 393, 266, 200, 12)],
             (330, 165) => [new OcrTextBox("Slice of Allspice Cake", 347, 175, 300, 24)],
-            (380, 294) => Array.Empty<OcrTextBox>(),                                       // editable boxes unreadable
-            (380, 333) when totalReadable => [new OcrTextBox("2. 16. 20.", 393, 341, 120, 22)], // 2 x 1g 08s 10c = 2g 16s 20c
+            (260, 290) => Array.Empty<OcrTextBox>(),                                                   // editable boxes unreadable
+            (260, 330) when totalReadable => [new OcrTextBox("Total Price: 2. 16. 20.", 273, 341, 220, 22)], // 2 x 1g 08s 10c
             _ => Array.Empty<OcrTextBox>()
         });
         var diagnostics = Path.Combine(Path.GetTempPath(), "mmopal-diag-" + Guid.NewGuid().ToString("N"));
@@ -463,6 +463,69 @@ public sealed class LiveTradingExecutorTests
         {
             if (Directory.Exists(diagnostics)) Directory.Delete(diagnostics, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task CollectDeliveryBoxAsync_ExpandsACollapsedPanelBeforeTakeAll()
+    {
+        // Seen live: a longer category list pushes the Delivery Box down, collapsed (header at y~681), Take All hidden.
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher();
+        templates.DynamicMatches["take_all.png"] = () =>
+            input.Clicks.Contains((139, 688)) ? new TemplateMatch(161, 704, 61, 16, 1.00m) : null;
+        var locator = new FakeUiTextLocator(region => region.X == 60
+            ? [new OcrTextBox("! Delivery Box", 89, 681, 100, 15), new OcrTextBox("Items: 1", 86, 702, 48, 10)]
+            : Array.Empty<OcrTextBox>());
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        Assert.True(await driver.CollectDeliveryBoxAsync());
+        Assert.Equal([(139, 688), (191, 712)], input.Clicks); // expand header, then Take All
+    }
+
+    [Fact]
+    public async Task CollectDeliveryBoxAsync_DoesNotClaimAPickupWhenTheBoxNeedsATraderNpc()
+    {
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["take_all.png"] = new(161, 704, 61, 16, 1.00m)
+        });
+        // OCR of the live panel when the TP was opened away from a trader.
+        var locator = new FakeUiTextLocator(region => region.X == 60
+            ?
+            [
+                new OcrTextBox("Delivery Box", 103, 475, 86, 15),
+                new OcrTextBox("*rak to a Black Lion Trading", 88, 558, 208, 15),
+                new OcrTextBox("Company NPC to pick up your", 87, 578, 210, 15)
+            ]
+            : Array.Empty<OcrTextBox>());
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        Assert.False(await driver.CollectDeliveryBoxAsync());
+        Assert.True(driver.DeliveryNeedsTraderNpc);
+        Assert.DoesNotContain((191, 712), input.Clicks);
     }
 
     [Fact]
@@ -543,10 +606,38 @@ public sealed class LiveTradingExecutorTests
     [InlineData("204 : 99 : 99 :", 2_049_999L)]      // enhanced OCR (Soundtrack Single)
     [InlineData("0: 38: • 72:", 3_872L)]
     [InlineData("38: 72:", null)]                    // missing a box
-    [InlineData("3469: 169: 67:", null)]             // silver out of range
+    [InlineData("3469: 169: 67:", 34_691_667L)]     // spinner read as an extra digit after silver
+    [InlineData("Max. Rice o: 23: • 67:", 2_367L)]   // live frame: gold 0 read as "o"
+    [InlineData("B4ax. Rice o: 582 e 99:", 5_899L)]  // live frame: label garbled, spinner read as "2"
+    [InlineData("Max. Rice 1: e 13: • 31 : e", 11_331L)]
     public void ParseDialogPrice_reads_gold_silver_copper_boxes(string text, long? copper)
     {
         Assert.Equal(copper, Gw2TradingPostUiDriver.ParseDialogPrice(text));
+    }
+
+    [Theory]
+    [InlineData("Total Price: 47. 34 e", 4_734L)]          // live: gold omitted when it is 0
+    [InlineData("Total Price: I e 17 • 98.", 11_798L)]     // live: 1 read as "I"
+    [InlineData("Total Price: 2e 26• 62.", 22_662L)]
+    [InlineData("Total Price: 47 e 34e", 4_734L)]
+    [InlineData("Total Price: 3,469. 69. 67.", 34_696_967L)]
+    [InlineData("Total Price:", null)]
+    [InlineData("Total Price: 1 2 3 4", null)]
+    public void ParseTotalPrice_reads_the_total_line_seen_live(string text, long? copper)
+    {
+        Assert.Equal(copper, Gw2TradingPostUiDriver.ParseTotalPrice(text));
+    }
+
+    [Fact]
+    public void EvaluateVisibleBuyPrice_does_not_abort_on_an_unconfirmed_box_reading()
+    {
+        // Seen live: Superior Rune of the Citadel planned 27s 16c, boxes read "77s 15c" (spinner/digit misread).
+        var unconfirmed = Gw2TradingPostUiDriver.EvaluateVisibleBuyPrice(2_716, 3, 7_715, confident: false);
+        var confirmed = Gw2TradingPostUiDriver.EvaluateVisibleBuyPrice(2_716, 3, 7_715, confident: true);
+
+        Assert.False(unconfirmed.Abort);
+        Assert.Contains("placing anyway", unconfirmed.Message, StringComparison.Ordinal);
+        Assert.True(confirmed.Abort);
     }
 
     [Fact]

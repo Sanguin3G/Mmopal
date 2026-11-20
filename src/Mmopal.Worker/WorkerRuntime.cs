@@ -22,6 +22,10 @@ public sealed class WorkerRuntime
     private readonly IInputController? _liveInputController;
     private readonly IScreenshotProvider? _liveScreenshots;
     private readonly string? _diagnosticsDirectory;
+    private bool _warnedInventoryUnavailable;
+    private Gw2ClientSettings _activeClientSettings = new();
+    private int _deliveryNpcStrikes;
+    private string? _lastLoggedBagFlipItems;
     private readonly ITemplateMatcher? _liveTemplateMatcher;
     private readonly IWindowController? _liveWindowController;
     private readonly TradingLedgerStore? _ledgerStore;
@@ -319,6 +323,8 @@ public sealed class WorkerRuntime
 
         var profile = LoadProfile(profileName);
         var effectiveClientSettings = request.ClientSettings ?? new Gw2ClientSettings();
+        _activeClientSettings = effectiveClientSettings;
+        _deliveryNpcStrikes = 0;
         var templateRoot = string.IsNullOrWhiteSpace(request.TemplateRoot)
             ? _templateRoot ?? string.Empty
             : Path.GetFullPath(Environment.ExpandEnvironmentVariables(request.TemplateRoot));
@@ -492,6 +498,9 @@ public sealed class WorkerRuntime
         long? lastHistoryBuyId = null;
         var lastInventoryApiSyncUtc = DateTimeOffset.MinValue;
 
+        _logger.LogInformation(
+            "Auto-list bought flip items from bags: {State}.",
+            request.EnableInventorySellPass ? "on" : "off (tick it on the Session page to sell what the bot buys)");
         var reportAccumulator = new SessionReportAccumulator(
             runId,
             request.ActiveAccountName,
@@ -743,6 +752,10 @@ public sealed class WorkerRuntime
                                 cancellationToken);
                             var postSellNow = _utcNow();
                             pendingSellTracker.RecordSellPassResults(sellResults, postSellNow);
+                            foreach (var outcome in sellResults)
+                            {
+                                _logger.LogInformation("Sell pass {Outcome} for {Item}: {Details}", outcome.Outcome, outcome.ItemName, outcome.Details ?? "-");
+                            }
                             foreach (var sellOutcome in sellResults)
                             {
                                 if (sellOutcome.Outcome == SellPassItemOutcome.Listed)
@@ -1223,6 +1236,15 @@ public sealed class WorkerRuntime
                     ?? (await officialData.GetBalanceAsync(cancellationToken).ConfigureAwait(false))?.Copper
                     ?? 0;
                 var collectedUi = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
+                if (!collectedUi && liveDriver.DeliveryNeedsTraderNpc)
+                {
+                    collectedUi = await UnlockDeliveryAtTraderAsync(liveDriver, cancellationToken).ConfigureAwait(false);
+                }
+                else if (collectedUi)
+                {
+                    _deliveryNpcStrikes = 0;
+                }
+
                 effectiveBalance.RecordTakeAllAttempt(delivery.CoinsCopper, apiWalletBaseline, collectedUi, now, delivery.Items.Count);
                 if (collectedUi)
                 {
@@ -1257,6 +1279,51 @@ public sealed class WorkerRuntime
 
         var visualCollected = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
         return (visualCollected, 0, Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// The Delivery Box only pays out next to a Black Lion trader. First reopen the TP through the NPC and retry;
+    /// if a later cycle is still locked, this character is not parked by a trader, so switch parked character.
+    /// </summary>
+    private async Task<bool> UnlockDeliveryAtTraderAsync(Gw2TradingPostUiDriver liveDriver, CancellationToken cancellationToken)
+    {
+        _deliveryNpcStrikes++;
+        if (_deliveryNpcStrikes == 1)
+        {
+            var (reopened, message) = await liveDriver.ReopenTradingPostAtTraderAsync(cancellationToken).ConfigureAwait(false);
+            if (!reopened)
+            {
+                _logger.LogWarning("Could not reopen the Trading Post at the trader: {Message}", message);
+                return false;
+            }
+        }
+        else if (_activeClientSettings.ParkedCharacterCount > 1)
+        {
+            _logger.LogWarning("Delivery Box still needs a Black Lion trader; this character is not parked next to one. Switching parked character.");
+            var (swapped, swapMessage) = await liveDriver.RotateParkedCharacterAsync(
+                _activeClientSettings.RandomizeCharacterSelection,
+                _activeClientSettings.ParkedCharacterCount,
+                cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("{Message}", swapMessage);
+            if (!swapped)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            _logger.LogWarning("Delivery Box still needs a Black Lion trader and only one character is parked; move it next to a Black Lion trader.");
+            return false;
+        }
+
+        var collected = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
+        if (collected)
+        {
+            _deliveryNpcStrikes = 0;
+            _logger.LogInformation("Delivery Box unlocked at the trader and collected.");
+        }
+
+        return collected;
     }
 
     private async Task SyncOwnedFlipInventoryFromApiAsync(
@@ -1294,9 +1361,29 @@ public sealed class WorkerRuntime
             }
         }
 
+        // Items Mmopal itself ordered are flip items even after a re-scan drops them from the shopping list and
+        // before the buy history is synced; without this, fills from an older list were never listed.
+        try
+        {
+            foreach (var name in await _store.GetOrderedItemNamesAsync(now.AddDays(-30), cancellationToken).ConfigureAwait(false))
+            {
+                allowedFlipNames.Add(name.Trim());
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not read previously ordered items.");
+        }
+
         try
         {
             var (invAvailable, bagItemIds) = await officialData.GetUnboundInventoryItemIdsAsync(cancellationToken).ConfigureAwait(false);
+            if (!invAvailable && !_warnedInventoryUnavailable)
+            {
+                _warnedInventoryUnavailable = true;
+                _logger.LogWarning("Auto-list cannot read your bags: the active API key needs the 'characters' and 'inventories' permissions. Bought items are only listed right after a Delivery Box pickup.");
+            }
+
             if (invAvailable && bagItemIds.Count > 0 && allowedFlipNames.Count > 0)
             {
                 var itemMeta = await officialData.ResolveItemMetadataAsync(bagItemIds, _ledgerStore, cancellationToken).ConfigureAwait(false);
@@ -1309,6 +1396,12 @@ public sealed class WorkerRuntime
                 if (confirmedFlipItems.Length > 0)
                 {
                     pendingSellTracker.SyncFromCharacterInventory(confirmedFlipItems, now);
+                    var seen = string.Join(", ", confirmedFlipItems.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+                    if (!string.Equals(seen, _lastLoggedBagFlipItems, StringComparison.Ordinal))
+                    {
+                        _lastLoggedBagFlipItems = seen;
+                        _logger.LogInformation("Bought flip items in bags, queued to list: {Items}", seen);
+                    }
                 }
             }
         }

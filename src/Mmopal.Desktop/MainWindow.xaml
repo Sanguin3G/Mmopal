@@ -319,7 +319,7 @@
                                     <Button x:Name="StopSessionButton" Content="Stop" Tag="&#xE71A;" Click="Stop_Click" IsEnabled="False" Margin="0,0,8,4" />
                                     <Button x:Name="EmergencyStopButton" Content="Emergency stop" Tag="&#xE7BA;" Style="{StaticResource DangerButton}" Click="EmergencyStop_Click" IsEnabled="False" Margin="0,0,16,4" />
                                     <CheckBox x:Name="ArmLiveInputCheckBox" Content="Arm live input" IsChecked="False" Checked="ArmLiveInput_Changed" Unchecked="ArmLiveInput_Changed" VerticalAlignment="Center" Margin="0,0,16,4" ToolTip="Safety interlock: allows real mouse/keyboard input in Live mode." />
-                                    <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought flip items from bags" IsChecked="False" VerticalAlignment="Center" Margin="0,0,0,4" ToolTip="Off by default so unrelated bag items are never touched. Lists only items bought during flipping." />
+                                    <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought flip items from bags" IsChecked="False" Checked="AutoSellInventory_Changed" Unchecked="AutoSellInventory_Changed" VerticalAlignment="Center" Margin="0,0,0,4" ToolTip="Lists only items Mmopal bought: items it placed buy orders for in the last 30 days, the current shopping list, and synced buy history. Other bag items are never touched. Needs an API key with the characters and inventories permissions." />
                                 </WrapPanel>
                             </DockPanel>
 

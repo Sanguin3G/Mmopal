@@ -30,7 +30,8 @@ public sealed record OperatorSettings(
     int ReportMinDurationMinutes = 5,
     bool ReportAlwaysSaveIfTradesOccurred = true,
     bool ReportAlwaysSaveOnErrors = true,
-    int MaxSavedSessionReports = 100)
+    int MaxSavedSessionReports = 100,
+    bool AutoListBoughtFlipItems = false)
 {
     public SessionReportPolicySettings ToSessionReportPolicy() => new(
         SaveSessionReports: SaveSessionReports,

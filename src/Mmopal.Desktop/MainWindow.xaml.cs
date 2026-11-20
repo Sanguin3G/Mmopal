@@ -374,6 +374,12 @@ public partial class MainWindow : Window
             : $"{paceText}  •  Platform: {platform} ({acct})";
     }
 
+    private void AutoSellInventory_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingUi) return;
+        SaveAllSettingsSilently(); // remembered across restarts; it used to reset to off on every launch
+    }
+
     private void ArmLiveInput_Changed(object sender, RoutedEventArgs e)
     {
         if (_loadingUi) return;
@@ -3227,6 +3233,7 @@ public partial class MainWindow : Window
         RecordPathBox.Text = settings.RecordPath ?? string.Empty;
         CaptureFramesCheckBox.IsChecked = settings.CaptureFrames;
         ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
+        AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
         AutoDockBesideGw2CheckBox.IsChecked = settings.AutoDockSideBySideWhenRunning;
         UsePortfolioIntelligenceCheckBox.IsChecked = settings.UsePortfolioIntelligence;
         SaveSessionReportsCheckBox.IsChecked = settings.SaveSessionReports;
@@ -3404,6 +3411,7 @@ public partial class MainWindow : Window
             RecordPath: NullIfBlank(RecordPathBox.Text),
             CaptureFrames: CaptureFramesCheckBox.IsChecked == true,
             EnableDataWarsVelocity: ScanVelocityCheckBox.IsChecked == true,
+            AutoListBoughtFlipItems: AutoSellInventoryCheckBox.IsChecked == true,
             AutoDockSideBySideWhenRunning: AutoDockBesideGw2CheckBox.IsChecked == true,
             UsePortfolioIntelligence: UsePortfolioIntelligenceCheckBox.IsChecked == true,
             SaveSessionReports: SaveSessionReportsCheckBox.IsChecked == true,

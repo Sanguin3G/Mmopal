@@ -487,6 +487,30 @@ public sealed class TradingControllerTests
         }
     }
 
+    [Fact]
+    public async Task Ordered_item_names_include_only_completed_live_buys()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"mmopal-ordered-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new CheckpointStore(dbPath);
+            await store.InitializeAsync();
+            await store.SaveActionAsync("a1", "run", "PlaceBuyOrder", "Shaman's Etched Blaster of Accuracy", "Completed");
+            await store.SaveActionAsync("a2", "run", "PlaceBuyOrder", "Shaman's Etched Blaster of Accuracy", "Completed");
+            await store.SaveActionAsync("a3", "run", "PlaceBuyOrder", "Endless Ley-Line Anomaly Tonic", "Failed");
+            await store.SaveActionAsync("a4", "run", "PlaceBuyOrder", "Dry Run Item", "Simulated");
+
+            var names = await store.GetOrderedItemNamesAsync(DateTimeOffset.UtcNow.AddDays(-30));
+
+            Assert.Equal(["Shaman's Etched Blaster of Accuracy"], names);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteDatabase(dbPath);
+        }
+    }
+
     private sealed class SwitchableMarketReader(MarketSnapshot snapshot) : IGw2MarketReader
     {
         public MarketSnapshot Snapshot { get; set; } = snapshot;
