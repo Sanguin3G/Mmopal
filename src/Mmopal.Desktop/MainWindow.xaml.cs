@@ -1001,6 +1001,15 @@ public partial class MainWindow : Window
         _lastHandledCapReportId = null;
         UpdateSessionClockDisplay();
 
+        // Re-scan during the session only when it runs on the scanner's own list, so a hand-made list is never replaced.
+        MarketScanFilter? autoRescanFilter = null;
+        if (ReadAutoRescanHours() > 0 &&
+            string.Equals(Path.GetFullPath(NullIfBlank(CandidatesPathBox.Text) ?? "."), Path.GetFullPath(ScannedCandidatesPath), StringComparison.OrdinalIgnoreCase) &&
+            TryReadScanFilter(out var currentScanFilter, out _))
+        {
+            autoRescanFilter = currentScanFilter;
+        }
+
         var payload = JsonSerializer.Serialize(new TradingReplayRequest(
             Candidates: inlineCandidates,
             Blacklist: inlineBlacklist,
@@ -1022,7 +1031,9 @@ public partial class MainWindow : Window
             EnableInventorySellPass: AutoSellInventoryCheckBox.IsChecked == true,
             UsePortfolioIntelligence: opSettings.UsePortfolioIntelligence,
             ActiveAccountName: ResolveActiveSqlAccountName(),
-            ReportSettings: opSettings.ToSessionReportPolicy()), PayloadJson);
+            ReportSettings: opSettings.ToSessionReportPolicy(),
+            AutoRescanFilter: autoRescanFilter,
+            AutoRescanIntervalMinutes: autoRescanFilter is null ? 0 : (int)Math.Round(ReadAutoRescanHours() * 60m)), PayloadJson);
         await SendAsync(new WorkerCommand(WorkerCommandTypes.Start, Guid.NewGuid().ToString("N"), bot, mode, profile, payload));
     }
 
@@ -3121,6 +3132,11 @@ public partial class MainWindow : Window
     private static string ApiKeyVaultPath => Path.Combine(RuntimePaths.Create().Profiles, "gw2-api-keys.dpapi");
     private static string CustomShoppingListPath => Path.Combine(RuntimePaths.Create().Profiles, "custom-shoppinglist.json");
     private static string BlacklistStorePath => Path.Combine(RuntimePaths.Create().Profiles, "blacklist.json");
+    private decimal ReadAutoRescanHours() =>
+        decimal.TryParse(AutoRescanHoursBox?.Text?.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out var hours) && hours > 0
+            ? Math.Min(hours, 24m)
+            : 0m;
+
     private static string ScannedCandidatesPath => Path.Combine(RuntimePaths.Create().Profiles, "scanned-candidates.json");
     private static string LedgerDbPath => RuntimePaths.Create().Database;
 
@@ -3234,6 +3250,7 @@ public partial class MainWindow : Window
         CaptureFramesCheckBox.IsChecked = settings.CaptureFrames;
         ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
         AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
+        AutoRescanHoursBox.Text = settings.AutoRescanHours.ToString(CultureInfo.CurrentCulture);
         AutoDockBesideGw2CheckBox.IsChecked = settings.AutoDockSideBySideWhenRunning;
         UsePortfolioIntelligenceCheckBox.IsChecked = settings.UsePortfolioIntelligence;
         SaveSessionReportsCheckBox.IsChecked = settings.SaveSessionReports;
@@ -3412,6 +3429,7 @@ public partial class MainWindow : Window
             CaptureFrames: CaptureFramesCheckBox.IsChecked == true,
             EnableDataWarsVelocity: ScanVelocityCheckBox.IsChecked == true,
             AutoListBoughtFlipItems: AutoSellInventoryCheckBox.IsChecked == true,
+            AutoRescanHours: ReadAutoRescanHours(),
             AutoDockSideBySideWhenRunning: AutoDockBesideGw2CheckBox.IsChecked == true,
             UsePortfolioIntelligence: UsePortfolioIntelligenceCheckBox.IsChecked == true,
             SaveSessionReports: SaveSessionReportsCheckBox.IsChecked == true,

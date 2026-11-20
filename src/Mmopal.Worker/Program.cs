@@ -65,7 +65,8 @@ internal static class Program
             templateRoot,
             ledgerStore: ledgerStore,
             sessionReportStore: sessionReportStore,
-            diagnosticsDirectory: paths.Screenshots);
+            diagnosticsDirectory: paths.Screenshots,
+            marketScanner: new Gw2MarketScanner(guildWars, ledgerStore));
 
         using var shutdownCancellation = new CancellationTokenSource();
         Task? parentWatchdog = null;

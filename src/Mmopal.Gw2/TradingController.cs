@@ -627,7 +627,10 @@ public sealed record TradingReplayRequest(
     bool EnableOutbidBuyRefresh = true,
     bool UsePortfolioIntelligence = true,
     string? ActiveAccountName = null,
-    SessionReportPolicySettings? ReportSettings = null)
+    SessionReportPolicySettings? ReportSettings = null,
+    // Re-run the Market Scanner with these filters every AutoRescanIntervalMinutes during the session (0 = off).
+    MarketScanFilter? AutoRescanFilter = null,
+    int AutoRescanIntervalMinutes = 0)
 {
     public IReadOnlyList<ItemCandidate> EffectiveCandidates => Candidates ?? Array.Empty<ItemCandidate>();
     public IReadOnlyList<string> EffectiveBlacklist => Blacklist ?? Array.Empty<string>();

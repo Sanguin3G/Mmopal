@@ -22,6 +22,7 @@ public sealed class WorkerRuntime
     private readonly IInputController? _liveInputController;
     private readonly IScreenshotProvider? _liveScreenshots;
     private readonly string? _diagnosticsDirectory;
+    private readonly IGw2MarketScanner? _marketScanner;
     private bool _warnedInventoryUnavailable;
     private Gw2ClientSettings _activeClientSettings = new();
     private readonly Dictionary<string, DateTimeOffset> _sellHoldLoggedUtc = new(StringComparer.OrdinalIgnoreCase);
@@ -32,6 +33,7 @@ public sealed class WorkerRuntime
     // few minutes before restarting", Code=7:11:3:202:101 after ~12 swaps in 40 minutes).
     private static readonly TimeSpan MinTimeBetweenRecoverySwaps = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan ServerDisconnectCooldown = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan GameRestartBudgetRefill = TimeSpan.FromHours(2);
     private string? _lastLoggedBagFlipItems;
     private readonly ITemplateMatcher? _liveTemplateMatcher;
     private readonly IWindowController? _liveWindowController;
@@ -58,8 +60,10 @@ public sealed class WorkerRuntime
         IWindowController? liveWindowController = null,
         TradingLedgerStore? ledgerStore = null,
         SessionReportStore? sessionReportStore = null,
-        string? diagnosticsDirectory = null)
+        string? diagnosticsDirectory = null,
+        IGw2MarketScanner? marketScanner = null)
     {
+        _marketScanner = marketScanner;
         _diagnosticsDirectory = diagnosticsDirectory;
         _store = store;
         _logger = logger;
@@ -491,6 +495,7 @@ public sealed class WorkerRuntime
             .Select(c => c.ItemName.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var resolvedItemIdCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var lastRescanUtc = _utcNow();
         var profitRefresher = new LiveCandidateProfitRefresher();
 
         var maxRecoveryRetries = Math.Clamp(effectiveClientSettings.MaxRecoveryRetries, 0, 10);
@@ -498,6 +503,13 @@ public sealed class WorkerRuntime
             ? Math.Clamp(effectiveClientSettings.MaxGameRestartsPerSession, 0, 5)
             : 0;
         var gameRestartsUsed = 0;
+        var lastGameRestartUtc = DateTimeOffset.MinValue;
+        void SetGameRestartsUsed(int used)
+        {
+            gameRestartsUsed = used;
+            lastGameRestartUtc = _utcNow();
+        }
+
         var consecutiveFailedCycles = 0;
 
         IReadOnlyList<Gw2LedgerTransaction> cachedLedgerHistory = Array.Empty<Gw2LedgerTransaction>();
@@ -521,10 +533,21 @@ public sealed class WorkerRuntime
         var sessionOutcome = "Completed";
         var sessionOutcomeSummary = "Trading session completed.";
 
+        // A sleeping PC, display power-off or lock screen stops capture and input to the game.
+        using var keepAwake = liveDriver is not null && _liveTemplateMatcher is null ? new KeepAwake() : null;
+
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                if (gameRestartsUsed > 0 && _utcNow() - lastGameRestartUtc > GameRestartBudgetRefill)
+                {
+                    // Disconnects on long Asia->EU nights are normal; the restart allowance is per 2 quiet hours,
+                    // not per whole session, so a 10-hour run is not halted by its third disconnect.
+                    _logger.LogInformation("No game restart for {Hours}h; restart allowance refilled ({Max}).", GameRestartBudgetRefill.TotalHours, maxGameRestarts);
+                    gameRestartsUsed = 0;
+                }
+
                 if (IsPauseRequested)
                 {
                     await Task.Delay(100, cancellationToken);
@@ -571,7 +594,7 @@ public sealed class WorkerRuntime
                             maxRecoveryRetries,
                             maxGameRestarts,
                             () => gameRestartsUsed,
-                            used => gameRestartsUsed = used,
+                            SetGameRestartsUsed,
                             cancellationToken);
                         reportAccumulator.RecordRecoveryAttempt(
                             _utcNow(),
@@ -648,6 +671,22 @@ public sealed class WorkerRuntime
                         () => lastHistoryBuyId,
                         id => lastHistoryBuyId = id,
                         cancellationToken).ConfigureAwait(false);
+                }
+
+                if (request.AutoRescanFilter is { } rescanFilter &&
+                    request.AutoRescanIntervalMinutes > 0 &&
+                    _marketScanner is not null &&
+                    _utcNow() - lastRescanUtc >= TimeSpan.FromMinutes(request.AutoRescanIntervalMinutes))
+                {
+                    lastRescanUtc = _utcNow();
+                    if (await RescanShoppingListAsync(rescanFilter, blacklist, candidates.Count, request.CandidatesPath, cancellationToken).ConfigureAwait(false) is { } fresh)
+                    {
+                        candidates = fresh;
+                        candidateNameSet = fresh
+                            .Where(c => !string.IsNullOrWhiteSpace(c.ItemName))
+                            .Select(c => c.ItemName.Trim())
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    }
                 }
 
                 var cycleCandidates = await RefreshCycleCandidatesAsync(
@@ -837,7 +876,7 @@ public sealed class WorkerRuntime
                                 maxRecoveryRetries,
                                 maxGameRestarts,
                                 () => gameRestartsUsed,
-                                used => gameRestartsUsed = used,
+                                SetGameRestartsUsed,
                                 cancellationToken);
                             reportAccumulator.RecordRecoveryAttempt(
                                 _utcNow(),
@@ -952,7 +991,7 @@ public sealed class WorkerRuntime
                             maxRecoveryRetries,
                             maxGameRestarts,
                             () => gameRestartsUsed,
-                            used => gameRestartsUsed = used,
+                            SetGameRestartsUsed,
                             cancellationToken);
                         reportAccumulator.RecordRecoveryAttempt(
                             _utcNow(),
@@ -1392,6 +1431,49 @@ public sealed class WorkerRuntime
         {
             _logger.LogDebug(ex, "Sell profit check skipped for this pass.");
             return targets;
+        }
+    }
+
+    /// <summary>
+    /// Re-runs the Market Scanner with the session's filters so a long session follows the market instead of a list
+    /// frozen at start. Keeps the old list when the scan fails or finds fewer than 5 items, and saves the new list to
+    /// the shopping-list file so the app shows it. Open orders and bag items are unaffected: Outbid Refresh works from
+    /// the account's orders and the sell pass from everything Mmopal ordered.
+    /// </summary>
+    private async Task<IReadOnlyList<ItemCandidate>?> RescanShoppingListAsync(
+        MarketScanFilter filter,
+        IReadOnlyList<string> blacklist,
+        int previousCount,
+        string? candidatesPath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Auto re-scan: scanning the market with the session's filters...");
+            var results = await _marketScanner!.ScanAsync(filter, blacklist, progress: null, cancellationToken).ConfigureAwait(false);
+            if (results.Count < 5)
+            {
+                _logger.LogWarning("Auto re-scan found only {Count} item(s); keeping the current {Previous}-item list.", results.Count, previousCount);
+                return null;
+            }
+
+            var fresh = results.Select(item => item.ToCandidate()).ToArray();
+            if (!string.IsNullOrWhiteSpace(candidatesPath) && candidatesPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                OperatorListsStore.SaveShoppingList(candidatesPath, fresh);
+            }
+
+            _logger.LogInformation(
+                "Auto re-scan: shopping list updated to {Count} items (was {Previous}). Top: {Top}",
+                fresh.Length,
+                previousCount,
+                string.Join(", ", results.Take(3).Select(item => item.ItemName)));
+            return fresh;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Auto re-scan failed ({Message}); keeping the current list.", ex.Message);
+            return null;
         }
     }
 

@@ -987,6 +987,10 @@
                                                 <ComboBoxItem Content="Full Market (All)" Tag="0" />
                                             </ComboBox>
                                         </StackPanel>
+                                        <StackPanel Margin="0,0,10,4">
+                                            <TextBlock Text="AUTO RE-SCAN (H)" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="AutoRescanHoursBox" Text="3" ToolTip="During a session that uses the scanned list (Use All for Session), re-run this scan with these filters every N hours and swap in the fresh list. 0 = off. Open orders and items in bags are unaffected." />
+                                        </StackPanel>
                                         <StackPanel Margin="0,0,0,4">
                                             <TextBlock Text="MIN TRADES/DAY" Style="{StaticResource FieldLabel}" />
                                             <TextBox x:Name="ScanMinTradesPerDayBox" Text="10" ToolTip="Skip items that trade fewer times per day than this (7-day average of the slower side: buy orders filled vs listings bought). 0 = off. Needs DataWars2; ignored if it is unreachable." />
