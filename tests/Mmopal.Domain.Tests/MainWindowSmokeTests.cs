@@ -193,6 +193,11 @@ public sealed class MainWindowSmokeTests
                 armLiveBox.IsChecked = true;
                 PumpDispatcher();
                 Assert.Contains("ARMED", safeModePillText.Text, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("screen", Assert.IsType<ComboBoxItem>(source.SelectedItem).Tag); // Live pairs with Screen observe
+
+                source.SelectedIndex = 0; // Replay data cannot drive live clicks
+                PumpDispatcher();
+                Assert.Equal("DryRun", Assert.IsType<ComboBoxItem>(mode.SelectedItem).Tag);
 
                 armLiveBox.IsChecked = false;
                 mode.SelectedIndex = 0;

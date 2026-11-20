@@ -23,7 +23,19 @@ public sealed record MarketScanFilter(
     int UndercutCopper = 0,
     bool CheckWallDepth = false,
     bool IncludeDataWarsVelocity = false,
-    string SortMode = "BalancedScore");
+    string SortMode = "BalancedScore",
+    // Units that actually trade per day (DataWars2 7-day average of min(filled buy orders, bought listings)).
+    // A flip needs both sides to move; wide-spread items that trade a few times a day just sit unfilled.
+    double MinimumDailyTrades = 0);
+
+public static class MarketScanSortModes
+{
+    /// <summary>Net profit per unit × trades/day (capped): the "gold per day" ranking experienced flippers use.</summary>
+    public const string GoldPerDay = "GoldPerDay";
+
+    /// <summary>Beyond this many trades/day extra volume no longer helps a bot placing a few small orders.</summary>
+    public const double TradesPerDayCap = 20;
+}
 
 public sealed record MarketScanProgress(
     int ScannedItems,
@@ -197,10 +209,27 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         var overbid = Math.Max(0, filter.OverbidCopper);
         var undercut = Math.Max(0, filter.UndercutCopper);
 
+        // Fetched before matching so traded volume can filter and rank, not just decorate the results.
+        Dictionary<int, double>? velocityMap = null;
+        var needsVelocity = filter.IncludeDataWarsVelocity ||
+                            filter.MinimumDailyTrades > 0 ||
+                            string.Equals(filter.SortMode, MarketScanSortModes.GoldPerDay, StringComparison.Ordinal);
+        if (needsVelocity)
+        {
+            progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Fetching 7-day trade volume (DataWars2)..."));
+            velocityMap = await FetchDataWarsVelocityBestEffortAsync(cancellationToken).ConfigureAwait(false);
+            if (velocityMap is null)
+            {
+                progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Trade volume unavailable; ranking by spread and order depth instead."));
+            }
+        }
+
         var matched = new List<(Gw2CommercePrice Price, ProfitabilityResult Eval, double LiquidityScore, double SortScore)>();
         foreach (var entry in rawPrices)
         {
             if (entry.Buys is null || entry.Sells is null) continue;
+            double? tradesPerDay = velocityMap is null ? null : velocityMap.GetValueOrDefault(entry.Id);
+            if (tradesPerDay is { } traded && filter.MinimumDailyTrades > 0 && traded < filter.MinimumDailyTrades) continue;
             var effectiveBuy = entry.Buys.UnitPrice + overbid;
             var effectiveSell = Math.Max(1L, entry.Sells.UnitPrice - undercut);
             if (effectiveBuy < filter.MinimumBuyPriceCopper) continue;
@@ -214,7 +243,7 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
 
             var minDepth = Math.Min(entry.Buys.Quantity, entry.Sells.Quantity);
             var liquidityScore = Math.Log10(1.0 + minDepth) * 25.0;
-            var sortScore = ComputeSortScore(filter.SortMode, eval, entry, liquidityScore);
+            var sortScore = ComputeSortScore(filter.SortMode, eval, entry, liquidityScore, tradesPerDay);
             matched.Add((entry, eval, liquidityScore, sortScore));
         }
 
@@ -282,13 +311,6 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
             orderBooks = await FetchOrderBooksBestEffortAsync(filteredRows.Select(r => r.Price.Id), cancellationToken).ConfigureAwait(false);
         }
 
-        Dictionary<int, int>? velocityMap = null;
-        if (filter.IncludeDataWarsVelocity && filteredRows.Count > 0)
-        {
-            progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, filteredRows.Count, "Fetching 24h trade volume estimates..."));
-            velocityMap = await FetchDataWarsVelocityBestEffortAsync(cancellationToken).ConfigureAwait(false);
-        }
-
         var results = new List<MarketScanItem>(filteredRows.Count);
         foreach (var (price, eval, liquidityScore, _, info) in filteredRows)
         {
@@ -298,7 +320,7 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
             int? dailyVolume = null;
             if (velocityMap is not null && velocityMap.TryGetValue(price.Id, out var vol))
             {
-                dailyVolume = vol;
+                dailyVolume = (int)Math.Round(vol);
             }
 
             var riskBadge = ClassifyRiskBadge(price, eval, info, book);
@@ -392,10 +414,14 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         string? sortMode,
         ProfitabilityResult eval,
         Gw2CommercePrice entry,
-        double liquidityScore)
+        double liquidityScore,
+        double? tradesPerDay = null)
     {
         return sortMode switch
         {
+            // Without volume data this falls back to the balanced spread/depth score below.
+            MarketScanSortModes.GoldPerDay when tradesPerDay is { } traded =>
+                (double)eval.ProfitCopper * Math.Min(traded, MarketScanSortModes.TradesPerDayCap),
             "Roi" => (double)eval.ProfitPercentage,
             "Liquidity" => Math.Min(entry.Buys!.Quantity, entry.Sells!.Quantity),
             "NetProfit" => eval.ProfitCopper,
@@ -469,7 +495,7 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         int? dailyVolume)
     {
         var typePart = string.IsNullOrWhiteSpace(info.ItemType) ? info.Rarity : $"{info.Rarity} {info.ItemType}";
-        var volPart = dailyVolume.HasValue ? $" • 24h Est Vol: {dailyVolume.Value:N0}/d" : string.Empty;
+        var volPart = dailyVolume.HasValue ? $" • Trades: ~{dailyVolume.Value:N0}/day (7-day avg, DataWars2)" : string.Empty;
         return $"{info.Name} ({typePart})\n" +
                $"Buy: {MarketScanItem.FormatCoins(eval.BuyPriceCopper)}  •  Sell: {MarketScanItem.FormatCoins(eval.SellPriceCopper)}\n" +
                $"Fees: -{MarketScanItem.FormatCoins(eval.ListingFeeCopper)} (5% list)  -{MarketScanItem.FormatCoins(eval.ExchangeFeeCopper)} (10% tax)\n" +
@@ -581,15 +607,17 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         return map;
     }
 
-    private async Task<Dictionary<int, int>?> FetchDataWarsVelocityBestEffortAsync(CancellationToken cancellationToken)
+    private async Task<Dictionary<int, double>?> FetchDataWarsVelocityBestEffortAsync(CancellationToken cancellationToken)
     {
         try
         {
             using var ownedClient = _velocityHttpClient is null
-                ? new HttpClient { Timeout = TimeSpan.FromSeconds(8) }
+                ? new HttpClient { Timeout = TimeSpan.FromSeconds(30) }
                 : null;
             var client = _velocityHttpClient ?? ownedClient!;
-            using var response = await client.GetAsync("https://api.datawars2.ie/gw2/v1/items/json?fields=id,1d_buy_sold,1d_sell_sold", cancellationToken).ConfigureAwait(false);
+            using var response = await client.GetAsync(
+                "https://api.datawars2.ie/gw2/v1/items/json?fields=id,1d_buy_sold,1d_sell_sold,7d_buy_sold,7d_sell_sold",
+                cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -597,33 +625,7 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-
-            var map = new Dictionary<int, int>();
-            foreach (var elem in doc.RootElement.EnumerateArray())
-            {
-                if (!elem.TryGetProperty("id", out var idProp) || !idProp.TryGetInt32(out var id))
-                {
-                    continue;
-                }
-
-                var buySold = elem.TryGetProperty("1d_buy_sold", out var bProp) && bProp.ValueKind == JsonValueKind.Number
-                    ? bProp.GetInt32()
-                    : 0;
-                var sellSold = elem.TryGetProperty("1d_sell_sold", out var sProp) && sProp.ValueKind == JsonValueKind.Number
-                    ? sProp.GetInt32()
-                    : 0;
-                var est = Math.Min(Math.Max(0, buySold), Math.Max(0, sellSold));
-                if (est > 0)
-                {
-                    map[id] = est;
-                }
-            }
-
-            return map;
+            return ParseDataWarsVelocity(doc.RootElement);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -633,6 +635,52 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Trades per day per item: min(units sold into buy orders, units bought from listings), as a 7-day daily
+    /// average (falls back to the last day). "buy_sold" is how fast our buy orders can fill; "sell_sold" how fast our
+    /// listings can sell. A flip needs both, so the smaller one is the item's real throughput.
+    /// </summary>
+    private static Dictionary<int, double>? ParseDataWarsVelocity(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        static double Read(JsonElement element, string field) =>
+            element.TryGetProperty(field, out var prop) && prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out var value)
+                ? Math.Max(0, value)
+                : -1;
+
+        var map = new Dictionary<int, double>();
+        foreach (var elem in root.EnumerateArray())
+        {
+            if (!elem.TryGetProperty("id", out var idProp) || !idProp.TryGetInt32(out var id))
+            {
+                continue;
+            }
+
+            var weekBuy = Read(elem, "7d_buy_sold");
+            var weekSell = Read(elem, "7d_sell_sold");
+            double perDay;
+            if (weekBuy >= 0 && weekSell >= 0)
+            {
+                perDay = Math.Min(weekBuy, weekSell) / 7.0;
+            }
+            else
+            {
+                var dayBuy = Read(elem, "1d_buy_sold");
+                var daySell = Read(elem, "1d_sell_sold");
+                if (dayBuy < 0 || daySell < 0) continue;
+                perDay = Math.Min(dayBuy, daySell);
+            }
+
+            map[id] = perDay;
+        }
+
+        return map;
     }
 
     private async Task<T> GetJsonAsync<T>(string relativeUrl, CancellationToken cancellationToken)

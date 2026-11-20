@@ -293,7 +293,40 @@ public partial class MainWindow : Window
     private void ModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingUi) return;
+
+        // Live trading acts on the real game, so it always reads the real game screen.
+        if (IsSelectedTag(ModeSelector, nameof(RunMode.Live)) && SourceSelector is not null && !IsSelectedTag(SourceSelector, "screen"))
+        {
+            SelectByTag(SourceSelector, "screen");
+        }
+
         UpdateSafeModePill();
+    }
+
+    private void SourceSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingUi || ModeSelector is null) return;
+
+        // Replay data is a recorded sample; arming live clicks against it makes no sense, so fall back to Dry run.
+        if (IsSelectedTag(SourceSelector, "replay") && IsSelectedTag(ModeSelector, nameof(RunMode.Live)))
+        {
+            SelectByTag(ModeSelector, nameof(RunMode.DryRun));
+        }
+    }
+
+    private static bool IsSelectedTag(ComboBox? combo, string tag) =>
+        string.Equals((combo?.SelectedItem as ComboBoxItem)?.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase);
+
+    private static void SelectByTag(ComboBox combo, string tag)
+    {
+        foreach (var item in combo.Items)
+        {
+            if (item is ComboBoxItem comboItem && string.Equals(comboItem.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = comboItem;
+                return;
+            }
+        }
     }
 
     private void ProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -361,7 +394,8 @@ public partial class MainWindow : Window
 
         if (isLiveMode && isArmed)
         {
-            SafeModePillText.Text = "Live input ARMED • Sends clicks/keys";
+            SafeModePillText.Text = "Live · Armed";
+            SafeModePillBorder.ToolTip = "Live input is armed: the session sends real clicks and keystrokes to Guild Wars 2.";
             SafeModePillIcon.Text = "\uE7BA";
             var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
             SafeModePillIcon.Foreground = warnBrush;
@@ -369,7 +403,8 @@ public partial class MainWindow : Window
         }
         else if (isLiveMode)
         {
-            SafeModePillText.Text = "Live mode • Disarmed (check Arm to run)";
+            SafeModePillText.Text = "Live · Disarmed";
+            SafeModePillBorder.ToolTip = "Live mode is selected but input is not armed. Tick 'Arm live input' to let the session click.";
             SafeModePillIcon.Text = "\uE72E";
             var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
             SafeModePillIcon.Foreground = warnBrush;
@@ -377,7 +412,8 @@ public partial class MainWindow : Window
         }
         else
         {
-            SafeModePillText.Text = "Safe mode • Live input disarmed";
+            SafeModePillText.Text = "Safe · No input";
+            SafeModePillBorder.ToolTip = "Dry run / Observe: no clicks or keystrokes are sent to the game.";
             SafeModePillIcon.Text = "\uE72E";
             SafeModePillIcon.Foreground = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
             SafeModePillBorder.BorderBrush = ResolveBrush("BorderBrush", Brushes.Gray);
@@ -505,6 +541,9 @@ public partial class MainWindow : Window
             SidebarStatusDot.Width = 11;
             SidebarStatusDot.Height = 11;
             SidebarStatusDot.Margin = new Thickness(0);
+            // Center the dot in the 40x40 tile; the stack otherwise sits at the top and the rounded corner clips it.
+            SidebarStatusStack.HorizontalAlignment = HorizontalAlignment.Center;
+            SidebarStatusStack.VerticalAlignment = VerticalAlignment.Center;
         }
         else
         {
@@ -517,6 +556,18 @@ public partial class MainWindow : Window
             SidebarStatusDot.Width = 9;
             SidebarStatusDot.Height = 9;
             SidebarStatusDot.Margin = new Thickness(0, 0, 8, 0);
+            SidebarStatusStack.HorizontalAlignment = HorizontalAlignment.Stretch;
+            SidebarStatusStack.VerticalAlignment = VerticalAlignment.Stretch;
+        }
+
+        if (SessionHeaderPills is not null)
+        {
+            // Docked: pills go under the title so "Session Control Room" is not squeezed to "Session...".
+            Grid.SetRow(SessionHeaderPills, compact ? 1 : 0);
+            Grid.SetColumn(SessionHeaderPills, compact ? 0 : 1);
+            Grid.SetColumnSpan(SessionHeaderPills, compact ? 2 : 1);
+            SessionHeaderPills.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            SessionHeaderPills.Margin = compact ? new Thickness(0, 8, 0, 0) : new Thickness(0);
         }
 
         SidebarBrandText.Visibility = labelVisibility;
@@ -2395,7 +2446,12 @@ public partial class MainWindow : Window
     {
         var nowUtc = DateTimeOffset.UtcNow;
         var info = Gw2MarketCycle.Describe(nowUtc);
-        MarketCyclePillText.Text = info.Summary;
+        // Compact pill; the full schedule line and advice live in the tooltip.
+        MarketCyclePillText.Text = $"{ShortPhaseName(info.PhaseName)} · reset {(int)info.TimeUntilReset.TotalHours}h {info.TimeUntilReset.Minutes:00}m";
+        if (MarketCyclePillBorder is not null)
+        {
+            MarketCyclePillBorder.ToolTip = $"{info.Summary}\n{info.Advice}";
+        }
 
         var localTz = TimeZoneInfo.Local;
         var utcToday = new DateTimeOffset(nowUtc.UtcDateTime.Date, TimeSpan.Zero);
@@ -2420,6 +2476,15 @@ public partial class MainWindow : Window
 
         GuideScheduleSummaryText.Text = $"Now ({localTz.DisplayName}): {info.Summary} — {info.Advice}";
     }
+
+    private static string ShortPhaseName(string phase) => phase switch
+    {
+        "Global Off-Peak" => "Off-peak",
+        "EU Prime Time" => "EU prime",
+        "NA Prime Time" => "NA prime",
+        "Daily Reset Spike" => "Reset spike",
+        _ => phase
+    };
 
     private void SetScheduleTileHighlight(Border tile, bool isActive)
     {
@@ -3001,9 +3066,18 @@ public partial class MainWindow : Window
             return false;
         }
 
+        var minTradesText = ScanMinTradesPerDayBox.Text.Trim();
+        double minTradesPerDay = 0;
+        if (minTradesText.Length > 0 &&
+            (!double.TryParse(minTradesText, NumberStyles.Number, CultureInfo.CurrentCulture, out minTradesPerDay) || minTradesPerDay < 0))
+        {
+            error = "Min trades/day must be a number 0 or greater (0 = off).";
+            return false;
+        }
+
         var rarity = (ScanRaritySelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
         var itemType = (ScanCategorySelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        var sortMode = (ScanSortSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "BalancedScore";
+        var sortMode = (ScanSortSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? MarketScanSortModes.GoldPerDay;
         var scopeText = (ScanScopeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "2000";
         var maxScan = int.TryParse(scopeText, out var parsedScope) ? parsedScope : 2000;
         var defaultQty = long.TryParse(DefaultQuantityBox.Text.Trim(), out var parsedQty) && parsedQty > 0 ? parsedQty : 1;
@@ -3027,7 +3101,8 @@ public partial class MainWindow : Window
             UndercutCopper: undercut,
             CheckWallDepth: ScanCheckWallsCheckBox.IsChecked == true,
             IncludeDataWarsVelocity: ScanVelocityCheckBox.IsChecked == true,
-            SortMode: sortMode);
+            SortMode: sortMode,
+            MinimumDailyTrades: minTradesPerDay);
         return true;
     }
 

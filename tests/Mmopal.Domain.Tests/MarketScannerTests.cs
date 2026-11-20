@@ -215,6 +215,81 @@ public sealed class MarketScannerTests
     private static HttpResponseMessage Json(string body) =>
         new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+    [Fact]
+    public async Task Gold_per_day_ranking_drops_dead_wide_spreads_and_prefers_items_that_trade()
+    {
+        using var client = PricesClient();
+        using var velocity = new HttpClient(new StubHandler(_ => Json("""
+            [
+              {"id":201,"7d_buy_sold":2,"7d_sell_sold":3},
+              {"id":202,"7d_buy_sold":3500,"7d_sell_sold":4000},
+              {"id":203,"7d_buy_sold":210,"7d_sell_sold":400}
+            ]
+            """)));
+        var scanner = new Gw2MarketScanner(client, velocityHttpClient: velocity);
+
+        var results = await scanner.ScanAsync(VolumeFilter(MarketScanSortModes.GoldPerDay, minimumDailyTrades: 5));
+
+        // 201: 127% ROI but ~0.3 trades/day -> dropped.
+        // 202: 1,050c profit x min(500/day, 20) = 21,000; 203: 950c x min(30/day, 20) = 19,000.
+        Assert.Equal(["Busy Item", "Steady Item"], results.Select(item => item.ItemName));
+        Assert.Equal(500, results[0].DailyVolumeEstimate);
+        Assert.Equal(30, results[1].DailyVolumeEstimate);
+    }
+
+    [Fact]
+    public async Task Gold_per_day_scan_still_works_when_trade_volume_is_unavailable()
+    {
+        using var client = PricesClient();
+        using var velocity = new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+        var scanner = new Gw2MarketScanner(client, velocityHttpClient: velocity);
+
+        var results = await scanner.ScanAsync(VolumeFilter(MarketScanSortModes.GoldPerDay, minimumDailyTrades: 5));
+
+        // No volume data: nothing is dropped for volume and ranking falls back to spread/depth.
+        Assert.Equal(3, results.Count);
+        Assert.All(results, item => Assert.Null(item.DailyVolumeEstimate));
+    }
+
+    private static HttpClient PricesClient() => new(new StubHandler(request =>
+    {
+        var path = request.RequestUri!.PathAndQuery;
+        return path switch
+        {
+            "/v2/commerce/prices" => Json("[201,202,203]"),
+            _ when path.StartsWith("/v2/commerce/prices?ids=", StringComparison.Ordinal) => Json("""
+                [
+                  {"id":201,"buys":{"quantity":40,"unit_price":3000},"sells":{"quantity":12,"unit_price":8000}},
+                  {"id":202,"buys":{"quantity":900,"unit_price":10000},"sells":{"quantity":700,"unit_price":13000}},
+                  {"id":203,"buys":{"quantity":300,"unit_price":5000},"sells":{"quantity":250,"unit_price":7000}}
+                ]
+                """),
+            _ when path.StartsWith("/v2/items?ids=", StringComparison.Ordinal) => Json("""
+                [
+                  {"id":201,"name":"Dead Spread Item","rarity":"Rare"},
+                  {"id":202,"name":"Busy Item","rarity":"Rare"},
+                  {"id":203,"name":"Steady Item","rarity":"Rare"}
+                ]
+                """),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        };
+    }))
+    {
+        BaseAddress = new Uri("https://api.guildwars2.com/")
+    };
+
+    private static MarketScanFilter VolumeFilter(string sortMode, double minimumDailyTrades) => new(
+        MinimumProfitPercentage: 5m,
+        MinimumProfitCopper: 100,
+        MinimumBuyPriceCopper: 1_000,
+        MaximumBuyPriceCopper: 100_000,
+        MinimumSupply: 1,
+        MinimumDemand: 1,
+        MaxItemsToScan: 500,
+        MaxResults: 20,
+        SortMode: sortMode,
+        MinimumDailyTrades: minimumDailyTrades);
+
     private sealed class StubHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;
