@@ -40,7 +40,8 @@ public sealed class LiveTradingExecutorTests
 
         Assert.False(ready);
         Assert.Contains("3 bounded attempts", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(["F", "F", "O"], input.KeyPresses);
+        // F, Esc (close bank/NPC window), O (Black Lion panel), Esc, F.
+        Assert.Equal(["F", "escape", "O", "escape", "F"], input.KeyPresses);
         Assert.Empty(input.Clicks);
     }
 
@@ -76,7 +77,7 @@ public sealed class LiveTradingExecutorTests
 
         Assert.True(ready);
         Assert.Contains("attempt 2", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(["F", "F"], input.KeyPresses);
+        Assert.Equal(["F", "escape", "O"], input.KeyPresses);
     }
 
     [Fact]
@@ -303,17 +304,18 @@ public sealed class LiveTradingExecutorTests
     [Fact]
     public async Task EnsureTradingPostOpenAsync_ClicksInteractPromptAndSwitchesFromGemStoreTab()
     {
-        // Part A: Black Lion window opens on Gem Store (scales icon visible in left sidebar X=0..80, Y=240..380)
+        // Part A: Black Lion window opens on Gem Store. Scales icon measured on a live 1024x768 frame at
+        // (14..53, 215..234); the sidebar search region is X=0..80, Y=195..275.
         var inputA = new FakeInputController();
         var templatesA = new FakeTemplateMatcher();
         templatesA.PredicateMatches["tradingpost_tab.png"] = tpl =>
-            tpl.Region is { X: 0, Y: 240, Width: 80 }
-                ? new TemplateMatch(20, 300, 32, 32, 0.90m)
-                : inputA.Clicks.Contains((36, 316))
+            tpl.Region is { X: 0, Y: 195, Width: 80 }
+                ? new TemplateMatch(14, 215, 39, 19, 1.00m)
+                : inputA.Clicks.Contains((33, 224))
                     ? new TemplateMatch(460, 70, 40, 20, 0.90m)
                     : null;
         templatesA.PredicateMatches["transactions.png"] = _ =>
-            inputA.Clicks.Contains((36, 316)) ? new TemplateMatch(860, 92, 60, 42, 0.95m) : null;
+            inputA.Clicks.Contains((33, 224)) ? new TemplateMatch(867, 92, 60, 42, 0.95m) : null;
 
         var driverA = new Gw2TradingPostUiDriver(
             new FakeScreenshotProvider(),
@@ -329,7 +331,7 @@ public sealed class LiveTradingExecutorTests
         var (readyA, msgA) = await driverA.EnsureTradingPostOpenAsync();
         Assert.True(readyA);
         Assert.Contains("Switched", msgA, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains((36, 316), inputA.Clicks);
+        Assert.Contains((33, 224), inputA.Clicks);
 
         // Part B: In-world with visible "Talk [F]" prompt (interact.png)
         var inputB = new FakeInputController();
@@ -401,6 +403,80 @@ public sealed class LiveTradingExecutorTests
         Assert.Contains((407, 265), input.Clicks);
         Assert.Contains((407, 323), input.Clicks);
         Assert.Contains((665, 425), input.Clicks); // placeOrder.png center
+    }
+
+    [Fact]
+    public async Task PlaceBuyOrderAsync_FallsBackToTotalPriceAndSavesACalibrationFrame()
+    {
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["tradingpost_tab.png"] = new(90, 20, 80, 24, 0.95m),
+            ["buy_items_tab.png"] = new(210, 45, 70, 22, 0.95m),
+            ["search.png"] = new(60, 110, 120, 24, 0.95m),
+            ["item.png"] = new(389, 218, 37, 18, 0.95m),
+            ["currentBuyers.png"] = new(223, 452, 162, 61, 0.95m),
+            ["placeOrder.png"] = new(610, 410, 110, 30, 0.95m)
+        });
+        var totalReadable = true;
+        var locator = new FakeUiTextLocator(region => (region.X, region.Y) switch
+        {
+            (325, 240) => [new OcrTextBox("Slice of Allspice Cake", 393, 266, 200, 12)],
+            (330, 165) => [new OcrTextBox("Slice of Allspice Cake", 347, 175, 300, 24)],
+            (380, 294) => Array.Empty<OcrTextBox>(),                                       // editable boxes unreadable
+            (380, 333) when totalReadable => [new OcrTextBox("2. 16. 20.", 393, 341, 120, 22)], // 2 x 1g 08s 10c = 2g 16s 20c
+            _ => Array.Empty<OcrTextBox>()
+        });
+        var diagnostics = Path.Combine(Path.GetTempPath(), "mmopal-diag-" + Guid.NewGuid().ToString("N"));
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator,
+            diagnosticsDirectory: diagnostics);
+        try
+        {
+            // Planned 54s 04c per unit, but the dialog total says 1g 08s 10c each: an overpay, so it must abort.
+            var overpay = await driver.PlaceBuyOrderAsync(
+                new TradingAction(TradingActionKind.PlaceBuyOrder, "Slice of Allspice Cake", 5_404, 2, "profitable"),
+                overbidMinCopper: 1,
+                overbidMaxCopper: 1);
+            Assert.Equal(TradingActionStatus.Failed, overpay.Status);
+            Assert.Contains("1g 08s 10c", overpay.Message, StringComparison.Ordinal);
+
+            totalReadable = false;
+            var unreadable = await driver.PlaceBuyOrderAsync(
+                new TradingAction(TradingActionKind.PlaceBuyOrder, "Slice of Allspice Cake", 5_404, 2, "profitable"),
+                overbidMinCopper: 1,
+                overbidMaxCopper: 1);
+            Assert.Equal(TradingActionStatus.Completed, unreadable.Status);
+            Assert.Single(Directory.GetFiles(diagnostics, "price-unreadable-*.png"));
+        }
+        finally
+        {
+            if (Directory.Exists(diagnostics)) Directory.Delete(diagnostics, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EffectiveBalanceState_DoesNotRecollectTheSameCoinsAndItemsWhileTheApiLags()
+    {
+        var state = new WorkerRuntime.EffectiveBalanceState();
+        var t0 = new DateTimeOffset(2026, 11, 20, 8, 0, 0, TimeSpan.Zero);
+
+        // Seen live: "24g 83s 06c coins, 1 item" collected four times in a row.
+        state.RecordTakeAllAttempt(deliveryCoinsCopper: 248_306, apiWalletBaselineCopper: 1_000_000, clickedTakeAll: true, nowUtc: t0, itemCount: 1);
+
+        Assert.True(state.ShouldSkipStaleDeliveryCollection(248_306, 1, t0.AddSeconds(90)));
+        Assert.False(state.ShouldSkipStaleDeliveryCollection(248_306, 2, t0.AddSeconds(90)));  // another item arrived
+        Assert.False(state.ShouldSkipStaleDeliveryCollection(248_306, 1, t0.AddMinutes(6)));   // API window over
     }
 
     [Theory]
@@ -550,6 +626,51 @@ public sealed class LiveTradingExecutorTests
         Assert.Contains((721, 162), input.Clicks); // clicked Sell Items tab
         Assert.Contains((665, 425), input.Clicks); // clicked ListThisItem.png
         Assert.Contains((565, 116), input.Clicks); // switched back to Buy Items tab afterward
+    }
+
+    [Fact]
+    public async Task TryAdvanceLauncherOrCharacterSelectAsync_EntersAnotherParkedCharacterThanTheLastPlayed()
+    {
+        // Launch or restart: slot 1 is the character the previous run ended on (it was stuck next to a bank NPC).
+        var input = new FakeInputController();
+        var slotFour = (258 + 3 * 122, 640);
+        var templates = new FakeTemplateMatcher();
+        templates.DynamicMatches["charscreen_play.png"] = () =>
+            input.Clicks.Contains((785, 734)) ? null : new TemplateMatch(750, 718, 71, 33, 0.97m);
+        templates.DynamicMatches["ingame_1.png"] = () =>
+            input.Clicks.Contains((785, 734)) ? new TemplateMatch(48, 54, 16, 16, 0.85m) : null;
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(),
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0, ParkedCharacterCount: 4, RandomizeCharacterSelection: false),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false);
+
+        Assert.True(await driver.TryAdvanceLauncherOrCharacterSelectAsync());
+
+        Assert.Contains(slotFour, input.Clicks);
+        Assert.DoesNotContain((258, 640), input.Clicks);
+        Assert.True(input.Clicks.IndexOf(slotFour) < input.Clicks.IndexOf((785, 734))); // portrait before Play
+    }
+
+    [Theory]
+    [InlineData(false, 1, 0)]
+    [InlineData(true, 1, 0)]
+    [InlineData(false, 4, 3)]   // "next": least recently played parked character
+    [InlineData(false, 9, 4)]   // capped at slot 5, the last portrait visible without scrolling
+    [InlineData(true, 4, 2)]    // random draw stubbed below
+    public void PickParkedSlotOffset_never_reenters_the_last_played_character_when_several_are_parked(bool randomize, int parked, int expected)
+    {
+        Assert.Equal(expected, Gw2TradingPostUiDriver.PickParkedSlotOffset(randomize, parked, (min, max) =>
+        {
+            Assert.Equal(1, min); // slot 1 (offset 0) is never a random candidate
+            Assert.True(max <= 5);
+            return 2;
+        }));
     }
 
     [Fact]
@@ -1385,7 +1506,7 @@ public sealed class LiveTradingExecutorTests
         var advanced = await driver.TryAdvanceLauncherOrCharacterSelectAsync();
 
         Assert.True(advanced);
-        Assert.DoesNotContain(input.Clicks, c => c.X < 400); // Steam mode skips LOG IN completely
+        Assert.DoesNotContain(input.Clicks, c => c.X < 400 && c.Y is > 480 and < 600); // Steam mode never clicks LOG IN (portrait row at y=640 is fine)
         Assert.Contains((800, 645), input.Clicks);
         Assert.Contains((785, 734), input.Clicks);
     }

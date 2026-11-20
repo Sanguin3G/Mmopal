@@ -27,11 +27,11 @@ Action execution is not blindly retried: an executor exception moves the cycle t
 
 `Gw2TradingPostUiDriver.PlaceBuyOrderAsync`, calibrated on 1024×768 screenshots:
 
-1. Make sure the TP is open; click OK on any in-game message box first.
+1. Make sure the TP is open; click OK on any in-game message box first. Opening tries **F** (the nearest NPC), then **O** (the Black Lion panel works anywhere; its sidebar scales icon at about (33, 224) switches Gem Store → Trading Post), then **F** again, pressing Esc in between so a bank or other NPC window opened by mistake is closed.
 2. Search the item name, then **wait until the result list shows it** (raw and contrast-enhanced OCR), or until "no items match this filter" appears. On high ping the previous search's rows linger, and clicking them hit a stale, similarly named item.
 3. Open result row 1 and **read the dialog title**. If it is a different item, close it and try rows 2 and 3. An unreadable title proceeds and is logged.
 4. Click Current Buyers row 1 (sets the price to the top bid), set quantity, tap ▲ for the overbid.
-5. **Read the Max. Price boxes** and abort when the price is plausibly >3% over or >10% under the planned price. Unreadable or wildly-off readings only log.
+5. **Read the price**: the Max. Price boxes, retried once, then the plain Total Price line ÷ quantity. Abort when the price is plausibly >3% over or >10% under the planned price. Unreadable or wildly-off readings only log, and the first 3 unreadable dialogs per session are saved to `%LOCALAPPDATA%\Mmopal\screenshots\price-unreadable-*.png` for calibration.
 6. Click Place Order.
 
 Look for `Buy price check for X`, `Search row N for 'X' opened 'Y'` and `Search results for 'X' appeared after N ms` in the log.
@@ -49,9 +49,10 @@ Each cancel logs `our bid` vs `API top bid`.
 ## Other live behaviour
 
 - **Message boxes:** OK dialogs such as "unable to gain access to the log-in server (Code=42:...)", common on Asia→EU routes, are dismissed in place and logged. Recovery takes over only if one keeps reappearing.
-- **Delivery Box:** after a successful Take All, the same coin amount is ignored for the ~5 minute API cache window. Collected coins are credited to the working balance until the wallet API catches up.
-- **Launcher LOG IN:** at most 3 attempts per launcher pass, 6 s apart, each re-checked on a fresh frame so a click never lands on the news page.
-- **Character swap:** logs out to Character Select and clicks a parked slot. Random picks slot 2–N; "next" picks the last slot. Both assume the select screen lists the last played character first. The selected name is read before and after the click, and a warning is logged if it did not change.
+- **Delivery Box:** after a successful Take All, the same coins and item count are ignored for the ~5 minute API cache window. Collected coins are credited to the working balance until the wallet API catches up.
+- **Launcher LOG IN:** at most 3 attempts per launcher pass, 6 s apart, each re-checked on a fresh frame so a click never lands on the news page. With the **Steam** platform nothing is clicked on the launcher: Steam signs in by itself, and PLAY is clicked only if the game has not started after 20 s.
+- **Character choice:** Character Select lists the last played character first. With more than one parked character, the bot never re-enters slot 1: on a fresh launch, a game restart, a disconnect, or an AFK swap it picks slot 2–min(N, 5) at random, or with "next" the last parked slot (the least recently played). The selected name is read before and after the click and logged.
+- **TP won't open on a character** (for example a bank NPC next to the trader keeps winning F): the first recovery step switches to another parked character before in-place retries and the game restart.
 
 ## Replay command payload
 

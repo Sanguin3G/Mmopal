@@ -21,6 +21,7 @@ public sealed class WorkerRuntime
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly IInputController? _liveInputController;
     private readonly IScreenshotProvider? _liveScreenshots;
+    private readonly string? _diagnosticsDirectory;
     private readonly ITemplateMatcher? _liveTemplateMatcher;
     private readonly IWindowController? _liveWindowController;
     private readonly TradingLedgerStore? _ledgerStore;
@@ -45,8 +46,10 @@ public sealed class WorkerRuntime
         ITemplateMatcher? liveTemplateMatcher = null,
         IWindowController? liveWindowController = null,
         TradingLedgerStore? ledgerStore = null,
-        SessionReportStore? sessionReportStore = null)
+        SessionReportStore? sessionReportStore = null,
+        string? diagnosticsDirectory = null)
     {
+        _diagnosticsDirectory = diagnosticsDirectory;
         _store = store;
         _logger = logger;
         _marketData = marketData;
@@ -432,7 +435,8 @@ public sealed class WorkerRuntime
                 _logger,
                 pollIntervalMs: _liveTemplateMatcher is null ? 150 : 5,
                 requireTemplateFilesOnDisk: _liveTemplateMatcher is null,
-                isPaused: () => IsPauseRequested);
+                isPaused: () => IsPauseRequested,
+                diagnosticsDirectory: _diagnosticsDirectory);
             executor = new LiveTradingActionExecutor(
                 liveDriver,
                 request.OverbidBufferMinCopper,
@@ -1219,7 +1223,7 @@ public sealed class WorkerRuntime
                     ?? (await officialData.GetBalanceAsync(cancellationToken).ConfigureAwait(false))?.Copper
                     ?? 0;
                 var collectedUi = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
-                effectiveBalance.RecordTakeAllAttempt(delivery.CoinsCopper, apiWalletBaseline, collectedUi, now);
+                effectiveBalance.RecordTakeAllAttempt(delivery.CoinsCopper, apiWalletBaseline, collectedUi, now, delivery.Items.Count);
                 if (collectedUi)
                 {
                     if (collectedFlipItems.Count > 0)
@@ -1675,7 +1679,23 @@ public sealed class WorkerRuntime
                 return (false, "Paused by operator during session recovery.");
             }
 
-            var (ok, recoverMsg) = await liveDriver.TryRecoverTradingSessionAsync(cancellationToken).ConfigureAwait(false);
+            bool ok;
+            string recoverMsg;
+            if (retry == 1 && liveDriver.LastTradingPostOpenFailed && settings.ParkedCharacterCount > 1)
+            {
+                // Every key was tried on this character (e.g. a bank NPC next to the trader keeps winning F), so
+                // retrying in place or restarting into the same character repeats the failure. Switch characters.
+                _logger.LogWarning("Trading Post would not open on this character; switching to another parked character first.");
+                (ok, recoverMsg) = await liveDriver.RotateParkedCharacterAsync(
+                    settings.RandomizeCharacterSelection,
+                    settings.ParkedCharacterCount,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (ok, recoverMsg) = await liveDriver.TryRecoverTradingSessionAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             if (ok)
             {
                 var okText = $"Recovered GW2 Trading Post on retry {retry}/{maxRecoveryRetries}: {recoverMsg}";
@@ -1745,6 +1765,7 @@ public sealed class WorkerRuntime
         public long ApiWalletAtCollectionCopper { get; private set; }
         public DateTimeOffset? CollectedAtUtc { get; private set; }
         private long _lastSeenDeliveryCoins;
+        private int _lastSeenDeliveryItems;
         private DateTimeOffset? _lastTakeAllAttemptUtc;
         private bool _lastTakeAllSucceeded;
 
@@ -1753,29 +1774,32 @@ public sealed class WorkerRuntime
             PendingCreditCoinsCopper = 0;
             CollectedAtUtc = null;
             _lastSeenDeliveryCoins = 0;
+            _lastSeenDeliveryItems = 0;
             _lastTakeAllAttemptUtc = null;
             _lastTakeAllSucceeded = false;
         }
 
         public bool ShouldSkipStaleDeliveryCollection(long deliveryCoinsCopper, int itemCount, DateTimeOffset nowUtc)
         {
-            if (itemCount > 0 || deliveryCoinsCopper <= 0)
+            if (deliveryCoinsCopper <= 0 && itemCount <= 0)
             {
                 return false;
             }
 
-            // After a successful Take All the delivery API keeps reporting the same coins until its ~5 min cache
-            // expires; re-collecting then clicks an empty box and double-counts the pickup in the session report.
-            // A failed click is retried sooner.
+            // After a successful Take All the delivery API keeps reporting the same coins and items until its ~5 min
+            // cache expires; re-collecting then clicks an empty box and double-counts the pickup in the session
+            // report (seen live: "24g 83s 06c, 1 item" collected four times). A failed click is retried sooner.
             var window = _lastTakeAllSucceeded ? ApiCacheWindow : StaleCollectionCooldown;
             return deliveryCoinsCopper == _lastSeenDeliveryCoins &&
+                   itemCount == _lastSeenDeliveryItems &&
                    _lastTakeAllAttemptUtc.HasValue &&
                    (nowUtc - _lastTakeAllAttemptUtc.Value) < window;
         }
 
-        public void RecordTakeAllAttempt(long deliveryCoinsCopper, long apiWalletBaselineCopper, bool clickedTakeAll, DateTimeOffset nowUtc)
+        public void RecordTakeAllAttempt(long deliveryCoinsCopper, long apiWalletBaselineCopper, bool clickedTakeAll, DateTimeOffset nowUtc, int itemCount = 0)
         {
             _lastSeenDeliveryCoins = deliveryCoinsCopper;
+            _lastSeenDeliveryItems = itemCount;
             _lastTakeAllAttemptUtc = nowUtc;
             _lastTakeAllSucceeded = clickedTakeAll;
             if (clickedTakeAll && deliveryCoinsCopper > 0)

@@ -64,7 +64,8 @@ internal static class Program
             new Gw2OfficialDataProvider(guildWars, nativeOptions.Gw2ApiKey),
             templateRoot,
             ledgerStore: ledgerStore,
-            sessionReportStore: sessionReportStore);
+            sessionReportStore: sessionReportStore,
+            diagnosticsDirectory: paths.Screenshots);
 
         using var shutdownCancellation = new CancellationTokenSource();
         Task? parentWatchdog = null;

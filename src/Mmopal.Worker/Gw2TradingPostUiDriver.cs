@@ -13,6 +13,7 @@ namespace Mmopal.Worker;
 public sealed class Gw2TradingPostUiDriver
 {
     private const int MaxLoginClickAttempts = 3;
+    private static readonly TimeSpan SteamAutoStartGrace = TimeSpan.FromSeconds(20);
     private const int MaxSearchRowsToTry = 3;
     // Measured on live 1024x768 screenshots: results header "Item" at y~227, result rows 58 px apart.
     private const int SearchResultRowStride = 58;
@@ -24,9 +25,12 @@ public sealed class Gw2TradingPostUiDriver
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
     private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
     private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(380, 294, 250, 34);
+    // "Total Price: 3,469 69 67" line under Max. Price (plain text, not an editable box).
+    private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(380, 333, 290, 36);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
-    private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 240, 80, 140);
+    // Black Lion sidebar scales icon measured at (14..53, 215..234) on 1024x768 (Gem Store and TP tabs alike).
+    private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 195, 80, 80);
     private static readonly CaptureRegion BuyTabRegion = new(475, 90, 175, 150);
     private static readonly CaptureRegion SellTabRegion = new(645, 90, 170, 150);
     private static readonly CaptureRegion TransactionsTabRegion = new(810, 90, 175, 150);
@@ -44,7 +48,7 @@ public sealed class Gw2TradingPostUiDriver
     private static readonly CaptureRegion ModalCloseButtonRegion = new(720, 120, 90, 80);
     private static readonly CaptureRegion BlackLionCrestRegion = new(0, 0, 120, 120);
 
-    private static readonly (int X, int Y) DeterministicLeftSidebarTpPoint = (32, 315);
+    private static readonly (int X, int Y) DeterministicLeftSidebarTpPoint = (33, 224);
     private static readonly (int X, int Y) DeterministicBuyTabPoint = (562, 165);
     private static readonly (int X, int Y) DeterministicSellTabPoint = (725, 165);
     private static readonly (int X, int Y) DeterministicSearchBoxPoint = (255, 258);
@@ -58,6 +62,8 @@ public sealed class Gw2TradingPostUiDriver
     private readonly IWindowController _windows;
     private readonly IUiTextLocator? _textLocator;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly string? _diagnosticsDirectory;
+    private int _diagnosticFramesSaved;
     private readonly string _templateRoot;
     private readonly Gw2ClientSettings _settings;
     private readonly ILogger _logger;
@@ -79,8 +85,10 @@ public sealed class Gw2TradingPostUiDriver
         bool requireTemplateFilesOnDisk = true,
         Func<bool>? isPaused = null,
         IUiTextLocator? textLocator = null,
-        Func<DateTimeOffset>? utcNow = null)
+        Func<DateTimeOffset>? utcNow = null,
+        string? diagnosticsDirectory = null)
     {
+        _diagnosticsDirectory = diagnosticsDirectory;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _templates = templates ?? throw new ArgumentNullException(nameof(templates));
@@ -228,6 +236,9 @@ public sealed class Gw2TradingPostUiDriver
                 ? Math.Max(Math.Max(_uiWaitMs * 4, _settings.WindowWaitTimeoutSeconds * 1000), 30_000)
                 : Math.Max(_uiWaitMs, 100);
             var launcherDeadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(launcherWaitMs);
+            // Steam signs in with the Steam account and starts the game by itself; PLAY is only a late fallback.
+            var steamPlayNotBefore = DateTimeOffset.UtcNow + (_requireTemplateFilesOnDisk ? SteamAutoStartGrace : TimeSpan.Zero);
+            var loggedSteamWait = false;
             DateTimeOffset? lastLoginClickUtc = null;
             var loginClickAttempts = 0;
             var emptySignalPolls = 0;
@@ -253,8 +264,26 @@ public sealed class Gw2TradingPostUiDriver
                     !snapshot.OcrReadyVisible &&
                     (_settings.IsSteamPlatform || snapshot.LoginPoint is null))
                 {
-                    triggeredPlayPoint = playPoint;
-                    break;
+                    if (_settings.IsSteamPlatform && DateTimeOffset.UtcNow < steamPlayNotBefore)
+                    {
+                        if (!loggedSteamWait)
+                        {
+                            _logger.LogInformation(
+                                "Steam launcher: waiting up to {Seconds}s for Steam auto-login to start the game before clicking PLAY.",
+                                (int)SteamAutoStartGrace.TotalSeconds);
+                            loggedSteamWait = true;
+                        }
+
+                        if (launcherDeadline < steamPlayNotBefore + TimeSpan.FromSeconds(5))
+                        {
+                            launcherDeadline = steamPlayNotBefore + TimeSpan.FromSeconds(5);
+                        }
+                    }
+                    else
+                    {
+                        triggeredPlayPoint = playPoint;
+                        break;
+                    }
                 }
 
                 if (!_settings.IsSteamPlatform && snapshot.LoginPoint is { } detectedLoginPoint)
@@ -413,18 +442,35 @@ public sealed class Gw2TradingPostUiDriver
         var charPlay = await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false);
         if (charPlay is not null)
         {
-            _logger.LogInformation("Character Select detected; selecting character and entering world via Play at ({X}, {Y}).", CenterX(charPlay), CenterY(charPlay));
-            if (_requireTemplateFilesOnDisk)
+            // Character Select lists the last played character first. On a fresh launch, a game restart or a
+            // disconnect, that is the character the previous run ended on (possibly the one that could not open the
+            // TP), so with several parked characters enter a different one, using the same rule as the AFK swap.
+            var slotOffset = PickParkedSlotOffset(_settings.RandomizeCharacterSelection, _settings.ParkedCharacterCount);
+            var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
+            var portraitY = DeterministicCharSlotOnePoint.Y;
+            var previousName = slotOffset > 0 ? await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) : null;
+            _logger.LogInformation(
+                "Character Select detected; entering parked slot #{Slot} via Play at ({X}, {Y}){Detail}.",
+                slotOffset + 1,
+                CenterX(charPlay),
+                CenterY(charPlay),
+                slotOffset > 0 ? $" instead of the last played character '{previousName ?? "?"}'" : string.Empty);
+            if (_requireTemplateFilesOnDisk || slotOffset > 0)
             {
-                // Ensure the first parked character portrait is focused before clicking Play on slow fades.
-                await _input.ClickAsync(DeterministicCharSlotOnePoint.X, DeterministicCharSlotOnePoint.Y, cancellationToken).ConfigureAwait(false);
+                // Select the portrait first (also focuses it on slow fades) before clicking Play.
+                await _input.ClickAsync(portraitX, portraitY, cancellationToken).ConfigureAwait(false);
                 await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            if (slotOffset > 0 && await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) is { } selectedName)
+            {
+                _logger.LogInformation("Character Select now shows '{Name}' (slot #{Slot}).", selectedName, slotOffset + 1);
             }
 
             await EnterCharacterSlotAsync(
                 charPlay,
-                DeterministicCharSlotOnePoint.X,
-                DeterministicCharSlotOnePoint.Y,
+                portraitX,
+                portraitY,
                 Math.Min(1000, Math.Max(100, _uiWaitMs / 2)),
                 cancellationToken).ConfigureAwait(false);
             advanced = true;
@@ -747,7 +793,16 @@ public sealed class Gw2TradingPostUiDriver
 
             await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
 
-            var useTpFallback = attempt == 3 && !string.Equals(tpKey, interactKey, StringComparison.OrdinalIgnoreCase);
+            if (attempt > 1)
+            {
+                // Whatever the last key opened instead (a bank or other NPC next to the trader, an NPC dialog) stays
+                // on top and swallows the next F; close it first.
+                await CloseStrayWindowsAsync(attempt, cancellationToken).ConfigureAwait(false);
+            }
+
+            // F, then O (Black Lion panel works anywhere; its sidebar scales icon switches Gem Store -> Trading Post),
+            // then F again.
+            var useTpFallback = attempt == 2 && !string.Equals(tpKey, interactKey, StringComparison.OrdinalIgnoreCase);
             var clickedInGameFocus = false;
             if (!useTpFallback)
             {
@@ -778,12 +833,33 @@ public sealed class Gw2TradingPostUiDriver
                 if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
                     await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false))
                 {
+                    LastTradingPostOpenFailed = false;
                     return (true, $"Trading Post opened via '{keyToPress}' on attempt {attempt}.");
                 }
             }
         }
 
-        return (false, $"Trading Post did not open after 3 bounded attempts using '{interactKey}'/'{tpKey}'. Confirm your character is standing next to a TP NPC.");
+        LastTradingPostOpenFailed = true;
+        return (false, $"Trading Post did not open after 3 bounded attempts using '{interactKey}'/'{tpKey}' (Black Lion sidebar included). Another NPC may be closer than the trader; confirm this character is parked right next to a TP NPC.");
+    }
+
+    /// <summary>
+    /// True when the last <see cref="EnsureTradingPostOpenAsync"/> exhausted its key attempts on an in-world
+    /// character. Recovery uses it to switch to another parked character instead of retrying the same spot.
+    /// </summary>
+    public bool LastTradingPostOpenFailed { get; private set; }
+
+    /// <summary>Esc closes a bank/NPC window or dialog; a second Esc closes the game menu if the first opened it.</summary>
+    private async Task CloseStrayWindowsAsync(int attempt, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Closing any non-TP window (bank, NPC dialog) before attempt {Attempt}/3.", attempt);
+        await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        if (await TryFindOnceAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public async Task<bool> CollectDeliveryBoxAsync(CancellationToken cancellationToken = default)
@@ -979,7 +1055,12 @@ public sealed class Gw2TradingPostUiDriver
 
         if (_textLocator is not null)
         {
-            var visibleUnitPrice = await ReadDialogUnitPriceAsync(cancellationToken).ConfigureAwait(false);
+            var visibleUnitPrice = await ReadDialogUnitPriceAsync(qty, cancellationToken).ConfigureAwait(false);
+            if (visibleUnitPrice is null)
+            {
+                await SaveDiagnosticFrameAsync("price-unreadable", cancellationToken).ConfigureAwait(false);
+            }
+
             var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
             if (check.Abort)
@@ -1343,9 +1424,7 @@ public sealed class Gw2TradingPostUiDriver
             return (false, "Character swap aborted: Character select screen did not appear after Esc/F12 logout.");
         }
 
-        var slotOffset = randomize
-            ? Random.Shared.Next(1, Math.Clamp(parkedCharacterCount, 2, 5))
-            : Math.Clamp(parkedCharacterCount - 1, 1, 4);
+        var slotOffset = PickParkedSlotOffset(randomize, parkedCharacterCount);
         var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
         var portraitY = DeterministicCharSlotOnePoint.Y;
 
@@ -1408,18 +1487,99 @@ public sealed class Gw2TradingPostUiDriver
     }
 
     /// <summary>Reads the buy dialog's Max. Price (per unit) in copper, or null when it cannot be read.</summary>
-    private async Task<long?> ReadDialogUnitPriceAsync(CancellationToken cancellationToken)
+    /// <remarks>
+    /// Reads the editable Max. Price boxes first; live, these often failed to OCR right after the ▲ clicks (7 of 124
+    /// reads in one session), so it retries once and then falls back to the plain "Total Price" line divided by the
+    /// quantity, accepted only when it divides exactly.
+    /// </remarks>
+    private async Task<long?> ReadDialogUnitPriceAsync(long quantity, CancellationToken cancellationToken)
     {
-        var texts = await ReadTextVariantsAsync(ItemDialogMaxPriceRegion, cancellationToken).ConfigureAwait(false);
-        foreach (var text in texts)
+        for (var pass = 0; pass < 2; pass++)
         {
-            if (ParseDialogPrice(text) is { } copper)
+            if (pass > 0)
             {
-                return copper;
+                await Task.Delay(Math.Max(150, _settleMs / 3), cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogMaxPriceRegion, cancellationToken).ConfigureAwait(false))
+            {
+                if (ParseDialogPrice(text) is { } unit)
+                {
+                    return unit;
+                }
+            }
+
+            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false))
+            {
+                if (ParseDialogPrice(text) is { } total && quantity > 0 && total % quantity == 0)
+                {
+                    return total / quantity;
+                }
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The region's OCR as one string per variant (raw, enhanced), lines joined left to right; the enhanced pass can
+    /// split "3,469. 69." and "67." into separate lines.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> ReadJoinedTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            if (frame.Pixels.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            var variants = new List<string>(2);
+            var raw = await _textLocator.LocateLinesAsync(frame, region, cancellationToken).ConfigureAwait(false);
+            variants.Add(string.Join(" ", raw.OrderBy(line => line.X).Select(line => line.Text)));
+            if (FrameVision.EnhanceTextContrast(frame, region) is { } enhanced)
+            {
+                var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
+                variants.Add(string.Join(" ", lines.OrderBy(line => line.X).Select(line => line.Text)));
+            }
+
+            return variants;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "OCR of region {Region} failed.", region);
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>Saves up to 3 full frames per session (e.g. an unreadable price) for calibration.</summary>
+    private async Task SaveDiagnosticFrameAsync(string tag, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_diagnosticsDirectory) || _diagnosticFramesSaved >= 3)
+        {
+            return;
+        }
+
+        try
+        {
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            var path = Path.Combine(_diagnosticsDirectory, $"{tag}-{_utcNow():yyyyMMdd-HHmmss}.png");
+            if (FrameImageFile.TrySavePng(frame, path))
+            {
+                _diagnosticFramesSaved++;
+                _logger.LogInformation("Saved a calibration screenshot: {Path}", path);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "Could not save a diagnostic frame.");
+        }
     }
 
     /// <summary>OCR lines of a region, first from the raw frame and then from a contrast-enhanced 2x copy.</summary>
@@ -1545,6 +1705,23 @@ public sealed class Gw2TradingPostUiDriver
         }
 
         return 1.0 - (double)previous[b.Length] / Math.Max(a.Length, b.Length);
+    }
+
+    /// <summary>
+    /// Zero-based portrait offset on Character Select, which lists the last played character first. With one parked
+    /// character it is slot 1; otherwise never slot 1: random picks slot 2..min(N, 5), "next" picks slot N (the
+    /// least recently played, which rotates through all parked characters over time).
+    /// </summary>
+    internal static int PickParkedSlotOffset(bool randomize, int parkedCharacterCount, Func<int, int, int>? nextRandom = null)
+    {
+        if (parkedCharacterCount <= 1)
+        {
+            return 0;
+        }
+
+        return randomize
+            ? (nextRandom ?? Random.Shared.Next)(1, Math.Clamp(parkedCharacterCount, 2, 5))
+            : Math.Clamp(parkedCharacterCount - 1, 1, 4);
     }
 
     /// <summary>Reads the large name of the currently selected character on Character Select, or null if unreadable.</summary>
