@@ -29,17 +29,36 @@ Their top bids had not moved for hours, competitors undercut by 1–30c within m
 | Practice | In Mmopal |
 | --- | --- |
 | Rank by profit × volume | Market Scanner **Sort by = Est. profit/day** (default): net profit per unit × trades/day, capped at 20/day because a few small orders cannot use more volume. Trades/day is the DataWars2 7-day average of the slower side. |
-| Skip items that don't trade | **Min trades/day** filter (default 10). If DataWars2 is unreachable the scan still runs and ranks by spread and depth. |
+| Skip items that don't trade | **Min trades/day** filter (default 10). The scan is volume-first: it downloads DataWars2's trade counts once (gzip, ~20 s, reused for 30 min), then prices **every** tradable item that trades often enough (about 1,600 items at 10/day), so nothing is missed by sampling. If DataWars2 is unreachable it falls back to the Scan scope sample and ranks by spread and depth. |
+| Don't buy into spikes | **Skip price spikes** (on by default): an item whose top bid or lowest ask is more than 30% above its DataWars2 7-day average is skipped; the projected profit of a spiked price is not real. |
+| Learn from your own trades | The last 30 days of your trades (Income & Portfolio) boost items you flipped fast at a profit and skip items that lost money on 2+ flips. The scanner's **Your history** column shows this, and Income & Portfolio lists the skipped items with an **Add to Blacklist** button. The ledger syncs at launch and every 45 minutes during a session. |
 | Fee math | Every profit figure uses 5% listing + 10% exchange with the 1c minimums. |
 | Don't chase undercuts | Outbid Refresh keeps an outbid buy order for at least 20 minutes and never cancels during the 00:00–01:30 UTC reset window. |
-| Spread capital | Max buy price per unit and a gold reserve floor (Auto-Tune: ~4% of wallet per unit, 15% reserve), quantity per order, 3 actions per cycle. |
+| Spread capital | Max buy price per unit and a gold reserve floor, quantity per order, 3 actions per cycle. Set by **Auto-Tune** (below). |
 | Live re-pricing | Each cycle re-prices the list from `v2/commerce/prices` and drops items whose spread collapsed. |
+
+## Auto-Tune
+
+On by default (Settings → Trading & Portfolio → "Auto-Tune at every launch and Start session"). It runs when Mmopal opens and right before each session, never mid-session: the wallet barely changes within one session, and shifting buy limits under open orders would make the bot inconsistent.
+
+1. **Size from total gold.** Wallet + gold in buy orders + listings after fees picks the tier (Starter < 100g, Balanced < 1,000g, High Capital) with ~4–5% of capital per unit and a 15% reserve.
+2. **Learn from the last 14 days** (once at least 10 units have sold):
+   - ROI under 5% after fees: Min ROI +3. ROI 15%+ with 70%+ winners: Min ROI −2 for more volume.
+   - Under 50% winning flips: Min ROI +2 and busier items (Min trades/day ×1.5).
+   - Items taking over 2 days to sell: Min trades/day ×2 and Max ROI capped at 60% (very wide spreads rarely fill).
+3. **Where the gold sits:** half or more in unsold listings lowers Max Buy by 25% and asks for busier items until they sell; 70%+ idle in the wallet with profitable flips raises order size by 50%.
+
+Min ROI stays within 8–25% and Min trades/day within 5–50. The result and its reasons are in the Activity Log and the Auto-Tune button's tooltip.
+
+## On launch
+
+With "On launch: sync my GW2 account and scan the market" (on by default), Mmopal syncs Income & Portfolio, Auto-Tunes, then scans the market. The **Startup** strip on the Session page shows each step (○ waiting, … running, ✓ done, – skipped, ! failed). If the session uses the scanner's list and it is older than the Auto re-scan interval, the fresh scan replaces it; a hand-made list is never touched. Scanner filters are saved between launches.
 
 ## Using Lists & Blacklist
 
 You don't need trading experience to use these. Let the scanner build the shopping list; use the blacklist for items you want the bot to leave alone.
 
-- **Shopping list:** Market Scanner → preset → **Scan GW2 Market** → **Use All for Session**. Re-scan at least once a day; the bot does not re-scan by itself yet.
+- **Shopping list:** Market Scanner → preset → **Scan GW2 Market** → **Use All for Session**. After that the list refreshes itself: at launch when it is older than the Auto re-scan interval, and every 3 hours during a session (Market Scanner → More Filters → Auto re-scan). Your Custom Shopping List stays in the session through re-scans. The Session page shows `Shopping list: N items · re-scan in 1h 12m`.
 - **Blacklist** (one name or `prefix *` per line):
   - items the log names in `Trading Post search for 'X' opens 'Y'` or `None of the search rows opened 'X'`: the bot cannot reach them reliably;
   - items sold under the same name in several rarities (some Masquerade armor, for example), since the item-name check cannot tell them apart;
@@ -49,8 +68,7 @@ You don't need trading experience to use these. Let the scanner build the shoppi
 
 Ordered by expected impact; none of these exist yet.
 
-1. **Auto re-scan during long sessions** (for example every 6 hours, or when fewer than N listed items remain profitable), so the list follows the market.
-2. **Order size from volume:** quantity = min(configured quantity, ~5% of daily trades), so slow items get 1 unit and busy items more.
-3. **Competition filter:** gnashblade also defines listings-per-sale, delisted-per-sale and day-over-day spread compression from DataWars2 history; use them to skip bot-war items.
-4. **Auto-blacklist suggestions:** surface items with search mismatches, buys that stay unfilled for 24h+, or repeated spread collapse, with a one-click "Blacklist" in the Activity Log.
-5. **Sell-side rules:** a minimum time before relisting an undercut sell, since each relist costs another 5% listing fee.
+1. **Order size from volume:** quantity = min(configured quantity, ~5% of daily trades), so slow items get 1 unit and busy items more.
+2. **Competition filter:** gnashblade also defines listings-per-sale, delisted-per-sale and day-over-day spread compression from DataWars2 history; use them to skip bot-war items.
+3. **More auto-blacklist suggestions:** items with search mismatches, buys that stay unfilled for 24h+, or repeated spread collapse (items that lose money are already listed in Income & Portfolio).
+4. **Sell-side rules:** a minimum time before relisting an undercut sell, since each relist costs another 5% listing fee.

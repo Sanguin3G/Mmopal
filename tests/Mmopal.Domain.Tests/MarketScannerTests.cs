@@ -42,7 +42,8 @@ public sealed class MarketScannerTests
             BaseAddress = new Uri("https://api.guildwars2.com/")
         };
 
-        var scanner = new Gw2MarketScanner(client);
+        using var noVolume = NoVolumeClient();
+        var scanner = new Gw2MarketScanner(client, velocityHttpClient: noVolume);
         var filter = new MarketScanFilter(
             MinimumProfitPercentage: 10m,
             MinimumProfitCopper: 500,
@@ -168,7 +169,8 @@ public sealed class MarketScannerTests
             };
 
             var cache = new TradingLedgerStore(Path.Combine(tempDir, "mmopal.db"));
-            var scanner = new Gw2MarketScanner(client, cache);
+            using var noVolume = NoVolumeClient();
+            var scanner = new Gw2MarketScanner(client, cache, noVolume);
 
             // First scan: Max ROI 100% skips 303 (155% ROI); CheckWallDepth catches 302's Sell Wall; overbid 10c/undercut 10c adjusts net profit.
             var firstFilter = new MarketScanFilter(
@@ -212,6 +214,74 @@ public sealed class MarketScannerTests
         }
     }
 
+    // Tests never reach api.datawars2.ie: volume and 7-day prices come from a stub or are unavailable.
+    private static HttpClient NoVolumeClient() => new(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+
+    [Fact]
+    public async Task Volume_first_scan_prices_only_items_that_trade_often_enough()
+    {
+        var pricedIds = new List<string>();
+        using var client = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.StartsWith("/v2/commerce/prices?ids=", StringComparison.Ordinal))
+            {
+                pricedIds.Add(path["/v2/commerce/prices?ids=".Length..]);
+            }
+
+            return PricesClientHandler(path);
+        }))
+        {
+            BaseAddress = new Uri("https://api.guildwars2.com/")
+        };
+        using var velocity = new HttpClient(new StubHandler(_ => Json("""
+            [
+              {"id":201,"7d_buy_sold":2,"7d_sell_sold":3},
+              {"id":202,"7d_buy_sold":3500,"7d_sell_sold":4000},
+              {"id":203,"7d_buy_sold":210,"7d_sell_sold":400}
+            ]
+            """)));
+        var scanner = new Gw2MarketScanner(client, velocityHttpClient: velocity);
+
+        await scanner.ScanAsync(VolumeFilter(MarketScanSortModes.GoldPerDay, minimumDailyTrades: 5) with { MaxItemsToScan = 1 });
+
+        // Scope 1 would sample a single id; volume-first prices every id trading 5+/day instead (202 and 203).
+        Assert.Equal(["202,203"], pricedIds);
+    }
+
+    [Fact]
+    public async Task Price_spikes_against_the_7_day_average_are_skipped()
+    {
+        using var client = PricesClient();
+        using var velocity = new HttpClient(new StubHandler(_ => Json("""
+            [
+              {"id":202,"7d_buy_sold":3500,"7d_sell_sold":4000,"7d_buy_price_avg":9900,"7d_sell_price_avg":9000},
+              {"id":203,"7d_buy_sold":210,"7d_sell_sold":400,"7d_buy_price_avg":4950,"7d_sell_price_avg":6900}
+            ]
+            """)));
+        var scanner = new Gw2MarketScanner(client, velocityHttpClient: velocity);
+
+        var results = await scanner.ScanAsync(VolumeFilter(MarketScanSortModes.GoldPerDay, minimumDailyTrades: 5));
+
+        // 202's lowest ask (13,000c) is 44% above its 7-day average (9,000c): a spike, so its profit is not real.
+        Assert.Equal(["Steady Item"], results.Select(item => item.ItemName));
+        Assert.Equal(1, scanner.LastSpikesSkipped);
+
+        var withoutGuard = await scanner.ReFilterCachedAsync(VolumeFilter(MarketScanSortModes.GoldPerDay, minimumDailyTrades: 5) with { SkipPriceSpikes = false });
+        Assert.Equal(2, withoutGuard.Count);
+    }
+
+    [Theory]
+    [InlineData(10_000L, 13_000L, true)]   // ask 37% over its 9,500c average
+    [InlineData(10_000L, 12_350L, false)]  // ask exactly 30% over: allowed
+    [InlineData(13_100L, 12_000L, true)]   // bid spiked 31% over its 10,000c average
+    public void IsPriceSpike_compares_bid_and_ask_with_their_7_day_averages(long bid, long ask, bool expected)
+    {
+        var stats = new MarketItemStats(TradesPerDay: 50, BuyAvg7dCopper: 10_000, SellAvg7dCopper: 9_500);
+        Assert.Equal(expected, Gw2MarketScanner.IsPriceSpike(bid, ask, stats, tolerance: 0.30));
+        Assert.False(Gw2MarketScanner.IsPriceSpike(bid, ask, stats: null, tolerance: 0.30));
+    }
+
     private static HttpResponseMessage Json(string body) =>
         new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
@@ -251,9 +321,13 @@ public sealed class MarketScannerTests
         Assert.All(results, item => Assert.Null(item.DailyVolumeEstimate));
     }
 
-    private static HttpClient PricesClient() => new(new StubHandler(request =>
+    private static HttpClient PricesClient() => new(new StubHandler(request => PricesClientHandler(request.RequestUri!.PathAndQuery)))
     {
-        var path = request.RequestUri!.PathAndQuery;
+        BaseAddress = new Uri("https://api.guildwars2.com/")
+    };
+
+    private static HttpResponseMessage PricesClientHandler(string path)
+    {
         return path switch
         {
             "/v2/commerce/prices" => Json("[201,202,203]"),
@@ -273,10 +347,7 @@ public sealed class MarketScannerTests
                 """),
             _ => new HttpResponseMessage(HttpStatusCode.NotFound)
         };
-    }))
-    {
-        BaseAddress = new Uri("https://api.guildwars2.com/")
-    };
+    }
 
     private static MarketScanFilter VolumeFilter(string sortMode, double minimumDailyTrades) => new(
         MinimumProfitPercentage: 5m,

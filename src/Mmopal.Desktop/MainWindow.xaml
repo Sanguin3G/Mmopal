@@ -342,7 +342,17 @@
 
                     <!-- Health KPI Row -->
                     <!-- KPI cards: one large value to read at a glance, a short muted detail line, full text in tooltips. -->
-                    <UniformGrid x:Name="SessionKpiGrid" Grid.Row="3" Columns="4" Margin="0,0,0,6">
+                    <StackPanel Grid.Row="3">
+                    <!-- Startup steps: what Mmopal did by itself when it opened (shown only when launch automation runs). -->
+                    <Border x:Name="LaunchStepsStrip" Visibility="Collapsed" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,10" ToolTip="What Mmopal did by itself on launch. ○ waiting · … running · ✓ done · – skipped · ! failed. Change in Settings → Trading &amp; Portfolio.">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock Text="STARTUP" Style="{StaticResource FieldLabel}" Margin="0,0,12,0" VerticalAlignment="Center" />
+                            <TextBlock x:Name="LaunchSyncText" Text="○ Account sync" FontSize="12" Margin="0,0,18,0" VerticalAlignment="Center" />
+                            <TextBlock x:Name="LaunchTuneText" Text="○ Auto-Tune" FontSize="12" Margin="0,0,18,0" VerticalAlignment="Center" />
+                            <TextBlock x:Name="LaunchScanText" Text="○ Market scan" FontSize="12" VerticalAlignment="Center" />
+                        </WrapPanel>
+                    </Border>
+                    <UniformGrid x:Name="SessionKpiGrid" Columns="4" Margin="0,0,0,6">
                         <Border x:Name="StatusCard" Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
@@ -397,6 +407,16 @@
                             </StackPanel>
                         </Border>
                     </UniformGrid>
+                    <!-- Market list & history strip: what the bot is trading from and what it has learned. -->
+                    <Border x:Name="MarketIntelStrip" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,12">
+                        <WrapPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE721;" Style="{StaticResource GlyphIcon}" FontSize="12" Foreground="{DynamicResource AccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock x:Name="MarketListStatusText" Text="Shopping list: not started" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,18,0" VerticalAlignment="Center" ToolTip="Session shopping list size and the next automatic Market Scanner re-scan (Market Scanner → Advanced → Auto re-scan)." />
+                            <TextBlock Text="&#xE9D9;" Style="{StaticResource GlyphIcon}" FontSize="12" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock x:Name="PortfolioStatusText" Text="History: —" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" ToolTip="Your last 30 days of trades (Income &amp; Portfolio): proven winners are boosted, items that lost money are skipped. Synced automatically every 45 minutes during a session." />
+                        </WrapPanel>
+                    </Border>
+                    </StackPanel>
 
                     <!-- Activity Log Card -->
                     <Border Grid.Row="4" Style="{StaticResource Card}">
@@ -485,6 +505,12 @@
                                 <TextBlock Text="&#xE9D9;" Style="{StaticResource GlyphIcon}" FontSize="12" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,8,0" />
                                 <TextBlock x:Name="PortfolioInsightsText" Text="Live Advisor ready — sync trades to unlock FIFO winner boosts &amp; chronic-loser guards." FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
                             </StackPanel>
+                        </Border>
+                        <Border x:Name="LosingItemsPanel" Visibility="Collapsed" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,6,0,0">
+                            <DockPanel>
+                                <Button x:Name="BlacklistLosingItemsButton" DockPanel.Dock="Right" Content="Add to Blacklist" Tag="&#xE8F8;" Click="BlacklistLosingItems_Click" Padding="10,4" FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center" ToolTip="The bot already skips these while they keep losing; the Blacklist makes it permanent and also hides them from the Market Scanner." />
+                                <TextBlock x:Name="LosingItemsText" FontSize="12" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </DockPanel>
                         </Border>
                     </StackPanel>
 
@@ -992,7 +1018,7 @@
                                         </StackPanel>
                                         <StackPanel Margin="0,0,10,4">
                                             <TextBlock Text="SCAN SCOPE" Style="{StaticResource FieldLabel}" />
-                                            <ComboBox x:Name="ScanScopeSelector" SelectedIndex="1">
+                                            <ComboBox x:Name="ScanScopeSelector" SelectedIndex="1" ToolTip="Only used when Min trades/day is 0 or DataWars2 is unreachable. Otherwise every tradable item that trades often enough is checked (whole market).">
                                                 <ComboBoxItem Content="Quick (2,000 items)" Tag="2000" />
                                                 <ComboBoxItem Content="Standard (6,000 items)" Tag="6000" />
                                                 <ComboBoxItem Content="Full Market (All)" Tag="0" />
@@ -1009,7 +1035,8 @@
                                     </UniformGrid>
                                     <WrapPanel Orientation="Horizontal">
                                         <CheckBox x:Name="ScanCheckWallsCheckBox" Content="Check order-book walls" IsChecked="True" Margin="0,0,20,4" ToolTip="Queries v2/commerce/listings on matches to catch sell walls and bait spreads." />
-                                        <CheckBox x:Name="ScanVelocityCheckBox" Content="Show trades/day (DataWars2)" IsChecked="False" Margin="0,0,0,4" ToolTip="Adds the Trades/day column from api.datawars2.ie. Always fetched when sorting by Est. profit/day or using Min trades/day." />
+                                        <CheckBox x:Name="ScanVelocityCheckBox" Content="Show trades/day (DataWars2)" IsChecked="False" Margin="0,0,20,4" ToolTip="Adds the Trades/day column from api.datawars2.ie. Always fetched when sorting by Est. profit/day or using Min trades/day." />
+                                        <CheckBox x:Name="ScanSkipSpikesCheckBox" Content="Skip price spikes" IsChecked="True" Margin="0,0,0,4" ToolTip="Skips items whose top bid or lowest ask is more than 30% above its 7-day average (DataWars2). A spiked price makes the profit look real when it is not, and buying into a spike is how flips lose money." />
                                     </WrapPanel>
                                 </StackPanel>
                             </Expander>
@@ -1061,6 +1088,7 @@
                                 <DataGridTextColumn Header="SUPPLY" Binding="{Binding SellQuantity}" Width="0.65*" />
                                 <DataGridTextColumn Header="TRADES/DAY" Binding="{Binding VolumeFormatted}" Width="0.8*" />
                                 <DataGridTextColumn Header="SIGNAL" Binding="{Binding RiskBadge}" Width="0.8*" />
+                                <DataGridTextColumn Header="YOUR HISTORY" Binding="{Binding HistoryNote}" Width="1*" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </Border>
@@ -1247,7 +1275,7 @@
                             <TextBlock Text="API keys, game client &amp; recovery, trading strategy, hotkeys." Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,3,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button x:Name="AutoTuneSettingsButton" Content="Auto-Tune" Tag="&#xE9D9;" Click="AutoTuneForWallet_Click" Margin="0,0,8,0" ToolTip="Auto-Tune for my wallet: reads the active account's wallet gold and applies matching max buy price, gold reserve, order size and overbid/undercut buffers. Session cap and swap interval are left as you set them." />
+                            <Button x:Name="AutoTuneSettingsButton" Content="Auto-Tune" Tag="&#xE9D9;" Click="AutoTuneForWallet_Click" Margin="0,0,8,0" ToolTip="Auto-Tune: sizes max buy price, gold reserve, order size, overbid/undercut and scanner filters from your total gold and your last 14 days of flips. Runs by itself at launch and Start session (Settings → Trading &amp; Portfolio). Session cap and swap interval are left as you set them." />
                             <Button x:Name="SaveAllSettingsButton" Content="Save All" Tag="&#xE74E;" Style="{StaticResource PrimaryButton}" Click="SaveAllSettings_Click" ToolTip="Save all settings" />
                         </StackPanel>
                     </Grid>
@@ -1612,6 +1640,8 @@
                                                 </StackPanel>
                                             </Grid>
                                             <CheckBox x:Name="UsePortfolioIntelligenceCheckBox" Content="Use Income &amp; Portfolio ledger history (boost fast winners, auto-skip chronic losers &amp; heavy sell stacks)" IsChecked="True" Margin="0,0,0,6" />
+                                            <CheckBox x:Name="AutomateOnLaunchCheckBox" Content="On launch: sync my GW2 account and scan the market" IsChecked="True" Margin="0,0,0,6" ToolTip="Fills Income &amp; Portfolio and the Market Scanner when Mmopal opens. If the session uses the scanner's list and it is older than the Auto re-scan interval, the fresh scan replaces it." />
+                                            <CheckBox x:Name="AutoTuneEachSessionCheckBox" Content="Auto-Tune at every launch and Start session (recommended unless you tune by hand)" IsChecked="True" Margin="0,0,0,6" ToolTip="Sizes buy limits from your total gold (wallet + gold in orders) and adjusts them from your last 14 days of flips: thin margins raise Min ROI, slow sales demand busier items, gold stuck in listings slows buying, idle gold with profitable flips raises order size. Never changes settings mid-session. Overwrites Min ROI, Max Buy, gold reserve, order size, overbid/undercut and the scanner filters." />
                                             <CheckBox x:Name="ProtectSellListingsCheckBox" Content="Keep sell listings active — avoid auto-canceling to save the 5% fee" IsChecked="True" Margin="0,0,0,6" />
                                             <CheckBox x:Name="UseCustomListOnStartCheckBox" Content="Include Custom Shopping List &amp; Blacklist automatically on Start session" IsChecked="True" />
                                         </StackPanel>
@@ -1894,13 +1924,13 @@
                                         <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">
                                             <StackPanel>
                                                 <TextBlock Text="1. CONNECT &amp; AUTO-TUNE" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="In Settings &gt; Accounts &amp; API, paste your key and click Save &amp; Verify Key. Then click Auto-Tune so max buy price, gold reserve and order size fit your wallet." Style="{StaticResource HintText}" />
+                                                <TextBlock Text="In Settings &gt; Accounts &amp; API, paste your key and click Save &amp; Verify Key. Auto-Tune then runs by itself at every launch and Start session, sized to your gold and your recent results." Style="{StaticResource HintText}" />
                                             </StackPanel>
                                         </Border>
                                         <Border Grid.Column="1" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">
                                             <StackPanel>
                                                 <TextBlock Text="2. SCAN &amp; FILTER" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="In Market Scanner, pick a preset, keep Sort by = Est. profit/day and Min trades/day at 10+, click Scan GW2 Market, then Use All for Session. Re-scan at least once a day." Style="{StaticResource HintText}" />
+                                                <TextBlock Text="Mmopal scans the market at launch (see the Startup strip on Session). Click Use All for Session once; after that the list refreshes itself at launch and every 3 hours during a session." Style="{StaticResource HintText}" />
                                             </StackPanel>
                                         </Border>
                                         <Border Grid.Column="2" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">

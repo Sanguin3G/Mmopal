@@ -5,14 +5,24 @@ namespace Mmopal.Gw2;
 public sealed record PortfolioItemAdvice(
     double ScoreMultiplier,
     bool ShouldSkip,
-    string? Reason);
+    string? Reason)
+{
+    /// <summary>Short label for tables: "Skipped: …", "Boost ×1.4", "Slow ×0.55".</summary>
+    public string ShortLabel => ShouldSkip
+        ? Reason?.Contains("sell stack", StringComparison.OrdinalIgnoreCase) == true ? "Skipped: stack listed" : "Skipped: lost money"
+        : ScoreMultiplier >= 1.0
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Boost ×{ScoreMultiplier:0.##}")
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Slow ×{ScoreMultiplier:0.##}");
+}
 
 public sealed record PortfolioGuidance(
     IReadOnlyDictionary<int, PortfolioItemAdvice> ByItemId,
     IReadOnlyDictionary<string, PortfolioItemAdvice> ByItemName,
     string MarketPhase,
     bool IsOffPeak,
-    string Summary)
+    string Summary,
+    // Items skipped because they lost money in the last 30 days (not transient sell-stack guards).
+    IReadOnlyList<string>? LosingItems = null)
 {
     public PortfolioItemAdvice? TryGetAdvice(int? itemId, string? itemName)
     {
@@ -37,6 +47,12 @@ public sealed record PortfolioGuidance(
 /// </summary>
 public static class PortfolioProfitAdvisor
 {
+    /// <summary>Only the last 30 days of trades count: an item that lost money months ago may be fine now.</summary>
+    public const int HistoryWindowDays = 30;
+
+    /// <summary>At least two units flipped at a net loss. One bad flip is noise (an undercut war, a spike).</summary>
+    public static bool IsChronicLoser(ItemPnlRow row) => row.UnitsFlipped >= 2 && row.NetProfitCopper < 0;
+
     public static PortfolioGuidance BuildGuidance(
         IReadOnlyList<Gw2LedgerTransaction> ledgerHistory,
         IReadOnlyList<Transaction> activeOrders,
@@ -51,10 +67,13 @@ public static class PortfolioProfitAdvisor
         var nameToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var winners = 0;
         var guarded = 0;
+        var losingItems = new List<string>();
+        var windowStart = nowUtc.AddDays(-HistoryWindowDays);
+        var recentHistory = ledgerHistory.Where(t => t.PurchasedAt >= windowStart).ToArray();
 
-        if (ledgerHistory.Count > 0)
+        if (recentHistory.Length > 0)
         {
-            var report = TradingIncomeAnalytics.Analyze(ledgerHistory);
+            var report = TradingIncomeAnalytics.Analyze(recentHistory);
             foreach (var row in report.ItemLeaderboard)
             {
                 if (row.UnitsFlipped <= 0)
@@ -69,11 +88,11 @@ public static class PortfolioProfitAdvisor
                 }
 
                 PortfolioItemAdvice? advice = null;
-                if ((row.UnitsFlipped >= 2 && row.NetProfitCopper < 0) ||
-                    (row.UnitsFlipped >= 1 && row.RoiPercent <= -5m))
+                if (IsChronicLoser(row))
                 {
-                    advice = new PortfolioItemAdvice(0.0, ShouldSkip: true, "Chronic FIFO loss in ledger");
+                    advice = new PortfolioItemAdvice(0.0, ShouldSkip: true, $"Lost money on {row.UnitsFlipped} flips in the last {HistoryWindowDays} days");
                     guarded++;
+                    losingItems.Add(row.ItemName);
                 }
                 else if (row.AvgHoldHours >= 72.0)
                 {
@@ -136,7 +155,7 @@ public static class PortfolioProfitAdvisor
         var isOffPeak = string.Equals(cycle.PhaseName, "Global Off-Peak", StringComparison.OrdinalIgnoreCase);
         var summary = $"{cycle.PhaseName} • {winners} winner boost(s), {guarded} loss guard(s), {exposureSkipped} stacked-sell guard(s)";
 
-        return new PortfolioGuidance(byId, byName, cycle.PhaseName, isOffPeak, summary);
+        return new PortfolioGuidance(byId, byName, cycle.PhaseName, isOffPeak, summary, losingItems);
     }
 
     public static string BuildDashboardInsightSummary(
@@ -154,9 +173,7 @@ public static class PortfolioProfitAdvisor
             parts.Add($"Top flipper: {topWinner.ItemName} (+{MarketScanItem.FormatCoins(topWinner.NetProfitCopper)}, {topWinner.AvgHoldFormatted} hold)");
         }
 
-        var loserCount = report.ItemLeaderboard.Count(r =>
-            (r.UnitsFlipped >= 2 && r.NetProfitCopper < 0) ||
-            (r.UnitsFlipped >= 1 && r.RoiPercent <= -5m));
+        var loserCount = report.ItemLeaderboard.Count(IsChronicLoser);
         if (loserCount > 0)
         {
             parts.Add($"Auto-guarded losers: {loserCount}");

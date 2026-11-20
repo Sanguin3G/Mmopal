@@ -32,7 +32,15 @@ public sealed record OperatorSettings(
     bool ReportAlwaysSaveOnErrors = true,
     int MaxSavedSessionReports = 100,
     bool AutoListBoughtFlipItems = false,
-    decimal AutoRescanHours = 3)
+    decimal AutoRescanHours = 3,
+    // Market Scanner filter boxes as typed, so a relaunch (and Auto re-scan) keeps the same filters.
+    ScannerUiState? Scanner = null,
+    // On launch: sync the GW2 account, Auto-Tune once (first launch only), and scan the market.
+    bool AutomateOnLaunch = true,
+    // Preset name Auto-Tune last applied; null = never tuned, so the first launch with a wallet tunes once.
+    string? LastAutoTunedPreset = null,
+    // Smart Auto-Tune at every launch and every Start session (never mid-session). For operators who do not tune by hand.
+    bool AutoTuneEachSession = true)
 {
     public SessionReportPolicySettings ToSessionReportPolicy() => new(
         SaveSessionReports: SaveSessionReports,
@@ -42,6 +50,24 @@ public sealed record OperatorSettings(
         AlwaysSaveOnErrors: ReportAlwaysSaveOnErrors,
         MaxSavedReports: Math.Clamp(MaxSavedSessionReports, 10, 1000));
 }
+
+/// <summary>Market Scanner inputs exactly as shown in the UI (text boxes as text, selectors by tag).</summary>
+public sealed record ScannerUiState(
+    string MinRoi = "10",
+    string MaxRoi = "120",
+    string MinProfitSilver = "5",
+    string MinBuySilver = "10",
+    string MaxBuyGold = "50",
+    string MinSupply = "100",
+    string MinDemand = "100",
+    string MinTradesPerDay = "10",
+    string? Rarity = null,
+    string? Category = null,
+    string? Sort = null,
+    string? Scope = null,
+    bool CheckWalls = true,
+    bool ShowTradesPerDay = false,
+    bool SkipPriceSpikes = true);
 
 public static class OperatorSettingsFile
 {

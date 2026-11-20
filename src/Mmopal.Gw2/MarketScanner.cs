@@ -26,7 +26,14 @@ public sealed record MarketScanFilter(
     string SortMode = "BalancedScore",
     // Units that actually trade per day (DataWars2 7-day average of min(filled buy orders, bought listings)).
     // A flip needs both sides to move; wide-spread items that trade a few times a day just sit unfilled.
-    double MinimumDailyTrades = 0);
+    double MinimumDailyTrades = 0,
+    // Skip items whose top bid or lowest ask is more than SpikeTolerance above its 7-day average (DataWars2):
+    // the projected profit of a spiked price is not real, and buying into a spike is how flips lose money.
+    bool SkipPriceSpikes = true,
+    double SpikeTolerance = 0.30);
+
+/// <summary>DataWars2 per-item stats: trades/day (slower side, 7-day average) and 7-day average prices.</summary>
+public sealed record MarketItemStats(double TradesPerDay, long? BuyAvg7dCopper, long? SellAvg7dCopper);
 
 public static class MarketScanSortModes
 {
@@ -59,7 +66,9 @@ public sealed record MarketScanItem(
     string RiskBadge = "Liquid",
     string FeeBreakdownTooltip = "",
     int? DailyVolumeEstimate = null,
-    double LiquidityScore = 0)
+    double LiquidityScore = 0,
+    // What your own trade history says about this item (Income & Portfolio): boost, slow, or skipped as a loser.
+    string HistoryNote = "")
 {
     public string BuyFormatted => FormatCoins(BuyPriceCopper);
     public string SellFormatted => FormatCoins(SellPriceCopper);
@@ -117,6 +126,13 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
     private readonly SemaphoreSlim _cacheInitGate = new(1, 1);
     private bool _cacheInitialized;
     private IReadOnlyList<Gw2CommercePrice>? _cachedPrices;
+    private Dictionary<int, MarketItemStats>? _cachedStats;
+    // Min trades/day the cached prices were pre-selected with (volume-first scan); 0 = not pre-selected.
+    private double _cachedSelectionMinTrades;
+    // DataWars2 was asked for during the cached scan (it may have been unreachable; do not re-scan just to retry).
+    private bool _cachedStatsAttempted;
+    private DateTimeOffset _statsFetchedAtUtc = DateTimeOffset.MinValue;
+    private static readonly TimeSpan StatsReuseWindow = TimeSpan.FromMinutes(30);
 
     public Gw2MarketScanner(
         HttpClient httpClient,
@@ -129,6 +145,9 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
     }
 
     public bool HasCachedScan => _cachedPrices is { Count: > 0 };
+
+    /// <summary>Items the last scan or re-filter skipped as price spikes (vs the 7-day average).</summary>
+    public int LastSpikesSkipped { get; private set; }
 
     public async Task<IReadOnlyList<MarketScanItem>> ScanAsync(
         MarketScanFilter filter,
@@ -145,9 +164,26 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
             return Array.Empty<MarketScanItem>();
         }
 
-        var selectedIds = filter.MaxItemsToScan > 0 && filter.MaxItemsToScan < allIds.Length
-            ? SampleEvenly(allIds, filter.MaxItemsToScan)
-            : allIds;
+        _cachedStatsAttempted = NeedsStats(filter);
+        if (!_cachedStatsAttempted)
+        {
+            _cachedStats = null;
+        }
+        else if (_cachedStats is null || DateTimeOffset.UtcNow - _statsFetchedAtUtc >= StatsReuseWindow)
+        {
+            // 7-day averages barely move within half an hour, and the download takes ~20 s, so re-scans reuse it.
+            progress?.Report(new MarketScanProgress(0, allIds.Length, 0, "Fetching 7-day trade volume and prices (DataWars2, ~20 s)..."));
+            _cachedStats = await FetchDataWarsStatsBestEffortAsync(cancellationToken).ConfigureAwait(false);
+            _statsFetchedAtUtc = DateTimeOffset.UtcNow;
+        }
+
+        var selectedIds = SelectIdsToPrice(allIds, filter, _cachedStats);
+        _cachedSelectionMinTrades = _cachedStats is not null && filter.MinimumDailyTrades > 0 ? filter.MinimumDailyTrades : 0;
+        if (_cachedSelectionMinTrades > 0)
+        {
+            progress?.Report(new MarketScanProgress(0, selectedIds.Length, 0,
+                $"Whole market: {selectedIds.Length:N0} of {allIds.Length:N0} items trade {filter.MinimumDailyTrades:0.#}+/day; pricing those..."));
+        }
 
         var rawPrices = new ConcurrentBag<Gw2CommercePrice>();
         var chunks = selectedIds.Chunk(ApiBatchSize).ToArray();
@@ -188,7 +224,10 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(filter);
-        if (_cachedPrices is not { Count: > 0 } cached)
+        // A volume-first scan priced only items trading at least N/day; a lower threshold needs a fresh scan.
+        if (_cachedPrices is not { Count: > 0 } cached ||
+            (_cachedSelectionMinTrades > 0 && filter.MinimumDailyTrades < _cachedSelectionMinTrades) ||
+            (!_cachedStatsAttempted && NeedsStats(filter)))
         {
             return ScanAsync(filter, blacklist, progress, cancellationToken);
         }
@@ -209,27 +248,27 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         var overbid = Math.Max(0, filter.OverbidCopper);
         var undercut = Math.Max(0, filter.UndercutCopper);
 
-        // Fetched before matching so traded volume can filter and rank, not just decorate the results.
-        Dictionary<int, double>? velocityMap = null;
-        var needsVelocity = filter.IncludeDataWarsVelocity ||
-                            filter.MinimumDailyTrades > 0 ||
-                            string.Equals(filter.SortMode, MarketScanSortModes.GoldPerDay, StringComparison.Ordinal);
-        if (needsVelocity)
+        // Fetched (in ScanAsync) before matching so traded volume can filter and rank, not just decorate the results.
+        var statsMap = _cachedStats;
+        if (statsMap is null && NeedsStats(filter))
         {
-            progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Fetching 7-day trade volume (DataWars2)..."));
-            velocityMap = await FetchDataWarsVelocityBestEffortAsync(cancellationToken).ConfigureAwait(false);
-            if (velocityMap is null)
-            {
-                progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Trade volume unavailable; ranking by spread and order depth instead."));
-            }
+            progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Trade volume unavailable; ranking by spread and order depth instead."));
         }
 
+        var spikesSkipped = 0;
         var matched = new List<(Gw2CommercePrice Price, ProfitabilityResult Eval, double LiquidityScore, double SortScore)>();
         foreach (var entry in rawPrices)
         {
             if (entry.Buys is null || entry.Sells is null) continue;
-            double? tradesPerDay = velocityMap is null ? null : velocityMap.GetValueOrDefault(entry.Id);
+            MarketItemStats? stats = statsMap is null ? null : statsMap.GetValueOrDefault(entry.Id);
+            double? tradesPerDay = statsMap is null ? null : stats?.TradesPerDay ?? 0;
             if (tradesPerDay is { } traded && filter.MinimumDailyTrades > 0 && traded < filter.MinimumDailyTrades) continue;
+            if (filter.SkipPriceSpikes && IsPriceSpike(entry.Buys.UnitPrice, entry.Sells.UnitPrice, stats, filter.SpikeTolerance))
+            {
+                spikesSkipped++;
+                continue;
+            }
+
             var effectiveBuy = entry.Buys.UnitPrice + overbid;
             var effectiveSell = Math.Max(1L, entry.Sells.UnitPrice - undercut);
             if (effectiveBuy < filter.MinimumBuyPriceCopper) continue;
@@ -263,7 +302,8 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
 
         if (topCandidates.Length == 0)
         {
-            progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Scan complete: 0 items matched filters."));
+            LastSpikesSkipped = spikesSkipped;
+            progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, 0, "Scan complete: 0 items matched filters." + SpikeNote(spikesSkipped)));
             return Array.Empty<MarketScanItem>();
         }
 
@@ -318,9 +358,9 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
             orderBooks?.TryGetValue(price.Id, out book);
 
             int? dailyVolume = null;
-            if (velocityMap is not null && velocityMap.TryGetValue(price.Id, out var vol))
+            if (statsMap is not null && statsMap.TryGetValue(price.Id, out var vol))
             {
-                dailyVolume = (int)Math.Round(vol);
+                dailyVolume = (int)Math.Round(vol.TradesPerDay);
             }
 
             var riskBadge = ClassifyRiskBadge(price, eval, info, book);
@@ -345,8 +385,47 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
                 LiquidityScore: Math.Round(liquidityScore, 1)));
         }
 
-        progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, results.Count, $"Scan complete: {results.Count} profitable items found."));
+        LastSpikesSkipped = spikesSkipped;
+        progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, results.Count, $"Scan complete: {results.Count} profitable items found." + SpikeNote(spikesSkipped)));
         return results;
+    }
+
+    private static string SpikeNote(int spikesSkipped) =>
+        spikesSkipped > 0 ? $" Skipped {spikesSkipped} price spike(s) vs the 7-day average." : string.Empty;
+
+    private static bool NeedsStats(MarketScanFilter filter) =>
+        filter.IncludeDataWarsVelocity ||
+        filter.MinimumDailyTrades > 0 ||
+        filter.SkipPriceSpikes ||
+        string.Equals(filter.SortMode, MarketScanSortModes.GoldPerDay, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Which item ids to price. With DataWars2 volume and a Min trades/day, every tradable item that trades often
+    /// enough is priced (whole market, usually ~1-3k ids); otherwise the Scan scope samples the id list evenly.
+    /// </summary>
+    public static int[] SelectIdsToPrice(int[] allIds, MarketScanFilter filter, IReadOnlyDictionary<int, MarketItemStats>? stats)
+    {
+        if (stats is not null && filter.MinimumDailyTrades > 0)
+        {
+            return allIds.Where(id => stats.TryGetValue(id, out var s) && s.TradesPerDay >= filter.MinimumDailyTrades).ToArray();
+        }
+
+        return filter.MaxItemsToScan > 0 && filter.MaxItemsToScan < allIds.Length
+            ? SampleEvenly(allIds, filter.MaxItemsToScan)
+            : allIds;
+    }
+
+    /// <summary>True when the top bid or lowest ask sits more than <paramref name="tolerance"/> above its 7-day average.</summary>
+    public static bool IsPriceSpike(long topBidCopper, long lowestAskCopper, MarketItemStats? stats, double tolerance)
+    {
+        if (stats is null)
+        {
+            return false;
+        }
+
+        var factor = 1.0 + Math.Max(0.05, tolerance);
+        return (stats.SellAvg7dCopper is > 0 and var sellAvg && lowestAskCopper > sellAvg * factor) ||
+               (stats.BuyAvg7dCopper is > 0 and var buyAvg && topBidCopper > buyAvg * factor);
     }
 
     public static async Task<IReadOnlyList<MarketScanItem>> ImportFromFileAsync(
@@ -607,16 +686,21 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
         return map;
     }
 
-    private async Task<Dictionary<int, double>?> FetchDataWarsVelocityBestEffortAsync(CancellationToken cancellationToken)
+    private async Task<Dictionary<int, MarketItemStats>?> FetchDataWarsStatsBestEffortAsync(CancellationToken cancellationToken)
     {
         try
         {
+            // DataWars2 streams ~1.8 MB slowly: uncompressed it took 120 s+ and hit the old 30 s timeout
+            // (the scan then silently fell back to sampling). Compressed it is ~0.4 MB in ~20 s.
             using var ownedClient = _velocityHttpClient is null
-                ? new HttpClient { Timeout = TimeSpan.FromSeconds(30) }
+                ? new HttpClient(new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.All })
+                {
+                    Timeout = TimeSpan.FromSeconds(90)
+                }
                 : null;
             var client = _velocityHttpClient ?? ownedClient!;
             using var response = await client.GetAsync(
-                "https://api.datawars2.ie/gw2/v1/items/json?fields=id,1d_buy_sold,1d_sell_sold,7d_buy_sold,7d_sell_sold",
+                "https://api.datawars2.ie/gw2/v1/items/json?fields=id,1d_buy_sold,1d_sell_sold,7d_buy_sold,7d_sell_sold,7d_buy_price_avg,7d_sell_price_avg",
                 cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -642,7 +726,7 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
     /// average (falls back to the last day). "buy_sold" is how fast our buy orders can fill; "sell_sold" how fast our
     /// listings can sell. A flip needs both, so the smaller one is the item's real throughput.
     /// </summary>
-    private static Dictionary<int, double>? ParseDataWarsVelocity(JsonElement root)
+    internal static Dictionary<int, MarketItemStats>? ParseDataWarsVelocity(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Array)
         {
@@ -654,7 +738,7 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
                 ? Math.Max(0, value)
                 : -1;
 
-        var map = new Dictionary<int, double>();
+        var map = new Dictionary<int, MarketItemStats>();
         foreach (var elem in root.EnumerateArray())
         {
             if (!elem.TryGetProperty("id", out var idProp) || !idProp.TryGetInt32(out var id))
@@ -677,7 +761,12 @@ public sealed class Gw2MarketScanner : IGw2MarketScanner
                 perDay = Math.Min(dayBuy, daySell);
             }
 
-            map[id] = perDay;
+            var buyAvg = Read(elem, "7d_buy_price_avg");
+            var sellAvg = Read(elem, "7d_sell_price_avg");
+            map[id] = new MarketItemStats(
+                perDay,
+                buyAvg > 0 ? (long)Math.Round(buyAvg) : null,
+                sellAvg > 0 ? (long)Math.Round(sellAvg) : null);
         }
 
         return map;

@@ -495,8 +495,12 @@ public sealed class WorkerRuntime
             .Select(c => c.ItemName.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var resolvedItemIdCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var lastRescanUtc = _utcNow();
+        // A scanned list older than the re-scan interval (for example yesterday's) is refreshed on the first cycle.
+        var lastRescanUtc = InitialRescanClock(request, _utcNow());
+        var lastRescanCount = candidates.Count;
         var profitRefresher = new LiveCandidateProfitRefresher();
+        var lastLedgerSyncUtc = DateTimeOffset.MinValue;
+        string? lastLedgerSyncNote = null;
 
         var maxRecoveryRetries = Math.Clamp(effectiveClientSettings.MaxRecoveryRetries, 0, 10);
         var maxGameRestarts = effectiveClientSettings.AutoRestartGameOnFailure
@@ -632,6 +636,31 @@ public sealed class WorkerRuntime
 
                 PortfolioGuidance? portfolioGuidance = null;
                 var nowForLedger = _utcNow();
+                // Keep the Income & Portfolio ledger current during long sessions: without this, winner boosts and
+                // loser guards stay frozen at the last manual "Sync GW2 Account".
+                if (request.UsePortfolioIntelligence &&
+                    _ledgerStore is not null &&
+                    _marketData is Gw2OfficialDataProvider ledgerSource &&
+                    nowForLedger - lastLedgerSyncUtc >= LedgerSyncInterval)
+                {
+                    lastLedgerSyncUtc = nowForLedger;
+                    try
+                    {
+                        var synced = await ledgerSource.SyncPortfolioAsync(_ledgerStore, request.ActiveAccountName, cancellationToken).ConfigureAwait(false);
+                        ledgerLoadedAtUtc = DateTimeOffset.MinValue; // re-read below
+                        lastLedgerSyncNote = $"synced {nowForLedger:HH:mm} UTC";
+                        _logger.LogInformation(
+                            "Portfolio sync: {New} new trade(s) archived ({Total} total); history-based boosts and guards refreshed.",
+                            synced.NewlyArchivedTransactions,
+                            synced.TotalArchivedTransactions);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        lastLedgerSyncNote = "sync failed";
+                        _logger.LogWarning("Portfolio sync failed ({Message}); using the last synced history.", ex.Message);
+                    }
+                }
+
                 if ((request.UsePortfolioIntelligence || request.EnableInventorySellPass) &&
                     _ledgerStore is not null &&
                     (cachedLedgerHistory.Count == 0 || (nowForLedger - ledgerLoadedAtUtc) >= TimeSpan.FromMinutes(5)))
@@ -681,7 +710,9 @@ public sealed class WorkerRuntime
                     lastRescanUtc = _utcNow();
                     if (await RescanShoppingListAsync(rescanFilter, blacklist, candidates.Count, request.CandidatesPath, cancellationToken).ConfigureAwait(false) is { } fresh)
                     {
-                        candidates = fresh;
+                        lastRescanCount = fresh.Count;
+                        // The Custom Shopping List (sent inline) stays in the session; only the scanned part is replaced.
+                        candidates = MergeWithCustomList(request.EffectiveCandidates, fresh);
                         candidateNameSet = fresh
                             .Where(c => !string.IsNullOrWhiteSpace(c.ItemName))
                             .Select(c => c.ItemName.Trim())
@@ -952,6 +983,8 @@ public sealed class WorkerRuntime
                         characterSwapDue,
                         nextCharacterSwapAt = afkSwapSchedule.NextSwapAt,
                         sessionCap = sessionCap.Describe(now),
+                        marketList = DescribeMarketList(request, candidates.Count, lastRescanCount, lastRescanUtc, now),
+                        portfolio = DescribePortfolio(request, portfolioGuidance, lastLedgerSyncNote),
                         sessionStartedAt = sessionCap.StartedAt,
                         sessionExpiresAt = sessionCap.ExpiresAt,
                         parkedCharacters = effectiveClientSettings.ParkedCharacterCount,
@@ -1485,6 +1518,75 @@ public sealed class WorkerRuntime
             _logger.LogWarning("Auto re-scan failed ({Message}); keeping the current list.", ex.Message);
             return null;
         }
+    }
+
+    private static readonly TimeSpan LedgerSyncInterval = TimeSpan.FromMinutes(45);
+
+    /// <summary>
+    /// Start the re-scan clock at the scanned list's file time, so a list saved hours or days ago is refreshed on the
+    /// first cycle instead of trading on stale prices until the first interval passes.
+    /// </summary>
+    internal static DateTimeOffset InitialRescanClock(TradingReplayRequest request, DateTimeOffset nowUtc)
+    {
+        if (request.AutoRescanFilter is null || request.AutoRescanIntervalMinutes <= 0 ||
+            string.IsNullOrWhiteSpace(request.CandidatesPath) || !File.Exists(request.CandidatesPath))
+        {
+            return nowUtc;
+        }
+
+        var written = new DateTimeOffset(File.GetLastWriteTimeUtc(request.CandidatesPath), TimeSpan.Zero);
+        return written < nowUtc ? written : nowUtc;
+    }
+
+    internal static IReadOnlyList<ItemCandidate> MergeWithCustomList(IReadOnlyList<ItemCandidate> custom, IReadOnlyList<ItemCandidate> scanned)
+    {
+        if (custom.Count == 0)
+        {
+            return scanned;
+        }
+
+        var customNames = custom
+            .Where(c => !string.IsNullOrWhiteSpace(c.ItemName))
+            .Select(c => ItemNameNormalizer.Normalize(c.ItemName))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return custom
+            .Concat(scanned.Where(c => !customNames.Contains(ItemNameNormalizer.Normalize(c.ItemName))))
+            .ToArray();
+    }
+
+    /// <summary>One line for the Session page: list size and when the next market re-scan happens (or why it is off).</summary>
+    internal static string DescribeMarketList(TradingReplayRequest request, int listCount, int scannedCount, DateTimeOffset lastRescanUtc, DateTimeOffset nowUtc)
+    {
+        if (request.AutoRescanFilter is null || request.AutoRescanIntervalMinutes <= 0)
+        {
+            return $"{listCount} items · re-scan off ({(request.AutoRescanIntervalMinutes <= 0 && request.AutoRescanFilter is not null ? "0 h" : "list is not the scanner's")})";
+        }
+
+        var due = lastRescanUtc.AddMinutes(request.AutoRescanIntervalMinutes) - nowUtc;
+        var next = due <= TimeSpan.Zero
+            ? "re-scan now"
+            : due.TotalHours >= 1 ? $"re-scan in {(int)due.TotalHours}h {due.Minutes:00}m" : $"re-scan in {Math.Max(1, (int)Math.Ceiling(due.TotalMinutes))}m";
+        return $"{listCount} items ({scannedCount} scanned) · {next}";
+    }
+
+    internal static string DescribePortfolio(TradingReplayRequest request, PortfolioGuidance? guidance, string? syncNote)
+    {
+        if (!request.UsePortfolioIntelligence)
+        {
+            return "History off";
+        }
+
+        if (guidance is null)
+        {
+            return "History: loading";
+        }
+
+        var boosts = guidance.ByItemName.Values.Count(a => !a.ShouldSkip && a.ScoreMultiplier > 1.0);
+        var losers = guidance.LosingItems?.Count ?? 0;
+        var stacks = guidance.ByItemName.Values.Count(a => a.ShouldSkip && a.Reason?.Contains("sell stack", StringComparison.OrdinalIgnoreCase) == true);
+        var text = $"History: {boosts} boosted · {losers} skipped (lost money)";
+        if (stacks > 0) text += $" · {stacks} stacked";
+        return syncNote is null ? text : $"{text} · {syncNote}";
     }
 
     /// <summary>Recovery may switch parked character at most once per <see cref="MinTimeBetweenRecoverySwaps"/>.</summary>
