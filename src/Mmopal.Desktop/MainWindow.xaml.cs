@@ -3278,6 +3278,7 @@ public partial class MainWindow : Window
 
         var latencyId = string.IsNullOrWhiteSpace(settings.LatencyProfile) ? "HighPing" : settings.LatencyProfile;
         SelectComboByTag(LatencyProfileSelector, latencyId);
+        SelectComboByTag(PriceEntryModeSelector, settings.TypesExactPrice ? Gw2ClientSettings.PriceEntryTypeExact : Gw2ClientSettings.PriceEntryClickRow);
         UiLoadWaitMsBox.Text = Math.Clamp(settings.UiLoadWaitMs, 500, 30_000).ToString(CultureInfo.InvariantCulture);
         ActionSettleDelayMsBox.Text = Math.Clamp(settings.ActionSettleDelayMs, 100, 5_000).ToString(CultureInfo.InvariantCulture);
         ApiTimeoutSecondsBox.Text = Math.Clamp(settings.ApiTimeoutSeconds, 15, 120).ToString(CultureInfo.InvariantCulture);
@@ -3457,7 +3458,8 @@ public partial class MainWindow : Window
             AutoCloseGameOnSessionCap: AutoCloseGameOnCapCheckBox.IsChecked == true,
             AutoCloseAppOnSessionCap: AutoCloseAppOnCapCheckBox.IsChecked == true,
             ShutdownPcOnSessionCap: ShutdownPcOnCapCheckBox.IsChecked == true,
-            PcShutdownCountdownSeconds: shutdownCountdownSeconds);
+            PcShutdownCountdownSeconds: shutdownCountdownSeconds,
+            PriceEntryMode: (PriceEntryModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? Gw2ClientSettings.PriceEntryClickRow);
         SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
             ? $"Session cap: {settings.FormatMaxSessionHours()}h"
             : "Session cap: disabled";

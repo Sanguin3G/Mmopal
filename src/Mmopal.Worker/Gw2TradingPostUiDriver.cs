@@ -13,7 +13,6 @@ namespace Mmopal.Worker;
 public sealed class Gw2TradingPostUiDriver
 {
     private const int MaxLoginClickAttempts = 3;
-    private static readonly TimeSpan SteamAutoStartGrace = TimeSpan.FromSeconds(20);
     private const int MaxSearchRowsToTry = 3;
     // Measured on live 1024x768 screenshots: results header "Item" at y~227, result rows 58 px apart.
     private const int SearchResultRowStride = 58;
@@ -29,6 +28,9 @@ public sealed class Gw2TradingPostUiDriver
     // Rows include their "Max. Price" / "Total Price:" labels: on live frames Windows OCR read nothing from tighter
     // crops of just the digits.
     private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(260, 290, 400, 44);
+    // Current Buyers list in the order dialog (rows from y~514, price column from x~405).
+    private static readonly CaptureRegion BuyersListRegion = new(245, 505, 270, 190);
+    private const int BuyersPriceColumnMinX = 395;
     // "Total Price: 1 17 98" under Max. Price: plain text without spinners; gold is omitted when it is 0.
     private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 400, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
@@ -248,9 +250,6 @@ public sealed class Gw2TradingPostUiDriver
                 ? Math.Max(Math.Max(_uiWaitMs * 4, _settings.WindowWaitTimeoutSeconds * 1000), 30_000)
                 : Math.Max(_uiWaitMs, 100);
             var launcherDeadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(launcherWaitMs);
-            // Steam signs in with the Steam account and starts the game by itself; PLAY is only a late fallback.
-            var steamPlayNotBefore = DateTimeOffset.UtcNow + (_requireTemplateFilesOnDisk ? SteamAutoStartGrace : TimeSpan.Zero);
-            var loggedSteamWait = false;
             DateTimeOffset? lastLoginClickUtc = null;
             var loginClickAttempts = 0;
             var emptySignalPolls = 0;
@@ -276,26 +275,10 @@ public sealed class Gw2TradingPostUiDriver
                     !snapshot.OcrReadyVisible &&
                     (_settings.IsSteamPlatform || snapshot.LoginPoint is null))
                 {
-                    if (_settings.IsSteamPlatform && DateTimeOffset.UtcNow < steamPlayNotBefore)
-                    {
-                        if (!loggedSteamWait)
-                        {
-                            _logger.LogInformation(
-                                "Steam launcher: waiting up to {Seconds}s for Steam auto-login to start the game before clicking PLAY.",
-                                (int)SteamAutoStartGrace.TotalSeconds);
-                            loggedSteamWait = true;
-                        }
-
-                        if (launcherDeadline < steamPlayNotBefore + TimeSpan.FromSeconds(5))
-                        {
-                            launcherDeadline = steamPlayNotBefore + TimeSpan.FromSeconds(5);
-                        }
-                    }
-                    else
-                    {
-                        triggeredPlayPoint = playPoint;
-                        break;
-                    }
+                    // ArenaNet launcher: LOG IN, then PLAY. Steam launcher: signs in with the Steam account by
+                    // itself (LOG IN is never clicked), but PLAY still has to be pressed.
+                    triggeredPlayPoint = playPoint;
+                    break;
                 }
 
                 if (!_settings.IsSteamPlatform && snapshot.LoginPoint is { } detectedLoginPoint)
@@ -1068,6 +1051,13 @@ public sealed class Gw2TradingPostUiDriver
 
         // Wait for async order-book rows from the GW2 server before selecting Row 1 under Current Buyers.
         await SettleAsync(cancellationToken).ConfigureAwait(false);
+        long? liveTopBid = null;
+        if (_settings.TypesExactPrice && _textLocator is not null)
+        {
+            // Read before clicking a row: afterwards our own "Ordering N" preview row joins the list.
+            liveTopBid = await ReadTopBuyerPriceAsync(Math.Max(1, action.PriceCopper - overbidMinCopper), cancellationToken).ConfigureAwait(false);
+        }
+
         await _input.ClickAsync(CenterX(buyersAnchor), CenterY(buyersAnchor) + 48, cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
 
@@ -1120,11 +1110,28 @@ public sealed class Gw2TradingPostUiDriver
         }
 
         var overbidSteps = PickStepCount(overbidMinCopper, overbidMaxCopper);
-        for (var i = 0; i < overbidSteps; i++)
+        long? typedUnitPrice = null;
+        if (_settings.TypesExactPrice && _textLocator is not null)
         {
-            var upArrow = await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false);
-            if (upArrow is null) break;
-            await ClickCenterAsync(upArrow, cancellationToken).ConfigureAwait(false);
+            var choice = ChooseTypedBuyPrice(action.PriceCopper, overbidMinCopper, overbidMaxCopper, overbidSteps, liveTopBid);
+            _logger.LogInformation("Typed price for {Item}: {Message}", action.ItemName, choice.Message);
+            if (choice.Target is not { } target)
+            {
+                await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {choice.Message}");
+            }
+
+            await TypeDialogPriceAsync(target, cancellationToken).ConfigureAwait(false);
+            typedUnitPrice = target;
+        }
+        else
+        {
+            for (var i = 0; i < overbidSteps; i++)
+            {
+                var upArrow = await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false);
+                if (upArrow is null) break;
+                await ClickCenterAsync(upArrow, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         if (IsPaused)
@@ -1150,7 +1157,9 @@ public sealed class Gw2TradingPostUiDriver
                 await SaveDiagnosticFrameAsync("price-unreadable", cancellationToken).ConfigureAwait(false);
             }
 
-            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice, confident);
+            var check = typedUnitPrice is { } typed
+                ? EvaluateTypedBuyPrice(typed, visibleUnitPrice, confident)
+                : EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice, confident);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
             if (check.Abort)
             {
@@ -1163,10 +1172,196 @@ public sealed class Gw2TradingPostUiDriver
         await SettleAsync(cancellationToken).ConfigureAwait(false);
         await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
 
-        return new TradingActionResult(
-            action,
-            TradingActionStatus.Completed,
-            $"Placed live buy order for {qty}x '{action.ItemName}' (+{overbidSteps}c overbid).");
+        return typedUnitPrice is { } placed
+            ? new TradingActionResult(
+                action,
+                TradingActionStatus.Completed,
+                $"Placed live buy order for {qty}x '{action.ItemName}' at {MarketScanItem.FormatCoins(placed)} (typed).")
+            {
+                PlacedUnitPriceCopper = placed
+            }
+            : new TradingActionResult(
+                action,
+                TradingActionStatus.Completed,
+                $"Placed live buy order for {qty}x '{action.ItemName}' (+{overbidSteps}c overbid).");
+    }
+
+    /// <summary>
+    /// Target unit price for Type exact mode: the live top bid read in the dialog (else the API top bid the plan used)
+    /// plus the overbid. Refused when it exceeds the same ceiling the price check uses (planned price + max overbid +
+    /// ~3%): the market moved past the planned margin.
+    /// </summary>
+    internal static (long? Target, string Message) ChooseTypedBuyPrice(
+        long plannedCopper,
+        int overbidMinCopper,
+        int overbidMaxCopper,
+        int overbidSteps,
+        long? liveTopBidCopper)
+    {
+        var apiTopBid = Math.Max(1, plannedCopper - Math.Max(0, overbidMinCopper));
+        var basis = liveTopBidCopper ?? apiTopBid;
+        var target = basis + Math.Max(0, overbidSteps);
+        var ceiling = plannedCopper + Math.Max(0, overbidMaxCopper) + Math.Max(5L, plannedCopper * 3 / 100);
+        var source = liveTopBidCopper is null
+            ? $"API top bid {MarketScanItem.FormatCoins(apiTopBid)} (live top bid unreadable)"
+            : $"live top bid {MarketScanItem.FormatCoins(basis)} (API {MarketScanItem.FormatCoins(apiTopBid)})";
+        return target > ceiling
+            ? (null, $"{source} + {overbidSteps}c = {MarketScanItem.FormatCoins(target)} is above the profitable ceiling {MarketScanItem.FormatCoins(ceiling)}; someone outbid past the margin.")
+            : (target, $"{source} + {overbidSteps}c -> typing {MarketScanItem.FormatCoins(target)}.");
+    }
+
+    /// <summary>Typed mode: the dialog's Total must show exactly the typed price, else the typing did not stick.</summary>
+    internal static (bool Abort, string Message) EvaluateTypedBuyPrice(long typedCopper, long? visibleCopper, bool confident)
+    {
+        if (visibleCopper is not { } visible)
+        {
+            return (false, $"Typed {MarketScanItem.FormatCoins(typedCopper)}; the dialog price could not be read to confirm it.");
+        }
+
+        if (visible == typedCopper)
+        {
+            return (false, $"Typed {MarketScanItem.FormatCoins(typedCopper)} confirmed.");
+        }
+
+        return confident
+            ? (true, $"typed {MarketScanItem.FormatCoins(typedCopper)} but the dialog shows {MarketScanItem.FormatCoins(visible)}; the price boxes did not take the typed value.")
+            : (false, $"Typed {MarketScanItem.FormatCoins(typedCopper)}; boxes read {MarketScanItem.FormatCoins(visible)} (unconfirmed, spinners garble that read).");
+    }
+
+    /// <summary>
+    /// Live top bid from the Current Buyers list, polled briefly while the order book loads. Row prices omit zero
+    /// units ("69. 95." is 69s 95c, "2,721.69." is 2,721g 69s), so each reading is resolved against the API hint.
+    /// </summary>
+    private async Task<long?> ReadTopBuyerPriceAsync(long hintCopper, CancellationToken cancellationToken)
+    {
+        var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(1_500, Math.Min(_uiWaitMs, 4_000)));
+        while (true)
+        {
+            try
+            {
+                var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+                if (frame.Pixels.Length > 0 && _textLocator is not null)
+                {
+                    var variants = new List<IReadOnlyList<OcrTextBox>>
+                    {
+                        await _textLocator.LocateLinesAsync(frame, BuyersListRegion, cancellationToken).ConfigureAwait(false)
+                    };
+                    if (FrameVision.EnhanceTextContrast(frame, BuyersListRegion) is { } enhanced)
+                    {
+                        var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
+                        variants.Add(lines
+                            .Select(line => line with { X = BuyersListRegion.X + line.X / 2, Y = BuyersListRegion.Y + line.Y / 2 })
+                            .ToArray());
+                    }
+
+                    foreach (var lines in variants)
+                    {
+                        var top = lines
+                            .Where(line => line.X >= BuyersPriceColumnMinX)
+                            .OrderBy(line => line.Y)
+                            .Select(line => ParseBuyerRowPrice(line.Text, hintCopper))
+                            .FirstOrDefault(price => price is not null);
+                        if (top is not null)
+                        {
+                            return top;
+                        }
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogDebug(exception, "Could not read the top buyer price.");
+            }
+
+            if (_utcNow() >= deadline)
+            {
+                return null;
+            }
+
+            await Task.Delay(Math.Max(_pollMs, 300), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Parses a Current Buyers price cell. Zero leading units are omitted and the coin icons read as dots, so two
+    /// numbers can be gold+silver or silver+copper; the interpretation closest to the API hint wins, and only within
+    /// half to double of it (anything else is a misread or a different row).
+    /// </summary>
+    internal static long? ParseBuyerRowPrice(string? text, long hintCopper)
+    {
+        var groups = PriceDigitGroups(text);
+        if (groups.Count is 0 or > 3 || hintCopper <= 0)
+        {
+            return null;
+        }
+
+        var values = new List<long>();
+        foreach (var group in groups)
+        {
+            if (!long.TryParse(group, out var value)) return null;
+            values.Add(value);
+        }
+
+        var candidates = new List<long>();
+        void Add(long gold, long silver, long copper)
+        {
+            if (silver is >= 0 and <= 99 && copper is >= 0 and <= 99 && gold >= 0)
+            {
+                candidates.Add(gold * 10_000 + silver * 100 + copper);
+            }
+        }
+
+        switch (values.Count)
+        {
+            case 3:
+                Add(values[0], values[1], values[2]);
+                break;
+            case 2:
+                Add(values[0], values[1], 0);
+                Add(0, values[0], values[1]);
+                break;
+            default:
+                Add(values[0], 0, 0);
+                Add(0, values[0], 0);
+                Add(0, 0, values[0]);
+                break;
+        }
+
+        var best = candidates
+            .Where(price => price > 0)
+            .OrderBy(price => Math.Abs(Math.Log((double)price / hintCopper)))
+            .Cast<long?>()
+            .FirstOrDefault();
+        return best is { } chosen && chosen * 2 >= hintCopper && chosen <= hintCopper * 2 ? chosen : null;
+    }
+
+    /// <summary>
+    /// Clicks each Max. Price box (gold, silver, copper), selects its contents and types the value. Box positions are
+    /// taken from the copper ▲ spinner (measured at (601, 304) on live frames), falling back to fixed coordinates.
+    /// </summary>
+    private async Task TypeDialogPriceAsync(long unitCopper, CancellationToken cancellationToken)
+    {
+        var gold = unitCopper / 10_000;
+        var silver = unitCopper / 100 % 100;
+        var copper = unitCopper % 100;
+        var arrow = await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false);
+        var (anchorX, anchorY) = arrow is null ? (601, 304) : (CenterX(arrow), CenterY(arrow));
+        var boxes = new (int X, int Value)[]
+        {
+            (anchorX - 176, (int)Math.Min(gold, int.MaxValue)),
+            (anchorX - 93, (int)silver),
+            (anchorX - 21, (int)copper)
+        };
+        foreach (var (x, value) in boxes)
+        {
+            await _input.ClickAsync(x, anchorY + 7, cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            await ReplaceFieldTextAsync(value.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // The Total updates as digits are typed; give the dialog a moment before it is read.
+        await SettleAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

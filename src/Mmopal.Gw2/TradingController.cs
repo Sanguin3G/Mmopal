@@ -109,6 +109,9 @@ public sealed record TradingActionResult(
     string Message,
     DateTimeOffset CompletedAt)
 {
+    /// <summary>Unit price actually typed into the order dialog (Type exact price mode), for the API audit.</summary>
+    public long? PlacedUnitPriceCopper { get; init; }
+
     public TradingActionResult(TradingAction action, TradingActionStatus status, string message)
         : this(action, status, message, DateTimeOffset.UtcNow) { }
 }
@@ -157,6 +160,7 @@ public sealed class TradingCycleController
     private readonly ConcurrentDictionary<string, string> _boughtItems = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _searchMismatches = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _blockedUntil = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (string Name, long Price, DateTimeOffset PlacedAt)> _placedPrices = new(StringComparer.Ordinal);
     private static readonly TimeSpan FailedItemCooldown = TimeSpan.FromMinutes(30);
 
     private static bool IsItemSpecificBuyFailure(string? message) =>
@@ -252,6 +256,7 @@ public sealed class TradingCycleController
                 ? Math.Max(0L, balance.Copper - Math.Max(0L, _options.MinimumBalanceCopper))
                 : null;
             DetectSearchMismatches(runId, market.Transactions);
+            AuditPlacedPrices(runId, market.Transactions);
             decisions = SelectActionsForCycle(runId, decisions, remainingSpendable);
             foreach (var decision in decisions)
             {
@@ -324,6 +329,10 @@ public sealed class TradingCycleController
                 if (result.Status == TradingActionStatus.Completed && action.Kind == TradingActionKind.PlaceBuyOrder)
                 {
                     _boughtItems[GetItemKey(runId, action.ItemName)] = action.ItemName.Trim();
+                    if (result.PlacedUnitPriceCopper is { } placedPrice)
+                    {
+                        _placedPrices[GetItemKey(runId, action.ItemName)] = (action.ItemName.Trim(), placedPrice, _options.UtcNow());
+                    }
                 }
 
                 if (result.Status == TradingActionStatus.Failed && IsItemSpecificBuyFailure(result.Message))
@@ -590,6 +599,50 @@ public sealed class TradingCycleController
         var cut = reason.IndexOfAny(['(', ';', '\'']);
         var head = (cut > 0 ? reason[..cut] : reason).Trim().TrimEnd('.', ':', ',').Trim();
         return head.Length > 60 ? head[..60] + "…" : head;
+    }
+
+    /// <summary>
+    /// Typed-price audit through the API: once current/buys lists the order (it lags up to ~5 minutes), its price
+    /// must equal what was typed. A mismatch is logged as a warning; an order that never shows up (filled or
+    /// cancelled meanwhile) is dropped quietly.
+    /// </summary>
+    private void AuditPlacedPrices(string runId, IReadOnlyList<Transaction> transactions)
+    {
+        var prefix = runId + "|";
+        var now = _options.UtcNow();
+        foreach (var (key, placed) in _placedPrices)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal) || now - placed.PlacedAt < TimeSpan.FromMinutes(1))
+            {
+                continue;
+            }
+
+            var orderPrices = transactions
+                .Where(tx => tx.Type == TransactionType.Buy && string.Equals(tx.ItemName?.Trim(), placed.Name, StringComparison.OrdinalIgnoreCase))
+                .Select(tx => tx.PriceCopper)
+                .ToArray();
+            if (orderPrices.Contains(placed.Price))
+            {
+                _placedPrices.TryRemove(key, out _);
+                _logger.LogInformation("Order audit: {Item} buy order confirmed by the API at {Price}.", placed.Name, MarketScanItem.FormatCoins(placed.Price));
+                continue;
+            }
+
+            if (now - placed.PlacedAt < TimeSpan.FromMinutes(7))
+            {
+                continue;
+            }
+
+            _placedPrices.TryRemove(key, out _);
+            if (orderPrices.Length > 0)
+            {
+                _logger.LogWarning(
+                    "Order audit: API shows {Item} buy order(s) at {Prices}, but {Typed} was typed.",
+                    placed.Name,
+                    string.Join(", ", orderPrices.Select(MarketScanItem.FormatCoins)),
+                    MarketScanItem.FormatCoins(placed.Price));
+            }
+        }
     }
 
     private static string GetItemKey(string runId, string itemName) =>

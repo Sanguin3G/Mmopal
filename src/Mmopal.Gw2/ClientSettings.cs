@@ -31,8 +31,16 @@ public sealed record Gw2ClientSettings(
     bool AutoCloseGameOnSessionCap = true,
     bool AutoCloseAppOnSessionCap = true,
     bool ShutdownPcOnSessionCap = false,
-    int PcShutdownCountdownSeconds = 60)
+    int PcShutdownCountdownSeconds = 60,
+    // How the buy price is set in the order dialog: ClickRow (click the top Current Buyers row, then tap the
+    // spinner) or TypeExact (type the exact gold/silver/copper from the live top bid and verify the total).
+    string PriceEntryMode = "ClickRow")
 {
+    public const string PriceEntryClickRow = "ClickRow";
+    public const string PriceEntryTypeExact = "TypeExact";
+
+    public bool TypesExactPrice => string.Equals(PriceEntryMode, PriceEntryTypeExact, StringComparison.OrdinalIgnoreCase);
+
     public const string DefaultExecutableName = "Gw2-64.exe";
     public const string DefaultWindowName = "Guild Wars 2";
     public const string PlatformArenaNet = "ArenaNet";

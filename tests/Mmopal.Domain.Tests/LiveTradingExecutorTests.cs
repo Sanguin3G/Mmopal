@@ -528,6 +528,92 @@ public sealed class LiveTradingExecutorTests
         Assert.DoesNotContain((191, 712), input.Clicks);
     }
 
+    [Theory]
+    [InlineData("69. 95.", 6_995L, 6_995L)]            // live Pyre Dye frame: the top row the click method missed
+    [InlineData("1. 13. 36.", 11_336L, 11_336L)]       // live frame, gold shown
+    [InlineData("23. 67.", 2_366L, 2_367L)]
+    [InlineData("2,721.69.", 27_216_900L, 27_216_900L)] // 2,721g 69s: copper 0 omitted
+    [InlineData("79.0. 4.", 790_004L, 790_004L)]
+    [InlineData("61 —O. 66•", 610_066L, 610_066L)]      // "O" read for 0
+    [InlineData("5. 00.", 6_995L, null)]               // neither 5g nor 5s is near 69s 95c: misread
+    [InlineData("neo. 3.", 6_995L, null)]
+    public void ParseBuyerRowPrice_resolves_omitted_units_against_the_api_hint(string text, long hint, long? expected)
+    {
+        Assert.Equal(expected, Gw2TradingPostUiDriver.ParseBuyerRowPrice(text, hint));
+    }
+
+    [Fact]
+    public void ChooseTypedBuyPrice_uses_the_live_top_bid_and_refuses_prices_past_the_margin()
+    {
+        var live = Gw2TradingPostUiDriver.ChooseTypedBuyPrice(6_996, 1, 3, 2, liveTopBidCopper: 6_995);
+        var apiOnly = Gw2TradingPostUiDriver.ChooseTypedBuyPrice(6_996, 1, 3, 2, liveTopBidCopper: null);
+        var outbidPastMargin = Gw2TradingPostUiDriver.ChooseTypedBuyPrice(6_996, 1, 3, 2, liveTopBidCopper: 8_000);
+
+        Assert.Equal(6_997, live.Target);
+        Assert.Equal(6_997, apiOnly.Target);
+        Assert.Null(outbidPastMargin.Target);
+        Assert.Contains("profitable ceiling", outbidPastMargin.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EvaluateTypedBuyPrice_aborts_only_when_a_trusted_read_disagrees()
+    {
+        Assert.False(Gw2TradingPostUiDriver.EvaluateTypedBuyPrice(6_997, 6_997, confident: true).Abort);
+        Assert.True(Gw2TradingPostUiDriver.EvaluateTypedBuyPrice(6_997, 5_799, confident: true).Abort);
+        Assert.False(Gw2TradingPostUiDriver.EvaluateTypedBuyPrice(6_997, 5_799, confident: false).Abort);
+        Assert.False(Gw2TradingPostUiDriver.EvaluateTypedBuyPrice(6_997, null, confident: false).Abort);
+    }
+
+    [Fact]
+    public async Task PlaceBuyOrderAsync_TypeExactMode_TypesTheLiveTopBidPlusOverbid()
+    {
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["tradingpost_tab.png"] = new(90, 20, 80, 24, 0.95m),
+            ["buy_items_tab.png"] = new(210, 45, 70, 22, 0.95m),
+            ["search.png"] = new(60, 110, 120, 24, 0.95m),
+            ["item.png"] = new(389, 218, 37, 18, 0.95m),
+            ["currentBuyers.png"] = new(223, 452, 162, 61, 0.95m),
+            ["arrow_up.png"] = new(596, 300, 10, 8, 1.00m),   // copper spinner, centre (601, 304)
+            ["placeOrder.png"] = new(610, 410, 110, 30, 0.95m)
+        });
+        var locator = new FakeUiTextLocator(region => (region.X, region.Y) switch
+        {
+            (325, 240) => [new OcrTextBox("Pyre Dye", 393, 266, 80, 12)],
+            (330, 165) => [new OcrTextBox("Pyre Dye", 347, 175, 120, 24)],
+            (245, 505) => [new OcrTextBox("69. 95.", 434, 522, 60, 13), new OcrTextBox("58. 98.", 434, 550, 60, 13)],
+            (260, 330) => [new OcrTextBox("Total Price: 1. 39. 94.", 273, 341, 220, 22)], // 2 x 69s 97c
+            _ => Array.Empty<OcrTextBox>()
+        });
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0, PriceEntryMode: Gw2ClientSettings.PriceEntryTypeExact),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        var result = await driver.PlaceBuyOrderAsync(
+            new TradingAction(TradingActionKind.PlaceBuyOrder, "Pyre Dye", 6_996, 2, "profitable"),
+            overbidMinCopper: 2,
+            overbidMaxCopper: 2);
+
+        Assert.Equal(TradingActionStatus.Completed, result.Status);
+        Assert.Equal(6_997, result.PlacedUnitPriceCopper);
+        Assert.Contains((425, 311), input.Clicks); // gold box
+        Assert.Contains((508, 311), input.Clicks); // silver box
+        Assert.Contains((580, 311), input.Clicks); // copper box
+        Assert.Contains("69", input.TextsSent);
+        Assert.Contains("97", input.TextsSent);
+        Assert.DoesNotContain((601, 304), input.Clicks); // no spinner taps in this mode
+    }
+
     [Fact]
     public void EffectiveBalanceState_DoesNotRecollectTheSameCoinsAndItemsWhileTheApiLags()
     {

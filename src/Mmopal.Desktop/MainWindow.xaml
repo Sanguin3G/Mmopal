@@ -1535,6 +1535,15 @@
                                                     <TextBox x:Name="ApiTimeoutSecondsBox" Text="60" />
                                                 </StackPanel>
                                             </Grid>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                                <StackPanel Width="320">
+                                                    <TextBlock Text="BUY PRICE ENTRY" Style="{StaticResource FieldLabel}" />
+                                                    <ComboBox x:Name="PriceEntryModeSelector" SelectedIndex="0" ToolTip="Click top buyer row: the current method. Type exact price: reads the live top bid in the order dialog, types the exact gold/silver/copper and checks the Total Price before placing. More reliable on high ping; adds a few seconds per order.">
+                                                        <ComboBoxItem Content="Click top buyer row (current)" Tag="ClickRow" />
+                                                        <ComboBoxItem Content="Type exact price (new)" Tag="TypeExact" />
+                                                    </ComboBox>
+                                                </StackPanel>
+                                            </StackPanel>
                                             <TextBlock x:Name="LatencyDescriptionText" Text="High Ping (200–300 ms): Tuned for VN -&gt; EU Frankfurt without VPN/Mudfish." Style="{StaticResource HintText}" Margin="0,0,0,4" />
                                             <TextBlock x:Name="Gw2DetectHealthText" Text="Windows DPI scale check pending..." Style="{StaticResource HintText}" />
                                         </StackPanel>
