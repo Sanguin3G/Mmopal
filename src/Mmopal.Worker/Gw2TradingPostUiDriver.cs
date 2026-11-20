@@ -13,6 +13,13 @@ namespace Mmopal.Worker;
 public sealed class Gw2TradingPostUiDriver
 {
     private const int MaxLoginClickAttempts = 3;
+    private const int MaxSearchRowsToTry = 3;
+    // Measured on live 1024x768 screenshots: results header "Item" at y~227, result rows 58 px apart.
+    private const int SearchResultRowStride = 58;
+    private static readonly CaptureRegion SearchResultsHeaderRegion = new(320, 195, 470, 60);
+    // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
+    private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
+    private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(380, 294, 250, 34);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 240, 80, 140);
@@ -46,7 +53,6 @@ public sealed class Gw2TradingPostUiDriver
     private readonly IInputController _input;
     private readonly IWindowController _windows;
     private readonly IUiTextLocator? _textLocator;
-    private readonly ITradingPostUiProbe? _priceProbe;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly string _templateRoot;
     private readonly Gw2ClientSettings _settings;
@@ -69,10 +75,8 @@ public sealed class Gw2TradingPostUiDriver
         bool requireTemplateFilesOnDisk = true,
         Func<bool>? isPaused = null,
         IUiTextLocator? textLocator = null,
-        ITradingPostUiProbe? priceProbe = null,
         Func<DateTimeOffset>? utcNow = null)
     {
-        _priceProbe = priceProbe;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _templates = templates ?? throw new ArgumentNullException(nameof(templates));
@@ -805,22 +809,64 @@ public sealed class Gw2TradingPostUiDriver
         await SettleAsync(cancellationToken).ConfigureAwait(false);
         await GoToRestPositionAsync(cancellationToken).ConfigureAwait(false);
 
-        var firstItem = await WaitForTemplateAsync("item.png", CaptureRegion.FullScreen1024x768, 0.74m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        // Scoped to the results header: full-screen matching can also hit the Delivery Box "Items:" label (~0.76).
+        var firstItem = await WaitForTemplateAsync("item.png", SearchResultsHeaderRegion, 0.74m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
         if (firstItem is null)
         {
             return new TradingActionResult(action, TradingActionStatus.Failed, $"No search result row appeared for '{action.ItemName}'.");
         }
 
-        if (IsPaused)
+        // The TP search is a substring match, so the first row can be a different item ("Slice of Allspice Cake" also
+        // lists "Slice of Allspice Cake with Ice Cream"). Open rows in order and buy only from the one whose dialog
+        // title is the exact item.
+        TemplateMatch? buyersAnchor = null;
+        var wrongTitles = new List<string>();
+        for (var row = 0; row < MaxSearchRowsToTry; row++)
         {
-            return new TradingActionResult(action, TradingActionStatus.Skipped, "Paused by operator before opening item.");
+            if (IsPaused)
+            {
+                return new TradingActionResult(action, TradingActionStatus.Skipped, "Paused by operator before opening item.");
+            }
+
+            var rowAnchor = firstItem with { Y = firstItem.Y + row * SearchResultRowStride };
+            buyersAnchor = await OpenItemOrderWindowAsync(rowAnchor, "currentBuyers.png", 0.72m, cancellationToken).ConfigureAwait(false);
+            if (buyersAnchor is null)
+            {
+                break;
+            }
+
+            var (titleCheck, seenTitle) = await CheckOpenedItemTitleAsync(action.ItemName, cancellationToken).ConfigureAwait(false);
+            if (titleCheck == ItemTitleCheck.Unreadable)
+            {
+                _logger.LogInformation("Could not read the item window title for {Item}; continuing with search row {Row}.", action.ItemName, row + 1);
+                break;
+            }
+
+            if (titleCheck == ItemTitleCheck.Match)
+            {
+                if (row > 0)
+                {
+                    _logger.LogInformation("Found '{Item}' at search row {Row}.", action.ItemName, row + 1);
+                }
+
+                break;
+            }
+
+            wrongTitles.Add(seenTitle ?? "?");
+            _logger.LogInformation("Search row {Row} for '{Item}' opened '{Other}'; trying the next row.", row + 1, action.ItemName, seenTitle);
+            await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+            buyersAnchor = null;
         }
 
-        var buyersAnchor = await OpenItemOrderWindowAsync(firstItem, "currentBuyers.png", 0.72m, cancellationToken).ConfigureAwait(false);
         if (buyersAnchor is null)
         {
             await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-            return new TradingActionResult(action, TradingActionStatus.Failed, $"Item order window did not open for '{action.ItemName}'.");
+            return new TradingActionResult(
+                action,
+                TradingActionStatus.Failed,
+                wrongTitles.Count > 0
+                    ? $"None of the search rows opened '{action.ItemName}' (saw: {string.Join(", ", wrongTitles.Select(t => $"'{t}'"))}); not buying a different item."
+                    : $"Item order window did not open for '{action.ItemName}'.");
         }
 
         // Wait for async order-book rows from the GW2 server before selecting Row 1 under Current Buyers.
@@ -897,21 +943,10 @@ public sealed class Gw2TradingPostUiDriver
             return new TradingActionResult(action, TradingActionStatus.Failed, $"Place Order button was not visible for '{action.ItemName}'.");
         }
 
-        if (_priceProbe is not null)
+        if (_textLocator is not null)
         {
-            VisiblePriceObservation? visible = null;
-            try
-            {
-                visible = await _priceProbe
-                    .ReadVisiblePriceAsync(new TradingPostUiProbeOptions(_templateRoot, VisibleItemName: action.ItemName), cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                _logger.LogDebug(exception, "Visible price read failed for {Item}.", action.ItemName);
-            }
-
-            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visible?.Price?.Copper);
+            var visibleUnitPrice = await ReadDialogUnitPriceAsync(cancellationToken).ConfigureAwait(false);
+            var check = EvaluateVisibleBuyPrice(action.PriceCopper, overbidMaxCopper, visibleUnitPrice);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
             if (check.Abort)
             {
@@ -1315,6 +1350,165 @@ public sealed class Gw2TradingPostUiDriver
         return reopened
             ? (true, $"Swapped to parked character {who} and reopened Trading Post.")
             : (false, $"Swapped to parked character {who}, but could not reopen Trading Post: {openMsg}");
+    }
+
+    internal enum ItemTitleCheck
+    {
+        Match,
+        Mismatch,
+        Unreadable
+    }
+
+    /// <summary>Reads the open buy dialog's title (raw and contrast-enhanced) and compares it with the expected item.</summary>
+    private async Task<(ItemTitleCheck Result, string? SeenTitle)> CheckOpenedItemTitleAsync(string expectedName, CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return (ItemTitleCheck.Unreadable, null);
+        }
+
+        var texts = await ReadTextVariantsAsync(ItemDialogTitleRegion, cancellationToken).ConfigureAwait(false);
+        return ClassifyItemTitle(expectedName, texts);
+    }
+
+    /// <summary>Reads the buy dialog's Max. Price (per unit) in copper, or null when it cannot be read.</summary>
+    private async Task<long?> ReadDialogUnitPriceAsync(CancellationToken cancellationToken)
+    {
+        var texts = await ReadTextVariantsAsync(ItemDialogMaxPriceRegion, cancellationToken).ConfigureAwait(false);
+        foreach (var text in texts)
+        {
+            if (ParseDialogPrice(text) is { } copper)
+            {
+                return copper;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>OCR lines of a region, first from the raw frame and then from a contrast-enhanced 2x copy.</summary>
+    private async Task<IReadOnlyList<string>> ReadTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            if (frame.Pixels.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            var texts = new List<string>();
+            var raw = await _textLocator.LocateLinesAsync(frame, region, cancellationToken).ConfigureAwait(false);
+            texts.AddRange(raw.OrderBy(line => line.Y).Select(line => line.Text));
+            if (FrameVision.EnhanceTextContrast(frame, region) is { } enhanced)
+            {
+                var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
+                texts.AddRange(lines.OrderBy(line => line.Y).Select(line => line.Text));
+            }
+
+            return texts;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "OCR of region {Region} failed.", region);
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Compares OCR'd dialog title lines with the expected item name. Any line close to the expected name is a match
+    /// (OCR often drops an apostrophe or misreads a letter); a readable title that is clearly a different item —
+    /// including a longer name that merely contains the expected one — is a mismatch.
+    /// </summary>
+    internal static (ItemTitleCheck Result, string? SeenTitle) ClassifyItemTitle(string expectedName, IEnumerable<string> ocrTexts)
+    {
+        var expected = NormalizeItemName(expectedName);
+        string? bestOther = null;
+        var bestOtherLength = 0;
+        foreach (var text in ocrTexts)
+        {
+            var seen = NormalizeItemName(text);
+            if (seen.Length < 3)
+            {
+                continue;
+            }
+
+            if (NameSimilarity(expected, seen) >= 0.85)
+            {
+                return (ItemTitleCheck.Match, text.Trim());
+            }
+
+            if (seen.Length > bestOtherLength)
+            {
+                bestOther = text.Trim();
+                bestOtherLength = seen.Length;
+            }
+        }
+
+        // A short garbage fragment is not evidence of a different item; require a title-sized reading.
+        return bestOther is not null && bestOtherLength >= Math.Min(6, expected.Length)
+            ? (ItemTitleCheck.Mismatch, bestOther)
+            : (ItemTitleCheck.Unreadable, bestOther);
+    }
+
+    /// <summary>Parses the dialog's "gold : silver : copper" boxes, e.g. "3469: 69: • 67:" → 34,696,967c.</summary>
+    internal static long? ParseDialogPrice(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var numbers = System.Text.RegularExpressions.Regex.Matches(text, @"\d[\d,]*")
+            .Select(match => match.Value.Replace(",", string.Empty, StringComparison.Ordinal))
+            .Where(value => value.Length > 0)
+            .ToArray();
+        if (numbers.Length < 3 ||
+            !long.TryParse(numbers[0], out var gold) ||
+            !int.TryParse(numbers[1], out var silver) ||
+            !int.TryParse(numbers[2], out var copper) ||
+            silver is < 0 or > 99 ||
+            copper is < 0 or > 99 ||
+            gold is < 0 or > 100_000)
+        {
+            return null;
+        }
+
+        return gold * 10_000 + silver * 100L + copper;
+    }
+
+    internal static string NormalizeItemName(string? name) =>
+        new((name ?? string.Empty).ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+
+    /// <summary>1 - Levenshtein distance / longer length.</summary>
+    internal static double NameSimilarity(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0)
+        {
+            return 0;
+        }
+
+        var previous = new int[b.Length + 1];
+        var current = new int[b.Length + 1];
+        for (var j = 0; j <= b.Length; j++) previous[j] = j;
+        for (var i = 1; i <= a.Length; i++)
+        {
+            current[0] = i;
+            for (var j = 1; j <= b.Length; j++)
+            {
+                var cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                current[j] = Math.Min(Math.Min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + cost);
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        return 1.0 - (double)previous[b.Length] / Math.Max(a.Length, b.Length);
     }
 
     /// <summary>Reads the large name of the currently selected character on Character Select, or null if unreadable.</summary>

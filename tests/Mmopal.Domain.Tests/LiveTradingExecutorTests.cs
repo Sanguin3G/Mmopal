@@ -357,6 +357,80 @@ public sealed class LiveTradingExecutorTests
     }
 
     [Fact]
+    public async Task PlaceBuyOrderAsync_SkipsSearchRowsThatOpenADifferentItem()
+    {
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["tradingpost_tab.png"] = new(90, 20, 80, 24, 0.95m),
+            ["buy_items_tab.png"] = new(210, 45, 70, 22, 0.95m),
+            ["search.png"] = new(60, 110, 120, 24, 0.95m),
+            ["item.png"] = new(389, 218, 37, 18, 0.95m),        // results header, center (407, 227)
+            ["currentBuyers.png"] = new(223, 452, 162, 61, 0.95m),
+            ["placeOrder.png"] = new(610, 410, 110, 30, 0.95m)
+        });
+        // Row 1 (click at y=265) is the "with Ice Cream" cake; row 2 (y=323) is the item we want.
+        var secondRowOpened = false;
+        var locator = new FakeUiTextLocator(region =>
+        {
+            if (input.Clicks.Contains((407, 323))) secondRowOpened = true;
+            return region.X switch
+            {
+                330 => [new OcrTextBox(secondRowOpened ? "Slice of Allspice Cake" : "Slice of Allspice Cake with Ice Cream", 347, 175, 300, 24)],
+                380 => [new OcrTextBox("0: 54: • 05:", 406, 302, 150, 20)],
+                _ => Array.Empty<OcrTextBox>()
+            };
+        });
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 80, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        var action = new TradingAction(TradingActionKind.PlaceBuyOrder, "Slice of Allspice Cake", 5_404, 1, "profitable");
+        var result = await driver.PlaceBuyOrderAsync(action, overbidMinCopper: 1, overbidMaxCopper: 1);
+
+        Assert.Equal(TradingActionStatus.Completed, result.Status);
+        Assert.Contains((407, 265), input.Clicks);
+        Assert.Contains((407, 323), input.Clicks);
+        Assert.Contains((665, 425), input.Clicks); // placeOrder.png center
+    }
+
+    [Theory]
+    [InlineData("Eternity", "Eternity", "Match")]
+    [InlineData("Shaman's Etched Blaster of Accuracy", "Shaman 5 Etched Blaster of Accuracy", "Match")]   // OCR as seen live
+    [InlineData("Superior Rune of the Scourge", "Superior Rure of the Scourge", "Match")]
+    [InlineData("Slice of Allspice Cake", "Slice of Allspice Cake with Ice Cream", "Mismatch")]
+    [InlineData("Strong Ring", "Strong Ring of Fire", "Mismatch")]
+    [InlineData("Eternity", "Seuch :", "Unreadable")]
+    [InlineData("Eternity", "", "Unreadable")]
+    public void ClassifyItemTitle_tolerates_ocr_noise_but_not_other_items(string expected, string seen, string outcome)
+    {
+        var (result, _) = Gw2TradingPostUiDriver.ClassifyItemTitle(expected, [seen]);
+
+        Assert.Equal(outcome, result.ToString());
+    }
+
+    [Theory]
+    [InlineData("3469: 69: • 67:", 34_696_967L)]     // raw OCR of the Max. Price row (Eternity)
+    [InlineData("3469: e 69: • 67:", 34_696_967L)]
+    [InlineData("204 : 99 : 99 :", 2_049_999L)]      // enhanced OCR (Soundtrack Single)
+    [InlineData("0: 38: • 72:", 3_872L)]
+    [InlineData("38: 72:", null)]                    // missing a box
+    [InlineData("3469: 169: 67:", null)]             // silver out of range
+    public void ParseDialogPrice_reads_gold_silver_copper_boxes(string text, long? copper)
+    {
+        Assert.Equal(copper, Gw2TradingPostUiDriver.ParseDialogPrice(text));
+    }
+
+    [Fact]
     public async Task PlaceBuyOrderAsync_SearchesBuyTabRegion_AndFallsBackToCogWhenSearchPlaceholderCovered()
     {
         var input = new FakeInputController();

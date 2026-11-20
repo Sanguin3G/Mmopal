@@ -432,10 +432,7 @@ public sealed class WorkerRuntime
                 _logger,
                 pollIntervalMs: _liveTemplateMatcher is null ? 150 : 5,
                 requireTemplateFilesOnDisk: _liveTemplateMatcher is null,
-                isPaused: () => IsPauseRequested,
-                priceProbe: _liveTemplateMatcher is null
-                    ? new FrameTradingPostUiProbe(sharedScreenshots, sharedTemplates, new WindowsOcrReader())
-                    : null);
+                isPaused: () => IsPauseRequested);
             executor = new LiveTradingActionExecutor(
                 liveDriver,
                 request.OverbidBufferMinCopper,

@@ -298,5 +298,67 @@ public static class FrameVision
         return true;
     }
 
+    /// <summary>
+    /// Builds an OCR-friendly copy of <paramref name="region"/>: each pixel's brightest channel, contrast-stretched
+    /// between the region's median and 99th percentile, inverted to dark text on light, and upscaled by
+    /// <paramref name="scale"/>. Rarity-colored GW2 item names (purple legendaries in particular) are not read by
+    /// Windows OCR from the raw frame but are after this. The returned frame's region starts at (0, 0); divide OCR
+    /// coordinates by <paramref name="scale"/> and add the region origin to map them back.
+    /// </summary>
+    public static AutomationFrame? EnhanceTextContrast(AutomationFrame frame, CaptureRegion region, int scale = 2)
+    {
+        var pixels = CopyBgra(frame, region, out var width, out var height);
+        if (pixels is null || width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
+        scale = Math.Clamp(scale, 1, 4);
+        var brightness = new byte[width * height];
+        var histogram = new int[256];
+        for (var i = 0; i < brightness.Length; i++)
+        {
+            var p = i * 4;
+            var v = Math.Max(pixels[p], Math.Max(pixels[p + 1], pixels[p + 2]));
+            brightness[i] = v;
+            histogram[v]++;
+        }
+
+        int Percentile(double fraction)
+        {
+            var target = (int)(brightness.Length * fraction);
+            var seen = 0;
+            for (var v = 0; v < 256; v++)
+            {
+                seen += histogram[v];
+                if (seen > target) return v;
+            }
+
+            return 255;
+        }
+
+        var low = Percentile(0.50);
+        var high = Math.Max(low + 1, Percentile(0.99));
+        var outWidth = width * scale;
+        var outHeight = height * scale;
+        var output = new byte[outWidth * outHeight * 4];
+        for (var y = 0; y < outHeight; y++)
+        {
+            var row = (y / scale) * width;
+            for (var x = 0; x < outWidth; x++)
+            {
+                var stretched = Math.Clamp((brightness[row + x / scale] - low) * 255 / (high - low), 0, 255);
+                var value = (byte)(255 - stretched);
+                var o = (y * outWidth + x) * 4;
+                output[o] = value;
+                output[o + 1] = value;
+                output[o + 2] = value;
+                output[o + 3] = 255;
+            }
+        }
+
+        return new AutomationFrame(frame.CapturedAt, new CaptureRegion(0, 0, outWidth, outHeight), output, PixelFormatBgra32, outWidth * 4);
+    }
+
     private readonly record struct FrameLayout(byte[] Pixels, int Width, int Height, int Stride);
 }
