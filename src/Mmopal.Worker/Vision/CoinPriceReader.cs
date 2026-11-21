@@ -32,7 +32,16 @@ public static class CoinPriceReader
     internal static bool IsConfident(double distance, double runnerUp) =>
         distance <= MaxDigitDistance || (distance <= MaxDigitDistanceWithMargin && runnerUp - distance >= MinRunnerUpMargin);
 
-    private static readonly Lazy<List<DigitTemplate>> Templates = new(LoadTemplates);
+    private static Lazy<List<DigitTemplate>> Templates = new(LoadTemplates);
+
+    /// <summary>Drops the loaded templates so the next read loads them again (tests point LearnedTemplatesPath elsewhere first).</summary>
+    internal static void ReloadTemplates()
+    {
+        lock (LearnLock)
+        {
+            Templates = new Lazy<List<DigitTemplate>>(LoadTemplates);
+        }
+    }
     private static readonly object LearnLock = new();
 
     /// <summary>Where digit shapes learned at runtime are kept (added to the embedded set).</summary>

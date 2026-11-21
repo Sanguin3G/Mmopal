@@ -12,6 +12,13 @@ namespace Mmopal.Domain.Tests;
 public sealed class CoinPriceReaderTests
 {
     private static readonly CaptureRegion Total = new(382, 330, 250, 44);
+
+    // Only the embedded templates: shapes learned on this machine (%LOCALAPPDATA%\Mmopal) must not change results.
+    public CoinPriceReaderTests()
+    {
+        CoinPriceReader.LearnedTemplatesPath = Path.Combine(Path.GetTempPath(), "mmopal-glyphs-tests-none.json");
+        CoinPriceReader.ReloadTemplates();
+    }
     private static readonly CaptureRegion BuyerPrices = new(403, 505, 112, 190);
     private static readonly CaptureRegion SellerPrices = new(688, 505, 112, 190);
 
@@ -89,19 +96,10 @@ public sealed class CoinPriceReaderTests
     [Fact]
     public void Learning_is_skipped_when_every_digit_is_already_known()
     {
-        var learnedPath = Path.Combine(Path.GetTempPath(), "mmopal-glyphs-" + Guid.NewGuid().ToString("N") + ".json");
-        var previous = CoinPriceReader.LearnedTemplatesPath;
-        CoinPriceReader.LearnedTemplatesPath = learnedPath;
-        try
-        {
-            Assert.Equal(0, CoinPriceReader.LearnFromConfirmed(Frame("pyre-dye"), Total, 11_798));
-            // A total that disagrees with confidently read digits is never learned from.
-            Assert.Equal(0, CoinPriceReader.LearnFromConfirmed(Frame("pyre-dye"), Total, 11_799));
-            Assert.False(File.Exists(learnedPath));
-        }
-        finally
-        {
-            CoinPriceReader.LearnedTemplatesPath = previous;
-        }
+        var learnedPath = CoinPriceReader.LearnedTemplatesPath;
+        Assert.Equal(0, CoinPriceReader.LearnFromConfirmed(Frame("pyre-dye"), Total, 11_798));
+        // A total that disagrees with confidently read digits is never learned from.
+        Assert.Equal(0, CoinPriceReader.LearnFromConfirmed(Frame("pyre-dye"), Total, 11_799));
+        Assert.False(File.Exists(learnedPath));
     }
 }
