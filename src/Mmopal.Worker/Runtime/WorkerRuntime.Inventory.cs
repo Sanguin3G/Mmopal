@@ -11,14 +11,15 @@ namespace Mmopal.Worker;
 public sealed partial class WorkerRuntime
 {
     private async Task<(bool Collected, long CoinsCollectedCopper, IReadOnlyList<string> CollectedFlipItemNames)> CollectSmartDeliveryAsync(
+        TradingSession session,
         Gw2TradingPostUiDriver liveDriver,
-        EffectiveBalanceState effectiveBalance,
-        IReadOnlySet<string> candidateNameSet,
-        BlacklistMatcher blacklistMatcher,
-        PendingSellInventoryTracker pendingSellTracker,
-        SessionReportAccumulator? reportAccumulator,
         CancellationToken cancellationToken)
     {
+        var effectiveBalance = session.Balance;
+        var candidateNameSet = session.CandidateNames;
+        var blacklistMatcher = session.BlacklistMatcher;
+        var pendingSellTracker = session.SellQueue;
+        var reportAccumulator = session.Report;
         if (_marketData is Gw2OfficialDataProvider officialData)
         {
             try
@@ -285,19 +286,8 @@ public sealed partial class WorkerRuntime
         }
     }
 
-    private async Task SyncOwnedFlipInventoryFromApiAsync(
-        Gw2TradingPostUiDriver? liveDriver,
-        EffectiveBalanceState effectiveBalance,
-        IReadOnlySet<string> candidateNameSet,
-        IReadOnlyList<Gw2LedgerTransaction> ledgerHistory,
-        BlacklistMatcher blacklistMatcher,
-        PendingSellInventoryTracker pendingSellTracker,
-        SessionReportAccumulator reportAccumulator,
-        Func<DateTimeOffset> getLastSyncUtc,
-        Action<DateTimeOffset> setLastSyncUtc,
-        Func<long?> getLastHistoryBuyId,
-        Action<long?> setLastHistoryBuyId,
-        CancellationToken cancellationToken)
+    /// <summary>Queues bought flip items found in the bags and new buy fills from the API (at most every 2 minutes).</summary>
+    private async Task SyncOwnedFlipInventoryFromApiAsync(TradingSession session, CancellationToken cancellationToken)
     {
         if (_marketData is not Gw2OfficialDataProvider officialData)
         {
@@ -305,12 +295,16 @@ public sealed partial class WorkerRuntime
         }
 
         var now = _utcNow();
-        if (getLastSyncUtc() != DateTimeOffset.MinValue && (now - getLastSyncUtc()) < TimeSpan.FromMinutes(2))
+        if (session.LastInventoryApiSyncUtc != DateTimeOffset.MinValue && (now - session.LastInventoryApiSyncUtc) < TimeSpan.FromMinutes(2))
         {
             return;
         }
 
-        setLastSyncUtc(now);
+        session.LastInventoryApiSyncUtc = now;
+        var liveDriver = session.LiveDriver;
+        var candidateNameSet = session.CandidateNames;
+        var blacklistMatcher = session.BlacklistMatcher;
+        var pendingSellTracker = session.SellQueue;
         // Only the shopping list and items Mmopal itself ordered. The synced buy history holds every TP purchase on
         // the account, including personal ones (an old "Holographic Super Cheese" was being put up for sale).
         var allowedFlipNames = new HashSet<string>(candidateNameSet, StringComparer.OrdinalIgnoreCase);
@@ -367,9 +361,9 @@ public sealed partial class WorkerRuntime
         try
         {
             var (highestBuyId, newFills) = await officialData.GetRecentHistoryBuyItemIdsAsync(
-                getLastHistoryBuyId(),
+                session.LastHistoryBuyId,
                 cancellationToken).ConfigureAwait(false);
-            setLastHistoryBuyId(highestBuyId);
+            session.LastHistoryBuyId = highestBuyId;
 
             if (newFills.Count > 0 && allowedFlipNames.Count > 0)
             {
@@ -391,14 +385,7 @@ public sealed partial class WorkerRuntime
                     var pickedUp = false;
                     if (liveDriver is not null)
                     {
-                        var deliveryResult = await CollectSmartDeliveryAsync(
-                            liveDriver,
-                            effectiveBalance,
-                            candidateNameSet,
-                            blacklistMatcher,
-                            pendingSellTracker,
-                            reportAccumulator,
-                            cancellationToken).ConfigureAwait(false);
+                        var deliveryResult = await CollectSmartDeliveryAsync(session, liveDriver, cancellationToken).ConfigureAwait(false);
                         pickedUp = deliveryResult.Collected;
                     }
 

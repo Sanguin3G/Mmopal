@@ -13,25 +13,17 @@ public sealed partial class WorkerRuntime
     /// <summary>Recovery may switch parked character at most once per <see cref="MinTimeBetweenRecoverySwaps"/>.</summary>
     private bool CanSwapCharacterForRecovery(DateTimeOffset nowUtc) => nowUtc - _lastCharacterSwapUtc >= MinTimeBetweenRecoverySwaps;
 
-    private async Task<string> FinalizeSessionOnCapAsync(
-        string runId,
-        RunMode mode,
-        string profileName,
-        TradingReplayRequest request,
-        RunProfile profile,
-        Gw2ClientSettings effectiveClientSettings,
-        Gw2TradingPostUiDriver? liveDriver,
-        EffectiveBalanceState effectiveBalance,
-        IReadOnlySet<string> candidateNameSet,
-        IReadOnlyList<Gw2LedgerTransaction> ledgerHistory,
-        BlacklistMatcher blacklistMatcher,
-        PendingSellInventoryTracker pendingSellTracker,
-        SessionReportAccumulator reportAccumulator,
-        Func<DateTimeOffset> getLastSyncUtc,
-        Action<DateTimeOffset> setLastSyncUtc,
-        Func<long?> getLastHistoryBuyId,
-        Action<long?> setLastHistoryBuyId)
+    /// <summary>
+    /// The session cap: one last Delivery Box / bags / listing pass, a final wallet snapshot, then log out and close
+    /// the game (per settings). Returns the summary for the report.
+    /// </summary>
+    private async Task<string> FinalizeSessionOnCapAsync(TradingSession session)
     {
+        var (mode, profileName, request, profile) = (session.Mode, session.ProfileName, session.Request, session.Profile);
+        var effectiveClientSettings = session.Client;
+        var liveDriver = session.LiveDriver;
+        var pendingSellTracker = session.SellQueue;
+        var reportAccumulator = session.Report;
         _logger.LogInformation("Max session duration cap reached; finalizing, rechecking, logging out, and stopping cleanly.");
         SetStatus(
             WorkerState.Stopping,
@@ -50,30 +42,11 @@ public sealed partial class WorkerRuntime
             {
                 if (request.EnableInventorySellPass)
                 {
-                    setLastSyncUtc(DateTimeOffset.MinValue);
-                    await SyncOwnedFlipInventoryFromApiAsync(
-                        liveDriver,
-                        effectiveBalance,
-                        candidateNameSet,
-                        ledgerHistory,
-                        blacklistMatcher,
-                        pendingSellTracker,
-                        reportAccumulator,
-                        getLastSyncUtc,
-                        setLastSyncUtc,
-                        getLastHistoryBuyId,
-                        setLastHistoryBuyId,
-                        ct).ConfigureAwait(false);
+                    session.LastInventoryApiSyncUtc = DateTimeOffset.MinValue;
+                    await SyncOwnedFlipInventoryFromApiAsync(session, ct).ConfigureAwait(false);
                 }
 
-                await CollectSmartDeliveryAsync(
-                    liveDriver,
-                    effectiveBalance,
-                    candidateNameSet,
-                    blacklistMatcher,
-                    pendingSellTracker,
-                    reportAccumulator,
-                    ct).ConfigureAwait(false);
+                await CollectSmartDeliveryAsync(session, liveDriver, ct).ConfigureAwait(false);
 
                 if (request.EnableInventorySellPass)
                 {
@@ -146,7 +119,7 @@ public sealed partial class WorkerRuntime
             }
         }
 
-        await _store.CompleteRunAsync(runId, WorkerState.Stopped.ToString(), CancellationToken.None).ConfigureAwait(false);
+        await _store.CompleteRunAsync(session.RunId, WorkerState.Stopped.ToString(), CancellationToken.None).ConfigureAwait(false);
         var stoppedSummary = $"Max session cap reached — finalized, rechecked, and stopped cleanly. ({gameClosedNote})";
         SetStatus(
             WorkerState.Stopped,
@@ -183,6 +156,52 @@ public sealed partial class WorkerRuntime
                 timestamp = _utcNow()
             },
             PayloadJsonOptions)));
+    }
+
+    /// <summary>
+    /// Recovers the live client (in place, by another character, or by a game restart within the budget) and
+    /// records the attempt in the report. A failed Trading Post recovery keeps the original error in the report.
+    /// </summary>
+    private async Task<(bool Recovered, string Message)> RecoverLiveClientAsync(
+        TradingSession session,
+        Gw2TradingPostUiDriver liveDriver,
+        string reason,
+        string reportTitle,
+        bool reasonInFailureReport,
+        CancellationToken cancellationToken)
+    {
+        var restartsBefore = session.GameRestartsUsed;
+        var (recovered, message) = await TryRecoverOrRestartLiveClientAsync(
+            liveDriver,
+            session.Client,
+            session.Mode,
+            session.ProfileName,
+            reason,
+            session.MaxRecoveryRetries,
+            session.MaxGameRestarts,
+            () => session.GameRestartsUsed,
+            used => SetGameRestartsUsed(session, used),
+            cancellationToken);
+        session.Report.RecordRecoveryAttempt(
+            _utcNow(),
+            reportTitle,
+            !recovered && reasonInFailureReport ? $"{reason} -> {message}" : message,
+            recovered,
+            isGameRestart: session.GameRestartsUsed > restartsBefore);
+        return (recovered, message);
+    }
+
+    /// <summary>Ends the session for the operator to look at; a pause during recovery instead waits for Resume.</summary>
+    private CycleStep HaltUnlessPaused(TradingSession session, string lastAction, string message)
+    {
+        if (IsPauseRequested)
+        {
+            return CycleStep.NextCycle;
+        }
+
+        session.EndWith("Needs Attention", message);
+        HaltWithNeedsAttention(session.Mode, session.ProfileName, session.Request.Source, lastAction, message);
+        return CycleStep.EndSession;
     }
 
     private async Task<(bool Recovered, string Message)> TryRecoverOrRestartLiveClientAsync(
