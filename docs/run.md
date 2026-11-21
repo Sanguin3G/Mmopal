@@ -46,4 +46,4 @@ Do this by hand. There is no automated click-through.
 5. When ready for bounded autonomous trading, switch **Run mode** to **Live (Armed trading)** (Data source follows to Screen observe and **Arm live input** is ticked for you; leaving Live unticks it), and click **Start session** (note button states dynamically lock and indicate `Running...` / `Paused`). The header shows **Live · Armed** while input is armed.
 
 On high ping (the **High Ping** latency profile) the bot waits after every TP search until the result list shows the searched item, and verifies the opened item's name and price before ordering. In-game message boxes such as the log-in server notice (Code=42) are dismissed automatically. Details: [gw2-trading-controller.md](gw2-trading-controller.md).
-6. Stop anytime via **Stop**, **Emergency stop**, or `Ctrl+Shift+S` / `Ctrl+Shift+X`.
+6. **Stop** (`Ctrl+Shift+S`) finishes the current step (an order being typed, a listing), then stops and saves the session report; after 90 s it stops anyway. **Emergency stop** (`Ctrl+Shift+X`) stops instantly, even mid-action.

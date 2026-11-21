@@ -407,6 +407,14 @@ public partial class MainWindow : Window
         SessionPaceSummaryText.Text = string.IsNullOrWhiteSpace(acct)
             ? $"{paceText}  •  Platform: {platform}"
             : $"{paceText}  •  Platform: {platform} ({acct})";
+        // The pace description is a tooltip, not a line of text on the page.
+        ProfileSelector.ToolTip = SessionPaceSummaryText.Text;
+        if (PaceSafeItem is not null)
+        {
+            PaceSafeItem.ToolTip = TradingPaceDescriptions.Describe("safe");
+            PaceBalancedItem.ToolTip = TradingPaceDescriptions.Describe("balanced");
+            PaceFastItem.ToolTip = TradingPaceDescriptions.Describe("fast");
+        }
     }
 
     private void AutoSellInventory_Changed(object sender, RoutedEventArgs e)
@@ -625,9 +633,15 @@ public partial class MainWindow : Window
         NavGuideLabel.Visibility = labelVisibility;
 
         var columns = compact ? 2 : 4;
-        SessionSelectorsGrid.Columns = columns;
-        SessionKpiGrid.Columns = columns;
-        IncomeKpiGrid.Columns = columns;
+        // Selectors and KPI cards stay in one row down to 760 px (docked beside GW2 is ~870 px), so the
+        // Activity Log and the Income tables keep most of the height.
+        var cardColumns = narrowCharts ? 2 : 4;
+        SessionSelectorsGrid.Columns = cardColumns;
+        SessionKpiGrid.Columns = cardColumns;
+        IncomeKpiGrid.Columns = cardColumns;
+        if (SessionSubtitleText is not null) SessionSubtitleText.Visibility = labelVisibility;
+        if (IncomeSubtitleText is not null) IncomeSubtitleText.Visibility = labelVisibility;
+        if (GuideScheduleGrid is not null) GuideScheduleGrid.Columns = cardColumns;
         ScannerCoreFiltersGrid.Columns = columns;
         ScannerAdvancedFiltersGrid.Columns = columns;
         if (ReportDetailKpiGrid is not null)
@@ -658,15 +672,15 @@ public partial class MainWindow : Window
         if (IncomeChartsLeftCol is not null && IncomeChartsRightCol is not null &&
             DailyProfitChartCard is not null && HourlyActivityChartCard is not null)
         {
-            if (narrowCharts)
+            // Narrow windows show one chart (its selector also offers "Activity by hour") so the tables keep room.
+            if (compact)
             {
                 IncomeChartsLeftCol.Width = new GridLength(1, GridUnitType.Star);
                 IncomeChartsRightCol.Width = new GridLength(0);
                 Grid.SetRow(DailyProfitChartCard, 0);
                 Grid.SetColumn(DailyProfitChartCard, 0);
-                DailyProfitChartCard.Margin = new Thickness(0, 0, 0, 12);
-                Grid.SetRow(HourlyActivityChartCard, 1);
-                Grid.SetColumn(HourlyActivityChartCard, 0);
+                DailyProfitChartCard.Margin = new Thickness(0);
+                HourlyActivityChartCard.Visibility = Visibility.Collapsed;
             }
             else
             {
@@ -677,6 +691,7 @@ public partial class MainWindow : Window
                 DailyProfitChartCard.Margin = new Thickness(0, 0, 12, 0);
                 Grid.SetRow(HourlyActivityChartCard, 0);
                 Grid.SetColumn(HourlyActivityChartCard, 1);
+                HourlyActivityChartCard.Visibility = Visibility.Visible;
             }
         }
 
@@ -776,6 +791,7 @@ public partial class MainWindow : Window
         Height = Math.Max(560, workArea.Height - 8);
         _isSideDocked = true;
         DockToggleButton.Content = "Restore size";
+        DockToggleButton.ToolTip = "Restore size: puts Mmopal back to the window size it had before docking.";
         ApplyResponsiveLayout(Width);
         return true;
     }
@@ -799,6 +815,7 @@ public partial class MainWindow : Window
 
         _preDockBounds = null;
         DockToggleButton.Content = "Dock beside GW2";
+        DockToggleButton.ToolTip = "Dock beside GW2: fits Mmopal next to the 1024x768 game window, or restores your size.";
         ApplyResponsiveLayout(Width);
     }
 
@@ -1292,6 +1309,18 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task RunLaunchAutomationAsync()
     {
+        await RunLaunchAutomationCoreAsync();
+        // A clean startup only needs a glance: fold the strip away after a minute. Anything failed (!) stays visible.
+        if (LaunchStepsStrip.Visibility == Visibility.Visible &&
+            !new[] { LaunchSyncText.Text, LaunchTuneText.Text, LaunchScanText.Text }.Any(text => text.StartsWith('!')))
+        {
+            await Task.Delay(TimeSpan.FromSeconds(60));
+            LaunchStepsStrip.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async Task RunLaunchAutomationCoreAsync()
+    {
         var automate = AutomateOnLaunchCheckBox.IsChecked == true;
         var tuneEachSession = AutoTuneEachSessionCheckBox.IsChecked == true;
         if (!_runLaunchAutomation || (!automate && !tuneEachSession && !_isFirstRun))
@@ -1544,7 +1573,8 @@ public partial class MainWindow : Window
         IncomeMatchedProfitText.Text = MarketScanItem.FormatCoins(report.MatchedProfitCopper);
         var fees = IncomeInsights.FeesPaid(_archivedTransactions, windowStart);
         IncomeMatchedSubText.Text =
-            $"ROI {report.MatchedRoiPercent:0.0}%  •  {report.MatchedUnitsSold:N0} sold  •  fees paid {MarketScanItem.FormatCoins(fees)}";
+            $"ROI {report.MatchedRoiPercent:0.0}% · {report.MatchedUnitsSold:N0} sold · fees {MarketScanItem.FormatCoins(fees)}";
+        IncomeMatchedSubText.ToolTip = $"Return on cost {report.MatchedRoiPercent:0.0}%, {report.MatchedUnitsSold:N0} units sold, {MarketScanItem.FormatCoins(fees)} paid in listing and exchange fees.";
         IncomeProfitNoteText.Text = report.UnmatchedSellRevenueCopper > 0
             ? $"Not counted: {MarketScanItem.FormatCoins(report.UnmatchedSellRevenueCopper)} of sales with no recorded buy"
             : string.Empty;
@@ -1643,13 +1673,14 @@ public partial class MainWindow : Window
         var mutedBrush = ResolveBrush("BorderBrush", Brushes.Gray);
 
         _dailyChartBars.Clear();
-        if ((IncomeChartModeSelector.SelectedItem as ComboBoxItem)?.Tag as string != "DailyProfit")
-        {
-            RebuildNetWorthChart(accentBrush);
-        }
-        else
+        var chartMode = (IncomeChartModeSelector.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (chartMode == "DailyProfit")
         {
             RebuildDailyProfitChart(report, successBrush, dangerBrush, mutedBrush);
+        }
+        else if (chartMode != "Hourly")
+        {
+            RebuildNetWorthChart(accentBrush);
         }
 
         _hourlyChartBars.Clear();
@@ -1683,6 +1714,12 @@ public partial class MainWindow : Window
         HourlyChartSummaryText.Text = bestHour is { RealizedProfitCopper: > 0 }
             ? $"Best local hour: {bestHour.LocalHour:00}:00 ({MarketScanItem.FormatCoins(bestHour.RealizedProfitCopper)})"
             : "Local timezone 00–23h";
+
+        if (chartMode == "Hourly")
+        {
+            foreach (var bar in _hourlyChartBars) _dailyChartBars.Add(bar);
+            DailyChartSummaryText.Text = HourlyChartSummaryText.Text;
+        }
     }
 
     private void IncomeChartMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2340,27 +2377,49 @@ public partial class MainWindow : Window
         await RemoveVaultEntryAsync(keyId);
     }
 
-    private async void SaveCustomNames_Click(object sender, RoutedEventArgs e)
+    // Names save themselves (Enter or leaving the box). A separate "Save Names" click was easy to miss, and the launch
+    // account sync rebuilds this table, which wiped names typed but not yet saved.
+    private void ApiKeyName_LostFocus(object sender, RoutedEventArgs e) => CommitApiKeyName(sender as TextBox);
+
+    private void ApiKeyName_KeyDown(object sender, KeyEventArgs e)
     {
-        if (_apiKeyVault.Entries.Count == 0)
+        if (e.Key != Key.Enter)
         {
-            ApiKeyStatusText.Text = "Add an API key before saving custom names.";
             return;
         }
 
-        var rowMap = _apiKeyRows.ToDictionary(r => r.Id, r => r.CustomName?.Trim() ?? string.Empty, StringComparer.OrdinalIgnoreCase);
-        var updated = _apiKeyVault.Entries
-            .Select(entry => rowMap.TryGetValue(entry.Id, out var custom)
-                ? entry with { CustomName = custom }
-                : entry)
-            .ToArray();
+        CommitApiKeyName(sender as TextBox);
+        Keyboard.ClearFocus();
+        e.Handled = true;
+    }
 
-        _apiKeyVault = _apiKeyVault with { Entries = updated };
+    internal void CommitApiKeyName(TextBox? box)
+    {
+        if (box?.DataContext is not ApiKeyRowViewModel row)
+        {
+            return;
+        }
+
+        var name = box.Text?.Trim() ?? string.Empty;
+        var entry = _apiKeyVault.Entries.FirstOrDefault(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase));
+        if (entry is null || string.Equals(entry.CustomName ?? string.Empty, name, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        row.CustomName = name;
+        _apiKeyVault = _apiKeyVault with
+        {
+            Entries = _apiKeyVault.Entries
+                .Select(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase) ? e with { CustomName = name } : e)
+                .ToArray()
+        };
         _saveApiKeyVault(_apiKeyVault);
-        RebuildApiKeyViews();
-        ApiKeyStatusText.Text = "Saved custom account labels to DPAPI vault.";
-        AddLog("Saved custom account labels.");
-        await FlashButtonFeedbackAsync(SaveCustomNamesButton, "✓ Saved");
+        ApiKeyStatusText.Text = string.IsNullOrEmpty(name)
+            ? $"Removed the name of {entry.AccountName}."
+            : $"Saved the name '{name}' for {entry.AccountName}.";
+        // Refresh the account picker and labels after the edit, not during it.
+        Dispatcher.BeginInvoke(RebuildApiKeyViews, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private async void ReverifyApiKeys_Click(object sender, RoutedEventArgs e)
@@ -3470,7 +3529,7 @@ public partial class MainWindow : Window
         UpdateSidebarStatusTooltip();
     }
 
-    private void AddLog(string message, string? rawMessage = null)
+    internal void AddLog(string message, string? rawMessage = null)
     {
         var now = DateTime.Now;
         var raw = rawMessage ?? message;

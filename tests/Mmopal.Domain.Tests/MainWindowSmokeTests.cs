@@ -114,7 +114,7 @@ public sealed class MainWindowSmokeTests
                 Assert.IsType<RadioButton>(window.FindName("NavSession")).IsChecked = true;
                 Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("SessionView")).Visibility);
 
-                RequireButton(window, "Launch & snap GW2").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.IsType<Button>(window.FindName("LaunchSnapButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); // icon button
                 var waitUntil = DateTime.UtcNow.AddSeconds(2);
                 while (status.Text != "Positioned Guild Wars 2 at top-left (0, 0) sized 1024x768." && DateTime.UtcNow < waitUntil)
                 {

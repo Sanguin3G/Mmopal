@@ -22,7 +22,7 @@
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
-            <Setter Property="Padding" Value="15,13" />
+            <Setter Property="Padding" Value="12,10" />
         </Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -202,7 +202,7 @@
                         </Grid.RowDefinitions>
                         <StackPanel Margin="0,0,10,0">
                             <TextBlock Text="Session Control Room" Style="{StaticResource PageTitle}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="Supervise your trading worker, snap Guild Wars 2 to 1024x768, and monitor live health." Style="{StaticResource HintText}" Margin="0,3,0,0" />
+                            <TextBlock x:Name="SessionSubtitleText" Text="Supervise your trading worker, snap Guild Wars 2 to 1024x768, and monitor live health." Style="{StaticResource HintText}" Margin="0,3,0,0" />
                         </StackPanel>
                         <WrapPanel x:Name="SessionHeaderPills" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                             <Border x:Name="SessionClockPillBorder"
@@ -267,7 +267,7 @@
                     </Border>
 
                     <!-- Session Setup Card (Clean 3-Zone Control Layout) -->
-                    <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,14" Padding="18,16">
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,10" Padding="14,12">
                         <StackPanel>
                             <!-- Zone 1: Core Selectors -->
                             <UniformGrid x:Name="SessionSelectorsGrid" Columns="4">
@@ -289,9 +289,9 @@
                                 <StackPanel Margin="0,0,10,6">
                                     <TextBlock Text="PACE" Style="{StaticResource FieldLabel}" />
                                     <ComboBox x:Name="ProfileSelector" SelectedIndex="1" SelectionChanged="ProfileSelector_SelectionChanged">
-                                        <ComboBoxItem Content="Safe" Tag="safe" />
-                                        <ComboBoxItem Content="Balanced" Tag="balanced" />
-                                        <ComboBoxItem Content="Fast" Tag="fast" />
+                                        <ComboBoxItem x:Name="PaceSafeItem" Content="Safe" Tag="safe" />
+                                        <ComboBoxItem x:Name="PaceBalancedItem" Content="Balanced" Tag="balanced" />
+                                        <ComboBoxItem x:Name="PaceFastItem" Content="Fast" Tag="fast" />
                                     </ComboBox>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,0,6">
@@ -303,40 +303,27 @@
                                 </StackPanel>
                             </UniformGrid>
 
-                            <TextBlock x:Name="SessionPaceSummaryText"
-                                       Text="Balanced: 3 actions/pass · 50s interval — optimal for 5-min GW2 API cache  •  Platform: ArenaNet"
-                                       FontSize="11.5"
-                                       Foreground="{DynamicResource TextSecondaryBrush}"
-                                       TextWrapping="Wrap"
-                                       Margin="0,2,0,10" />
+                            <!-- Pace details live in the Pace tooltips; kept (collapsed) for the summary text. -->
+                            <TextBlock x:Name="SessionPaceSummaryText" Visibility="Collapsed" />
 
-                            <!-- Zone 2: Primary Transport & Live Safety Interlocks -->
-                            <DockPanel Margin="0,0,0,10" LastChildFill="True">
+                            <!-- Transport, safety interlocks and client tools (icon buttons with tooltips) in one row. -->
+                            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="8,0,0,4">
+                                    <Button x:Name="LaunchSnapButton" Tag="&#xE7F4;" Style="{StaticResource IconButton}" Click="LaunchSnapGw2_Click" Margin="0,0,4,0" ToolTip="Launch &amp; snap GW2: launches Guild Wars 2 (ArenaNet or Steam) and snaps its window to (0, 0) at 1024x768." />
+                                    <Button x:Name="SwapCharacterNowButton" Tag="&#xE77B;" Style="{StaticResource IconButton}" Click="SwapCharacterNow_Click" Margin="0,0,4,0" ToolTip="Swap character now, using your swap settings (requires Arm live input)." />
+                                    <Button x:Name="DockToggleButton" Tag="&#xE8A7;" Style="{StaticResource IconButton}" Click="DockToggle_Click" Margin="0,0,4,0" ToolTip="Dock beside GW2: fits Mmopal next to the 1024x768 game window, or restores your size." />
+                                    <Button x:Name="TryOfflineButton" Tag="&#xE9D9;" Style="{StaticResource IconButton}" Click="TryOfflineSample_Click" ToolTip="Try offline sample: simulates one Trading Post decision without GW2." />
+                                </StackPanel>
                                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <Button x:Name="StartSessionButton" Content="Start session" Tag="&#xE768;" Style="{StaticResource PrimaryButton}" Click="Start_Click" Margin="0,0,8,4" />
-                                    <Button x:Name="PauseSessionButton" Content="Pause" Tag="&#xE769;" Click="Pause_Click" IsEnabled="False" Margin="0,0,8,4" />
-                                    <Button x:Name="ResumeSessionButton" Content="Resume" Tag="&#xE768;" Click="Resume_Click" IsEnabled="False" Margin="0,0,8,4" />
-                                    <Button x:Name="StopSessionButton" Content="Stop" Tag="&#xE71A;" Click="Stop_Click" IsEnabled="False" Margin="0,0,8,4" />
-                                    <Button x:Name="EmergencyStopButton" Content="Emergency stop" Tag="&#xE7BA;" Style="{StaticResource DangerButton}" Click="EmergencyStop_Click" IsEnabled="False" Margin="0,0,16,4" />
-                                    <CheckBox x:Name="ArmLiveInputCheckBox" Content="Arm live input" IsChecked="False" Checked="ArmLiveInput_Changed" Unchecked="ArmLiveInput_Changed" VerticalAlignment="Center" Margin="0,0,16,4" ToolTip="Safety interlock: allows real mouse/keyboard input in Live mode." />
-                                    <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought flip items from bags" IsChecked="False" Checked="AutoSellInventory_Changed" Unchecked="AutoSellInventory_Changed" VerticalAlignment="Center" Margin="0,0,0,4" ToolTip="Lists only items Mmopal bought: items it placed buy orders for in the last 30 days, the current shopping list, and synced buy history. Other bag items are never touched. Needs an API key with the characters and inventories permissions." />
+                                    <Button x:Name="PauseSessionButton" Content="Pause" Tag="&#xE769;" Click="Pause_Click" IsEnabled="False" Margin="0,0,8,4" ToolTip="Pause between steps; Resume continues where it left off." />
+                                    <Button x:Name="ResumeSessionButton" Content="Resume" Tag="&#xE72A;" Click="Resume_Click" IsEnabled="False" Margin="0,0,8,4" />
+                                    <Button x:Name="StopSessionButton" Content="Stop" Tag="&#xE71A;" Click="Stop_Click" IsEnabled="False" Margin="0,0,8,4" ToolTip="Finish the current step (an order being typed, a listing), then stop and save the session report." />
+                                    <Button x:Name="EmergencyStopButton" Content="Emergency stop" Tag="&#xE7BA;" Style="{StaticResource DangerButton}" Click="EmergencyStop_Click" IsEnabled="False" Margin="0,0,14,4" ToolTip="Stop instantly, even in the middle of an action. Use Stop for a normal end." />
+                                    <CheckBox x:Name="ArmLiveInputCheckBox" Content="Arm live input" IsChecked="False" Checked="ArmLiveInput_Changed" Unchecked="ArmLiveInput_Changed" VerticalAlignment="Center" Margin="0,0,14,4" ToolTip="Safety interlock: allows real mouse/keyboard input in Live mode." />
+                                    <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought items" IsChecked="False" Checked="AutoSellInventory_Changed" Unchecked="AutoSellInventory_Changed" VerticalAlignment="Center" Margin="0,0,0,4" ToolTip="Lists only items Mmopal bought: items it placed buy orders for in the last 30 days and the current shopping list. Other bag items are never touched. Needs an API key with the characters and inventories permissions." />
                                 </WrapPanel>
                             </DockPanel>
-
-                            <!-- Zone 3: Quick Client & Utility Tools Strip -->
-                            <Border Background="{DynamicResource SurfaceRaisedBrush}"
-                                    BorderBrush="{DynamicResource BorderSubtleBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="8"
-                                    Padding="10,7">
-                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="CLIENT TOOLS:" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" Margin="2,0,10,0" />
-                                    <Button x:Name="LaunchSnapButton" Content="Launch &amp; snap GW2" Tag="&#xE7F4;" Click="LaunchSnapGw2_Click" Padding="10,5" FontSize="12" ToolTip="Launches Guild Wars 2 (ArenaNet or Steam) and snaps its window to (0, 0) at 1024x768." Margin="0,0,8,2" />
-                                    <Button x:Name="SwapCharacterNowButton" Content="Swap char now" Tag="&#xE77B;" Click="SwapCharacterNow_Click" Padding="10,5" FontSize="12" ToolTip="Tests parked character rotation right now using your Swap Settings (requires Arm live input)." Margin="0,0,8,2" />
-                                    <Button x:Name="DockToggleButton" Content="Dock beside GW2" Tag="&#xE8A7;" Click="DockToggle_Click" Padding="10,5" FontSize="12" ToolTip="Fits Mmopal cleanly alongside GW2 (1024x768) or restores your original window size." Margin="0,0,8,2" />
-                                    <Button x:Name="TryOfflineButton" Content="Try offline sample" Tag="&#xE9D9;" Click="TryOfflineSample_Click" Padding="10,5" FontSize="12" ToolTip="Safely simulates one Trading Post decision without GW2." Margin="0,0,0,2" />
-                                </WrapPanel>
-                            </Border>
                         </StackPanel>
                     </Border>
 
@@ -361,7 +348,7 @@
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <Ellipse x:Name="StatusStateDot" Width="9" Height="9" Fill="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" Margin="0,1,8,0" />
-                                    <TextBlock x:Name="StatusStateText" Text="Idle" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="StatusStateText" Text="Idle" FontSize="17" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <TextBlock x:Name="StatusText" Text="Idle — waiting for a session" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" MaxHeight="34" TextWrapping="Wrap" />
                             </StackPanel>
@@ -373,7 +360,7 @@
                                     <TextBlock Text="&#xE7FC;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,7,0" />
                                     <TextBlock Text="GAME" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="GameHeadlineText" Text="—" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="GameHeadlineText" Text="—" FontSize="17" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
                                 <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                     <TextBlock x:Name="ObservationSourceText" Text="No source yet" Style="{StaticResource HintText}" TextTrimming="CharacterEllipsis" />
                                     <TextBlock x:Name="ObservationUiText" Text="" Style="{StaticResource HintText}" Visibility="Collapsed" />
@@ -387,7 +374,7 @@
                                     <TextBlock Text="&#xE8D4;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,7,0" />
                                     <TextBlock Text="ORDERS" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="OrdersHeadlineText" Text="—" FontSize="19" FontWeight="Bold" Foreground="{DynamicResource GoldAccentBrush}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="OrdersHeadlineText" Text="—" FontSize="17" FontWeight="Bold" Foreground="{DynamicResource GoldAccentBrush}" TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="OrdersDetailText" Text="No orders reported" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="ObservationPriceText" Text="-" Visibility="Collapsed" />
                                 <TextBlock x:Name="ObservationOrdersText" Text="No orders reported" Visibility="Collapsed" />
@@ -400,7 +387,7 @@
                                     <TextBlock Text="&#xE823;" Style="{StaticResource GlyphIcon}" FontSize="13" Foreground="{DynamicResource WarningBrush}" Margin="0,0,7,0" />
                                     <TextBlock Text="SCHEDULE" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="ScheduleHeadlineText" Text="No AFK swap" FontSize="19" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="ScheduleHeadlineText" Text="No AFK swap" FontSize="17" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="SessionCapStatusText" Text="Session cap: 10h" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="ObservationTimingText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="AfkSwapStatusText" Text="AFK swap disabled" Visibility="Collapsed" />
@@ -438,10 +425,24 @@
                                     <Button Content="Clear" Tag="&#xE74D;" Click="ClearLog_Click" Padding="10,5" FontSize="12" />
                                 </StackPanel>
                             </DockPanel>
-                            <ListBox x:Name="LogList" Grid.Row="1" Margin="0,12,0,0"
+                            <ListBox x:Name="LogList" Grid.Row="1" Margin="0,10,0,0"
                                      FontFamily="Cascadia Mono, Consolas, Segoe UI"
-                                     FontSize="12"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                                     FontSize="11.5"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <!-- Tight rows that wrap: more of the log fits, and long lines do not scroll sideways. -->
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                                        <Setter Property="Padding" Value="4,1" />
+                                        <Setter Property="MinHeight" Value="0" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                         </Grid>
                     </Border>
                 </Grid>
@@ -482,7 +483,7 @@
                                     <TextBlock x:Name="IncomeActiveAccountText" Text="No active account" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource GoldAccentBrush}" TextTrimming="CharacterEllipsis" />
                                 </Border>
                             </WrapPanel>
-                            <TextBlock Text="Permanent per-account archive, FIFO matched profit, active order book health, and hour-of-day fills." Style="{StaticResource HintText}" Margin="0,3,0,0" />
+                            <TextBlock x:Name="IncomeSubtitleText" Text="Net worth over time, profit from sales, stock on the shelf and your buy orders, per account." Style="{StaticResource HintText}" Margin="0,3,0,0" />
                         </StackPanel>
                         <WrapPanel x:Name="IncomeHeaderActionsPanel" Grid.Row="0" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                             <ComboBox x:Name="IncomeTimeframeSelector" SelectedIndex="2" MinWidth="128" Width="128" SelectionChanged="IncomeTimeframe_SelectionChanged" Margin="0,0,8,4">
@@ -520,8 +521,8 @@
                             <StackPanel>
                                 <TextBlock Text="PROFIT FROM SALES" Style="{StaticResource FieldLabel}" ToolTip="Sale price after the 5% listing and 10% exchange fees, minus what those units cost (matched oldest purchase first). Only items that have sold count." />
                                 <TextBlock x:Name="IncomeMatchedProfitText" Text="0c" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource GoldAccentBrush}" />
-                                <TextBlock x:Name="IncomeMatchedSubText" Text="ROI 0.0% • 0 sold • fees 0c" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="IncomeProfitNoteText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" ToolTip="Sales with no recorded purchase: bought before the GW2 API's 90-day history, or loot. They are income but not flip profit, so they are left out above." />
+                                <TextBlock x:Name="IncomeMatchedSubText" TextWrapping="NoWrap" Text="ROI 0.0% • 0 sold • fees 0c" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeProfitNoteText" TextWrapping="NoWrap" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" ToolTip="Sales with no recorded purchase: bought before the GW2 API's 90-day history, or loot. They are income but not flip profit, so they are left out above." />
                             </StackPanel>
                         </Border>
 
@@ -529,8 +530,8 @@
                             <StackPanel>
                                 <TextBlock Text="NET WORTH" Style="{StaticResource FieldLabel}" ToolTip="Everything on the trading account: wallet + gold in buy orders + listings (after fees) + Delivery Box. The best single number for 'am I making money'." />
                                 <TextBlock x:Name="IncomeTotalEquityText" Text="—" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource SuccessBrush}" />
-                                <TextBlock x:Name="IncomeNetWorthChangeText" Text="Sync to start tracking" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="IncomeEquityBreakdownText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeNetWorthChangeText" TextWrapping="NoWrap" Text="Sync to start tracking" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeEquityBreakdownText" TextWrapping="NoWrap" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Border>
 
@@ -538,8 +539,8 @@
                             <StackPanel>
                                 <TextBlock Text="STOCK ON THE SHELF" Style="{StaticResource FieldLabel}" ToolTip="Your listings: what they would bring after fees if they sold at your prices, how many are undercut, and what the unsold units cost you." />
                                 <TextBlock x:Name="IncomeDeliveryText" Text="—" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" />
-                                <TextBlock x:Name="IncomeUnmatchedText" Text="No listings yet" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="IncomeShelfNoteText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeUnmatchedText" TextWrapping="NoWrap" Text="No listings yet" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeShelfNoteText" TextWrapping="NoWrap" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Border>
 
@@ -547,7 +548,7 @@
                             <StackPanel>
                                 <TextBlock Text="GOLD IN BUY ORDERS" Style="{StaticResource FieldLabel}" ToolTip="Gold waiting in buy orders. Outbid orders are free to cancel and re-place; the bot keeps at most the share set in Settings → Trading &amp; Portfolio here." />
                                 <TextBlock x:Name="IncomeOrdersHealthText" Text="—" FontSize="20" FontWeight="Bold" />
-                                <TextBlock x:Name="IncomeOrdersSubText" Text="No buy orders" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeOrdersSubText" TextWrapping="NoWrap" Text="No buy orders" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Border>
                     </UniformGrid>
@@ -574,10 +575,11 @@
                                     <ComboBox x:Name="IncomeChartModeSelector" SelectedIndex="0" Width="150" HorizontalAlignment="Left" SelectionChanged="IncomeChartMode_SelectionChanged" ToolTip="Net worth over time is the honest headline; daily profit only counts items that sold. Hover bars for values.">
                                         <ComboBoxItem Content="Net worth over time" Tag="NetWorth" />
                                         <ComboBoxItem Content="Profit per day" Tag="DailyProfit" />
+                                        <ComboBoxItem x:Name="HourlyChartModeItem" Content="Activity by hour" Tag="Hourly" />
                                     </ComboBox>
                                     <TextBlock x:Name="DailyChartSummaryText" Grid.Column="1" Text="" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Margin="8,0,0,0" />
                                 </Grid>
-                                <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10,12,10,8" Height="132">
+                                <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10,10,10,6" Height="108">
                                     <ItemsControl x:Name="DailyProfitChartItems">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
@@ -617,7 +619,7 @@
                                     <TextBlock Text="Activity by Local Hour (00–23)" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" />
                                     <TextBlock x:Name="HourlyChartSummaryText" Grid.Column="1" Text="Local timezone" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Margin="8,0,0,0" />
                                 </Grid>
-                                <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10,12,10,8" Height="132">
+                                <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10,10,10,6" Height="108">
                                     <ItemsControl x:Name="HourlyActivityChartItems">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
@@ -657,9 +659,9 @@
                                 <DockPanel Margin="0,0,0,10">
                                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
                                         <TextBlock Text="Filter item:" Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                        <TextBox x:Name="IncomeSearchBox" Width="220" TextChanged="IncomeSearchBox_TextChanged" ToolTip="Filter leaderboard by item name" />
+                                        <TextBox x:Name="IncomeSearchBox" Width="180" Height="28" Padding="6,2" VerticalContentAlignment="Center" TextChanged="IncomeSearchBox_TextChanged" ToolTip="Filter leaderboard by item name" />
                                     </StackPanel>
-                                    <Button DockPanel.Dock="Right" Content="Blacklist Selected" Tag="&#xE8F8;" Click="BlacklistSelectedPnlItem_Click" HorizontalAlignment="Right" />
+                                    <Button DockPanel.Dock="Right" Content="Blacklist selected" Tag="&#xE8F8;" Style="{StaticResource CompactButton}" Click="BlacklistSelectedPnlItem_Click" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                 </DockPanel>
                                 <DataGrid x:Name="ItemPnlGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                                     <DataGrid.Columns>
@@ -1299,9 +1301,9 @@
                                             <TextBlock Text="Encrypted with Windows DPAPI" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}" VerticalAlignment="Center" Margin="10,2,0,0" />
                                         </StackPanel>
                                         <WrapPanel Orientation="Horizontal" Margin="0,10,0,0">
-                                            <Button x:Name="SaveCustomNamesButton" Content="Save Names" Tag="&#xE74E;" Style="{StaticResource CompactButton}" Click="SaveCustomNames_Click" Margin="0,0,8,4" ToolTip="Save the custom names typed in the table." />
-                                            <Button x:Name="ReverifyApiKeysButton" Content="Re-verify" Tag="&#xE72C;" Style="{StaticResource CompactButton}" Click="ReverifyApiKeys_Click" Margin="0,0,8,4" ToolTip="Re-check every stored key against the GW2 API." />
-                                            <Button Content="ArenaNet Key Page" Tag="&#xE8A7;" Style="{StaticResource CompactButton}" Click="OpenArenaNetApiKeys_Click" Margin="0,0,0,4" ToolTip="Open the ArenaNet applications page to create a key." />
+                                            <Button x:Name="ReverifyApiKeysButton" Content="Re-verify all" Tag="&#xE72C;" Style="{StaticResource CompactButton}" Click="ReverifyApiKeys_Click" Margin="0,0,8,4" ToolTip="Re-check every stored key against the GW2 API." />
+                                            <Button x:Name="TestApiKeyButton" Content="Test active" Tag="&#xE9D9;" Style="{StaticResource CompactButton}" Click="TestApiKey_Click" Margin="0,0,8,4" ToolTip="Check the active key and read its wallet." />
+                                            <Button Content="ArenaNet key page" Tag="&#xE8A7;" Style="{StaticResource CompactButton}" Click="OpenArenaNetApiKeys_Click" Margin="0,0,0,4" ToolTip="Open the ArenaNet applications page to create a key." />
                                         </WrapPanel>
                                     </StackPanel>
 
@@ -1327,7 +1329,7 @@
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTemplateColumn Header="ORDER" Width="70">
+                                            <DataGridTemplateColumn Header="ORDER" Width="64">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
                                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
@@ -1359,9 +1361,24 @@
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="ACCOUNT" Binding="{Binding AccountName}" Width="130" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="ACCOUNT" Binding="{Binding AccountName}" Width="*" MinWidth="110" IsReadOnly="True" />
+                                            <DataGridTemplateColumn Header="NAME" Width="130">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBox Text="{Binding CustomName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Height="28"
+                                                                 Padding="6,0"
+                                                                 FontSize="12"
+                                                                 VerticalContentAlignment="Center"
+                                                                 Margin="0,2,6,2"
+                                                                 LostFocus="ApiKeyName_LostFocus"
+                                                                 KeyDown="ApiKeyName_KeyDown"
+                                                                 ToolTip="Your label for this account (e.g. Main EU). Saved when you press Enter or click elsewhere." />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
                                             <DataGridTextColumn Header="PLATFORM" Binding="{Binding PlatformLabel}" Width="80" IsReadOnly="True" />
-                                            <DataGridTemplateColumn Header="API KEY" Width="180">
+                                            <DataGridTemplateColumn Header="API KEY" Width="196">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
                                                         <Grid>
@@ -1381,16 +1398,6 @@
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTemplateColumn Header="NAME" Width="*" MinWidth="90">
-                                                <DataGridTemplateColumn.CellTemplate>
-                                                    <DataTemplate>
-                                                        <TextBox Text="{Binding CustomName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                 Padding="6,3"
-                                                                 FontSize="12"
-                                                                 VerticalContentAlignment="Center" />
-                                                    </DataTemplate>
-                                                </DataGridTemplateColumn.CellTemplate>
-                                            </DataGridTemplateColumn>
                                             <DataGridTemplateColumn Header="" Width="44">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
@@ -1406,21 +1413,27 @@
                                         </DataGrid.Columns>
                                     </DataGrid>
 
-                                    <TextBlock Text="ADD NEW API KEY (SCOPES: ACCOUNT, TRADINGPOST, WALLET, INVENTORIES, CHARACTERS)" Style="{StaticResource FieldLabel}" />
-                                    <Grid Margin="0,0,0,10">
+                                    <TextBlock Text="ADD A KEY" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+                                    <Grid Margin="0,0,0,8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="140" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="150" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <PasswordBox x:Name="ApiKeyPasswordBox" Margin="0,0,8,0" ToolTip="Paste an ArenaNet API key (account, tradingpost, wallet, inventories, characters)." />
-                                        <TextBox x:Name="ApiKeyCustomNameBox" Grid.Column="1" Margin="0,0,8,0" ToolTip="Optional custom label (e.g. Main EU, Steam Alt)." />
-                                        <Button x:Name="SaveApiKeyButton" Grid.Column="2" Content="Save &amp; Verify Key" Tag="&#xE72E;" Style="{StaticResource PrimaryButton}" Click="SaveApiKey_Click" Margin="0,0,8,0" />
-                                        <Button x:Name="TestApiKeyButton" Grid.Column="3" Content="Test Active" Tag="&#xE9D9;" Click="TestApiKey_Click" Margin="0,0,8,0" />
-                                        <Button x:Name="ClearApiKeyButton" Grid.Column="4" Content="Clear Active" Tag="&#xE74D;" Click="ClearApiKey_Click" />
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Text="API key" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,3" />
+                                        <TextBlock Grid.Column="1" Text="Name (optional)" FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,3" />
+                                        <PasswordBox x:Name="ApiKeyPasswordBox" Grid.Row="1" Height="30" Margin="0,0,8,0" VerticalContentAlignment="Center" ToolTip="Paste an ArenaNet API key with account, tradingpost, wallet, inventories and characters." />
+                                        <TextBox x:Name="ApiKeyCustomNameBox" Grid.Row="1" Grid.Column="1" Height="30" Padding="6,1" VerticalContentAlignment="Center" Margin="0,0,8,0" ToolTip="Optional label, e.g. Main EU or Steam Alt." />
+                                        <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal">
+                                            <Button x:Name="SaveApiKeyButton" Content="Save &amp; verify" Tag="&#xE72E;" Style="{StaticResource PrimaryButton}" Click="SaveApiKey_Click" Margin="0,0,8,0" />
+                                            <Button x:Name="ClearApiKeyButton" Tag="&#xE74D;" Style="{StaticResource IconButton}" Click="ClearApiKey_Click" ToolTip="Remove the active key" />
+                                        </StackPanel>
                                     </Grid>
+                                    <TextBlock Text="Scopes: account, tradingpost, wallet, inventories, characters." FontSize="11.5" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,8" />
                                     <TextBlock x:Name="ApiKeyStatusText" Text="No API key stored yet. Recommended scopes: account, tradingpost, wallet, inventories, characters." Style="{StaticResource HintText}" Margin="0,0,0,10" />
 
                                     <Expander IsExpanded="False" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}" Padding="12,8">
@@ -1852,201 +1865,246 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Margin="0,0,0,14">
+                    <StackPanel Margin="0,0,0,12">
                         <TextBlock Text="Guide &amp; Setup" Style="{StaticResource PageTitle}" />
-                        <TextBlock Text="Pre-flight readiness checks, 4-step operating walkthrough, and proven GW2 Trading Post principles." Style="{StaticResource HintText}" Margin="0,3,0,0" />
+                        <TextBlock x:Name="GuideSubtitleText" Text="Check you are ready, see how a session runs, and when the market is busiest." Style="{StaticResource HintText}" Margin="0,3,0,0" />
                     </StackPanel>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
                         <StackPanel>
-                            <!-- Pre-Flight Readiness Checklist -->
-                            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                            <!-- 1. Ready to trade? -->
+                            <Border Style="{StaticResource Card}" Padding="16,12" Margin="0,0,0,12">
                                 <StackPanel>
-                                    <DockPanel Margin="0,0,0,12">
-                                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                                            <TextBlock Text="&#xE9D5;" Style="{StaticResource GlyphIcon}" FontSize="16" Foreground="{DynamicResource AccentBrush}" Margin="0,0,9,0" />
-                                            <TextBlock Text="Pre-Flight Readiness Checklist" Style="{StaticResource SectionTitle}" />
+                                    <DockPanel Margin="0,0,0,4">
+                                        <Button DockPanel.Dock="Right" Tag="&#xE72C;" Style="{StaticResource IconButton}" Click="RefreshChecklist_Click" ToolTip="Check again" />
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="&#xE9D5;" Style="{StaticResource GlyphIcon}" FontSize="15" Foreground="{DynamicResource AccentBrush}" Margin="0,0,9,0" />
+                                            <TextBlock Text="Ready to trade?" Style="{StaticResource SectionTitle}" />
                                         </StackPanel>
-                                        <Button DockPanel.Dock="Right" Content="Refresh Checks" Tag="&#xE72C;" Padding="10,4" FontSize="11.5" Click="RefreshChecklist_Click" HorizontalAlignment="Right" />
                                     </DockPanel>
-
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="26" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="CheckApiKeyIcon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" />
-                                        <TextBlock x:Name="CheckApiKeyText" Grid.Column="1" Text="GW2 API Key (account, tradingpost, wallet)" VerticalAlignment="Center" />
-                                        <Button Grid.Column="2" Content="Configure Key" Padding="10,4" FontSize="11.5" Click="GoToSettings_Click" />
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="26" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="CheckGw2Icon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" />
-                                        <TextBlock x:Name="CheckGw2Text" Grid.Column="1" Text="Guild Wars 2 Executable" VerticalAlignment="Center" />
-                                        <Button Grid.Column="2" Content="Auto-Detect GW2" Padding="10,4" FontSize="11.5" Click="DetectGw2_Click" />
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="26" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="CheckDpiIcon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" />
-                                        <TextBlock x:Name="CheckDpiText" Grid.Column="1" Text="Windows Display Scaling = 100%" VerticalAlignment="Center" />
-                                    </Grid>
-
-                                    <Grid Margin="0,0,0,8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="26" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="&#xE946;" Style="{StaticResource GlyphIcon}" FontSize="14" Foreground="{DynamicResource AccentBrush}" />
-                                        <TextBlock Text="In-game setup: Resolution = Window (Mmopal auto-snaps GW2 to 1024x768), Interface Size = Larger, DPI Scaling = Off, Dynamic HUD = Always Hide All, character parked at TP NPC ('F')." Grid.Column="1" Style="{StaticResource HintText}" VerticalAlignment="Center" />
-                                    </Grid>
-
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="26" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="CheckCandidatesIcon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" />
-                                        <TextBlock x:Name="CheckCandidatesText" Grid.Column="1" Text="Flip candidates loaded" VerticalAlignment="Center" />
-                                        <Button Grid.Column="2" Content="Open Market Scanner" Padding="10,4" FontSize="11.5" Click="GoToScanner_Click" />
-                                    </Grid>
+                                    <Border Padding="0,8" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="CheckApiKeyIcon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                            <TextBlock x:Name="CheckApiKeyText" Grid.Column="1" Text="GW2 API key (account, tradingpost, wallet, inventories, characters)" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                            <Button Grid.Column="2" Content="Open settings" Style="{StaticResource CompactButton}" Width="132" Click="GoToSettings_Click" VerticalAlignment="Center" ToolTip="Settings → Accounts &amp; API" />
+                                        </Grid>
+                                    </Border>
+                                    <Border Padding="0,8" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="CheckGw2Icon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                            <TextBlock x:Name="CheckGw2Text" Grid.Column="1" Text="Guild Wars 2 executable" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                            <Button Grid.Column="2" Content="Find GW2" Style="{StaticResource CompactButton}" Width="132" Click="DetectGw2_Click" VerticalAlignment="Center" ToolTip="Look for the ArenaNet and Steam installs" />
+                                        </Grid>
+                                    </Border>
+                                    <Border Padding="0,8" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="CheckDpiIcon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                            <TextBlock x:Name="CheckDpiText" Grid.Column="1" Text="Windows display scaling = 100%" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        </Grid>
+                                    </Border>
+                                    <Border Padding="0,8" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="CheckCandidatesIcon" Text="&#xE73E;" Style="{StaticResource GlyphIcon}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                            <TextBlock x:Name="CheckCandidatesText" Grid.Column="1" Text="Shopping list loaded" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                            <Button Grid.Column="2" Content="Open scanner" Style="{StaticResource CompactButton}" Width="132" Click="GoToScanner_Click" VerticalAlignment="Center" ToolTip="Market Scanner" />
+                                        </Grid>
+                                    </Border>
+                                    <Border Padding="0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="&#xE946;" Foreground="{DynamicResource AccentBrush}" Style="{StaticResource GlyphIcon}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                            <TextBlock Grid.Column="1" Text="In game: Windowed, Interface Size Larger, DPI Scaling off, Dynamic HUD Always Hide All. Park every character right next to a Black Lion trader (not the bank)." TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        </Grid>
+                                    </Border>
                                 </StackPanel>
                             </Border>
 
-                            <!-- 4-Step Quickstart -->
-                            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                            <!-- 2. How a session runs -->
+                            <Border Style="{StaticResource Card}" Padding="16,12" Margin="0,0,0,12">
                                 <StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                        <TextBlock Text="&#xE768;" Style="{StaticResource GlyphIcon}" FontSize="16" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,9,0" />
-                                        <TextBlock Text="4-Step Operating Walkthrough" Style="{StaticResource SectionTitle}" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <TextBlock Text="&#xE768;" Style="{StaticResource GlyphIcon}" FontSize="15" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,9,0" />
+                                        <TextBlock Text="How Mmopal runs" Style="{StaticResource SectionTitle}" />
                                     </StackPanel>
-                                    <Grid>
+                                    <Grid Margin="0,0,-8,-8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">
-                                            <StackPanel>
-                                                <TextBlock Text="1. CONNECT &amp; AUTO-TUNE" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="In Settings &gt; Accounts &amp; API, paste your key and click Save &amp; Verify Key. Auto-Tune then runs by itself at every launch and Start session, sized to your gold and your recent results." Style="{StaticResource HintText}" />
-                                            </StackPanel>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Border Grid.Column="0" Grid.Row="0" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,8,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="24" Height="24" CornerRadius="12" Background="{DynamicResource AccentBrush}" VerticalAlignment="Top" Margin="0,0,10,0">
+                                                    <TextBlock Text="1" Foreground="White" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="Connect once" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
+                                                    <TextBlock Text="Add your API key in Settings. Every launch, Mmopal syncs your account, Auto-Tunes and scans the market by itself (Startup strip on Session)." Style="{StaticResource HintText}" />
+                                                </StackPanel>
+                                            </Grid>
                                         </Border>
-                                        <Border Grid.Column="1" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">
-                                            <StackPanel>
-                                                <TextBlock Text="2. SCAN &amp; FILTER" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="Mmopal scans the market at launch (see the Startup strip on Session). Click Use All for Session once; after that the list refreshes itself at launch and every 3 hours during a session." Style="{StaticResource HintText}" />
-                                            </StackPanel>
+                                        <Border Grid.Column="1" Grid.Row="0" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,8,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="24" Height="24" CornerRadius="12" Background="{DynamicResource AccentBrush}" VerticalAlignment="Top" Margin="0,0,10,0">
+                                                    <TextBlock Text="2" Foreground="White" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="Park and snap" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
+                                                    <TextBlock Text="Stand each parked character next to a Black Lion trader. Launch &amp; snap GW2 puts the game at 1024×768." Style="{StaticResource HintText}" />
+                                                </StackPanel>
+                                            </Grid>
                                         </Border>
-                                        <Border Grid.Column="2" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12" Margin="0,0,10,0">
-                                            <StackPanel>
-                                                <TextBlock Text="3. VERIFY SCREEN OBSERVE" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="Park characters next to a Trading Post NPC and click Launch &amp; snap GW2. Try Observe only first; choosing Live switches Data source to Screen observe and ticks Arm live input on its own." Style="{StaticResource HintText}" />
-                                            </StackPanel>
+                                        <Border Grid.Column="0" Grid.Row="1" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,8,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="24" Height="24" CornerRadius="12" Background="{DynamicResource AccentBrush}" VerticalAlignment="Top" Margin="0,0,10,0">
+                                                    <TextBlock Text="3" Foreground="White" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="Go Live" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
+                                                    <TextBlock Text="Pick Live: Screen observe and Arm live input are set for you. Stop finishes the current step; Emergency stop halts at once." Style="{StaticResource HintText}" />
+                                                </StackPanel>
+                                            </Grid>
                                         </Border>
-                                        <Border Grid.Column="3" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12">
-                                            <StackPanel>
-                                                <TextBlock Text="4. TRACK REAL PROFIT" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="Sync in Income &amp; Portfolio after trading to archive fills past 90 days, inspect FIFO profit, and catch Outbid buy orders." Style="{StaticResource HintText}" />
-                                            </StackPanel>
+                                        <Border Grid.Column="1" Grid.Row="1" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,8,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="24" Height="24" CornerRadius="12" Background="{DynamicResource AccentBrush}" VerticalAlignment="Top" Margin="0,0,10,0">
+                                                    <TextBlock Text="4" Foreground="White" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="Check the results" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
+                                                    <TextBlock Text="Session shows the shopping list and what history learned. Income &amp; Portfolio shows net worth over time." Style="{StaticResource HintText}" />
+                                                </StackPanel>
+                                            </Grid>
                                         </Border>
                                     </Grid>
                                 </StackPanel>
                             </Border>
 
-                            <!-- Visual Market Schedule & Flipping Rules -->
-                            <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+                            <!-- 3. Market clock and rules -->
+                            <Border Style="{StaticResource Card}" Padding="16,12" Margin="0,0,0,8">
                                 <StackPanel>
-                                    <DockPanel Margin="0,0,0,10">
-                                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
-                                            <TextBlock Text="&#xE8D4;" Style="{StaticResource GlyphIcon}" FontSize="16" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,9,0" />
-                                            <TextBlock Text="Market Schedule &amp; Flipping Playbook" Style="{StaticResource SectionTitle}" />
-                                        </StackPanel>
-                                        <TextBlock Text="Shared NA + EU Global Trading Post" Style="{StaticResource HintText}" DockPanel.Dock="Right" VerticalAlignment="Center" HorizontalAlignment="Right" />
-                                    </DockPanel>
-
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <TextBlock Text="&#xE823;" Style="{StaticResource GlyphIcon}" FontSize="15" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,9,0" />
+                                        <TextBlock Text="Market clock (your local time)" Style="{StaticResource SectionTitle}" />
+                                    </StackPanel>
                                     <TextBlock x:Name="GuideScheduleSummaryText" Text="Calculating market phases in your local timezone..." FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,10" TextWrapping="Wrap" />
+                                    <UniformGrid x:Name="GuideScheduleGrid" Columns="4" Margin="0,0,-8,4">
+                                        <Border x:Name="EuPrimeTile" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,8,8">
+                                            <StackPanel>
+                                                <TextBlock Text="EU PRIME" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,2" />
+                                                <TextBlock x:Name="EuPrimeTimeText" Text="17:00–22:00 UTC" FontWeight="SemiBold" FontSize="13" />
+                                                <TextBlock x:Name="EuPrimeHintText" Text="Place buy orders" Style="{StaticResource HintText}" FontSize="11.5" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ResetTile" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,8,8">
+                                            <StackPanel>
+                                                <TextBlock Text="DAILY RESET" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,0,2" />
+                                                <TextBlock x:Name="ResetTimeText" Text="00:00–01:30 UTC" FontWeight="SemiBold" FontSize="13" />
+                                                <TextBlock x:Name="ResetHintText" Text="Peak fills · buys never cancelled" Style="{StaticResource HintText}" FontSize="11.5" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="NaPrimeTile" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,8,8">
+                                            <StackPanel>
+                                                <TextBlock Text="NA PRIME" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,0,2" />
+                                                <TextBlock x:Name="NaPrimeTimeText" Text="22:00–04:00 UTC" FontWeight="SemiBold" FontSize="13" />
+                                                <TextBlock x:Name="NaPrimeHintText" Text="Overnight flips" Style="{StaticResource HintText}" FontSize="11.5" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="OffPeakTile" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,8,8">
+                                            <StackPanel>
+                                                <TextBlock Text="OFF-PEAK" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,2" />
+                                                <TextBlock x:Name="OffPeakTimeText" Text="04:00–17:00 UTC" FontWeight="SemiBold" FontSize="13" />
+                                                <TextBlock x:Name="OffPeakHintText" Text="Hold sells, thin book" Style="{StaticResource HintText}" FontSize="11.5" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                    </UniformGrid>
 
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border x:Name="EuPrimeTile" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
-                                            <StackPanel>
-                                                <TextBlock Text="EU PRIME (SHARED TP)" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock x:Name="EuPrimeTimeText" Text="17:00–22:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
-                                                <TextBlock x:Name="EuPrimeHintText" Text="Place buy orders" Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="ResetTile" Grid.Column="1" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
-                                            <StackPanel>
-                                                <TextBlock Text="DAILY RESET WINDOW" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource SuccessBrush}" />
-                                                <TextBlock x:Name="ResetTimeText" Text="00:00–01:30 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
-                                                <TextBlock x:Name="ResetHintText" Text="Peak fills · buy orders are never cancelled" Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="NaPrimeTile" Grid.Column="2" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
-                                            <StackPanel>
-                                                <TextBlock Text="NA PRIME + OVERNIGHT" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource GoldAccentBrush}" />
-                                                <TextBlock x:Name="NaPrimeTimeText" Text="22:00–04:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
-                                                <TextBlock x:Name="NaPrimeHintText" Text="Overnight 8–10h flips" Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border x:Name="OffPeakTile" Grid.Column="3" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
-                                            <StackPanel>
-                                                <TextBlock Text="GLOBAL OFF-PEAK" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                <TextBlock x:Name="OffPeakTimeText" Text="04:00–17:00 UTC" FontWeight="SemiBold" FontSize="13.5" Margin="0,2,0,3" />
-                                                <TextBlock x:Name="OffPeakHintText" Text="Hold sells, thin book" Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                    </Grid>
-
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10" Margin="0,0,8,0">
-                                            <StackPanel>
-                                                <TextBlock Text="15% TAX · >= 1.18x" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource SuccessBrush}" />
-                                                <TextBlock Text="5% listing + 10% sale fee. Keep Min ROI >= 10%." Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border Grid.Column="1" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10" Margin="0,0,8,0">
-                                            <StackPanel>
-                                                <TextBlock Text="BUY 0% · SELL -5%" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource AccentBrush}" />
-                                                <TextBlock Text="Cancelling buys is free, but chasing 1c undercuts means nothing fills: outbid buys get 20 min first." Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border Grid.Column="2" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10" Margin="0,0,8,0">
-                                            <StackPanel>
-                                                <TextBlock Text="LIQUIDITY &gt; FAKE ROI" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource GoldAccentBrush}" />
-                                                <TextBlock Text="Rank by profit × trades/day. A 70% spread that trades 3×/day never fills; 15% at 200/day does." Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Border Grid.Column="3" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10">
-                                            <StackPanel>
-                                                <TextBlock Text="&lt;=5%/ITEM · 15% RESERVE" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource WarningBrush}" />
-                                                <TextBlock Text="Stop buys at 0g or floor; cap runs around 8–10h." Style="{StaticResource HintText}" />
-                                            </StackPanel>
-                                        </Border>
-                                    </Grid>
+                                    <TextBlock Text="RULES THE BOT FOLLOWS" Style="{StaticResource FieldLabel}" Margin="0,4,0,6" />
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
+                                            <TextBlock Grid.Column="1" Text="Fees take 15% (5% to list, 10% when it sells), so an item must sell about 18% above its buy price to profit." Style="{StaticResource HintText}" />
+                                        </Grid>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
+                                            <TextBlock Grid.Column="1" Text="Busy items beat wide spreads: the scanner ranks by profit × trades per day and skips price spikes." Style="{StaticResource HintText}" />
+                                        </Grid>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
+                                            <TextBlock Grid.Column="1" Text="Buy orders are free to move. Listings cost 5% each time, so a listing is only relisted after 12 h undercut and when it still covers cost." Style="{StaticResource HintText}" />
+                                        </Grid>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
+                                            <TextBlock Grid.Column="1" Text="At most half your gold sits in buy orders, and buying stops at the gold floor." Style="{StaticResource HintText}" />
+                                        </Grid>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
+                                            <TextBlock Grid.Column="1" Text="Items outbid 3 times without a fill pause for 3 h; items that lost money on 2+ flips in 30 days are skipped." Style="{StaticResource HintText}" />
+                                        </Grid>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
