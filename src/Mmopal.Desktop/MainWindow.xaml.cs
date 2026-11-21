@@ -15,6 +15,7 @@ using Mmopal.Gw2;
 using Mmopal.Infrastructure;
 using Mmopal.Native;
 using Mmopal.Worker;
+using static Mmopal.Desktop.UiHelpers;
 
 namespace Mmopal.Desktop;
 
@@ -31,7 +32,7 @@ public partial class MainWindow : Window
     private readonly IGw2ClientPreparer _clientPreparer;
     private readonly Func<string?> _detectGw2Path;
     private readonly Func<IReadOnlyList<Gw2InstallCandidate>> _discoverGw2Installs;
-    private readonly Func<DisplayScaleInfo> _detectDisplayScale;
+    internal Func<DisplayScaleInfo> DetectDisplayScale { get; }
     private readonly TradingLedgerStore? _ledgerStore;
     private readonly SessionReportStore? _sessionReportStore;
     private readonly IGw2MarketScanner _marketScanner;
@@ -46,6 +47,7 @@ public partial class MainWindow : Window
 
     private readonly ObservableCollection<MarketScanItem> _scanResults = new();
     private readonly ObservableCollection<ItemCandidate> _customShoppingList = new();
+    internal ObservableCollection<ItemCandidate> CustomShoppingList => _customShoppingList;
     private readonly ObservableCollection<string> _blacklist = new();
     private readonly ObservableCollection<ItemPnlRow> _itemPnlRows = new();
     private readonly ObservableCollection<ActiveOrderViewRow> _activeOrderRows = new();
@@ -73,7 +75,7 @@ public partial class MainWindow : Window
     private int _outbidBuyCount;
     private int _undercutSellCount;
     private bool _bannerDismissed;
-    private bool _hasVerifiedApiKey;
+    internal bool HasVerifiedApiKey { get; set; }
     private Rect? _preDockBounds;
     private WindowState? _preDockWindowState;
     private bool _isSideDocked;
@@ -83,7 +85,7 @@ public partial class MainWindow : Window
 
     private CancellationTokenSource? _scanCancellation;
     private WorkerState _lastWorkerState = WorkerState.Idle;
-    private bool _loadingUi;
+    internal bool IsLoadingUi { get; set; }
     // Launch automation (account sync, first-time Auto-Tune, market scan) runs only in the real app, not in tests.
     private static bool s_operatorSettingsExistedAtLaunch = true;
     private bool _runLaunchAutomation;
@@ -173,7 +175,7 @@ public partial class MainWindow : Window
         _clientPreparer = clientPreparer ?? new Gw2ClientPreparer();
         _detectGw2Path = detectGw2Path ?? (() => null);
         _discoverGw2Installs = discoverGw2Installs ?? (() => []);
-        _detectDisplayScale = detectDisplayScale ?? (() => new DisplayScaleInfo(96, 100, true, "100% (96 DPI)"));
+        DetectDisplayScale = detectDisplayScale ?? (() => new DisplayScaleInfo(96, 100, true, "100% (96 DPI)"));
         _ledgerStore = ledgerStore;
         _sessionReportStore = sessionReportStore;
         _marketScanner = marketScanner ?? new Gw2MarketScanner(_gw2HttpClient, _ledgerStore);
@@ -182,13 +184,14 @@ public partial class MainWindow : Window
         _requestAppClose = requestAppClose ?? Close;
         _executeSystemShutdown = executeSystemShutdown ?? TriggerWindowsSystemShutdown;
 
-        _loadingUi = true;
+        IsLoadingUi = true;
         _cycleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
         _cycleTimer.Tick += (_, _) => UpdateMarketCycleDisplay();
         _sessionClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _sessionClockTimer.Tick += (_, _) => UpdateSessionClockDisplay();
 
         InitializeComponent();
+        GuidePage.Attach(this);
         ScanResultsGrid.ItemsSource = _scanResults;
         CustomShoppingListGrid.ItemsSource = _customShoppingList;
         BlacklistListBox.ItemsSource = _blacklist;
@@ -217,7 +220,7 @@ public partial class MainWindow : Window
         UpdateSessionButtonStates(WorkerState.Idle);
         UpdateSafeModePill();
         UpdateSidebarStatus(WorkerState.Idle, "Ready (Offline)");
-        _loadingUi = false;
+        IsLoadingUi = false;
 
         _cycleTimer.Start();
 
@@ -256,10 +259,17 @@ public partial class MainWindow : Window
     // Navigation & Theme
     // ---------------------------------------------------------------------
 
+    /// <summary>The pages in the content area. Each page's XAML has its own namescope.</summary>
+    private IEnumerable<FrameworkElement> Pages => [GuidePage];
+
+    /// <summary>Finds a named element in the shell or in any page.</summary>
+    internal object? FindElement(string name) =>
+        FindName(name) ?? Pages.Select(page => page.FindName(name)).FirstOrDefault(element => element is not null);
+
     private void Nav_Checked(object sender, RoutedEventArgs e)
     {
         if (SessionView is null || IncomeView is null || ReportsView is null || ScannerView is null ||
-            ListsView is null || SettingsView is null || GuideView is null)
+            ListsView is null || SettingsView is null || GuidePage.GuideView is null)
         {
             return;
         }
@@ -270,7 +280,7 @@ public partial class MainWindow : Window
         ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        GuideView.Visibility = NavGuide.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        GuidePage.GuideView.Visibility = NavGuide.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
         if (NavReports.IsChecked == true)
         {
@@ -279,8 +289,6 @@ public partial class MainWindow : Window
     }
 
     private void OpenGuide_Click(object sender, RoutedEventArgs e) => NavGuide.IsChecked = true;
-    private void GoToSettings_Click(object sender, RoutedEventArgs e) => NavSettings.IsChecked = true;
-    private void GoToScanner_Click(object sender, RoutedEventArgs e) => NavScanner.IsChecked = true;
 
     private void DismissReadinessBanner_Click(object sender, RoutedEventArgs e)
     {
@@ -288,11 +296,10 @@ public partial class MainWindow : Window
         ReadinessBanner.Visibility = Visibility.Collapsed;
     }
 
-    private void RefreshChecklist_Click(object sender, RoutedEventArgs e) => RefreshReadinessChecklist();
 
     private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi || ThemeSelector.SelectedItem is not ComboBoxItem item) return;
+        if (IsLoadingUi || ThemeSelector.SelectedItem is not ComboBoxItem item) return;
         var mode = item.Content.ToString()!;
         if (Application.Current is App app)
         {
@@ -320,7 +327,7 @@ public partial class MainWindow : Window
 
     private void ModeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
 
         // Live trading acts on the real game, so it always reads the real game screen and arms input; any other mode
         // sends no input, so it disarms.
@@ -340,7 +347,7 @@ public partial class MainWindow : Window
 
     private void SourceSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi || ModeSelector is null) return;
+        if (IsLoadingUi || ModeSelector is null) return;
 
         // Replay data is a recorded sample; arming live clicks against it makes no sense, so fall back to Dry run.
         if (IsSelectedTag(SourceSelector, "replay") && IsSelectedTag(ModeSelector, nameof(RunMode.Live)))
@@ -349,30 +356,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool IsSelectedTag(ComboBox? combo, string tag) =>
-        string.Equals((combo?.SelectedItem as ComboBoxItem)?.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase);
-
-    private static void SelectByTag(ComboBox combo, string tag)
-    {
-        foreach (var item in combo.Items)
-        {
-            if (item is ComboBoxItem comboItem && string.Equals(comboItem.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
-            {
-                combo.SelectedItem = comboItem;
-                return;
-            }
-        }
-    }
-
     private void ProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         UpdateSessionPaceSummary();
     }
 
     private void LaunchPlatformSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         var platformTag = GetSelectedLaunchPlatform();
         if (_apiKeyVault.ActiveEntry is { } active &&
             !string.Equals(active.LaunchPlatform, platformTag, StringComparison.OrdinalIgnoreCase))
@@ -386,7 +378,7 @@ public partial class MainWindow : Window
         SaveAllSettingsSilently();
     }
 
-    private string GetSelectedLaunchPlatform() =>
+    internal string GetSelectedLaunchPlatform() =>
         (LaunchPlatformSelector?.SelectedItem as ComboBoxItem)?.Tag?.ToString() switch
         {
             var tag when string.Equals(tag, Gw2ClientSettings.PlatformSteam, StringComparison.OrdinalIgnoreCase) => Gw2ClientSettings.PlatformSteam,
@@ -419,13 +411,13 @@ public partial class MainWindow : Window
 
     private void AutoSellInventory_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         SaveAllSettingsSilently(); // remembered across restarts; it used to reset to off on every launch
     }
 
     private void ArmLiveInput_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         UpdateSafeModePill();
     }
 
@@ -641,7 +633,7 @@ public partial class MainWindow : Window
         IncomeKpiGrid.Columns = cardColumns;
         if (SessionSubtitleText is not null) SessionSubtitleText.Visibility = labelVisibility;
         if (IncomeSubtitleText is not null) IncomeSubtitleText.Visibility = labelVisibility;
-        if (GuideScheduleGrid is not null) GuideScheduleGrid.Columns = cardColumns;
+        if (GuidePage.GuideScheduleGrid is not null) GuidePage.GuideScheduleGrid.Columns = cardColumns;
         ScannerCoreFiltersGrid.Columns = columns;
         ScannerAdvancedFiltersGrid.Columns = columns;
         if (ReportDetailKpiGrid is not null)
@@ -817,41 +809,6 @@ public partial class MainWindow : Window
         DockToggleButton.Content = "Dock beside GW2";
         DockToggleButton.ToolTip = "Dock beside GW2: fits Mmopal next to the 1024x768 game window, or restores your size.";
         ApplyResponsiveLayout(Width);
-    }
-
-    private async Task FlashButtonFeedbackAsync(Button? button, string temporaryText, int durationMs = 1600)
-    {
-        if (button is null) return;
-        var dispatcher = button.Dispatcher;
-        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
-
-        object? originalContent = null;
-        try
-        {
-            await dispatcher.InvokeAsync(() =>
-            {
-                if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
-                originalContent = button.Content;
-                button.Content = temporaryText;
-            });
-
-            await Task.Delay(durationMs).ConfigureAwait(false);
-
-            if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
-            _ = dispatcher.InvokeAsync(() =>
-            {
-                if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
-                {
-                    button.Content = originalContent;
-                }
-            });
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-        }
     }
 
     private async void LaunchSnapGw2_Click(object sender, RoutedEventArgs e)
@@ -1226,7 +1183,7 @@ public partial class MainWindow : Window
                     LastWalletCopper = result.LatestSnapshot.WalletCopper,
                     LastVerifiedAt = DateTimeOffset.UtcNow
                 });
-                _hasVerifiedApiKey = true;
+                HasVerifiedApiKey = true;
                 RebuildApiKeyViews();
             }
 
@@ -1258,7 +1215,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            _hasVerifiedApiKey = true;
+            HasVerifiedApiKey = true;
             syncSucceeded = true;
             RecomputeIncomeDashboard();
             RefreshReadinessChecklist();
@@ -1518,13 +1475,13 @@ public partial class MainWindow : Window
 
     private void IncomeTimeframe_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         RecomputeIncomeDashboard();
     }
 
     private void IncomeSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         ApplyItemPnlSearchFilter();
     }
 
@@ -1724,7 +1681,7 @@ public partial class MainWindow : Window
 
     private void IncomeChartMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi || _lastIncomeReport is null) return;
+        if (IsLoadingUi || _lastIncomeReport is null) return;
         RebuildIncomeCharts(_lastIncomeReport);
     }
 
@@ -1790,9 +1747,6 @@ public partial class MainWindow : Window
         return DateTimeOffset.UtcNow.AddDays(-days);
     }
 
-    private Brush ResolveBrush(string key, Brush fallback) =>
-        Application.Current?.TryFindResource(key) is Brush b ? b : fallback;
-
     // ---------------------------------------------------------------------
     // Market Scanner (Built-in Profitable Item Finder)
     // ---------------------------------------------------------------------
@@ -1839,7 +1793,7 @@ public partial class MainWindow : Window
                 {
                     capitalCopper = balance.Copper;
                     sourceLabel = "live GW2 wallet";
-                    _hasVerifiedApiKey = true;
+                    HasVerifiedApiKey = true;
                 }
             }
             catch (Exception ex)
@@ -1922,7 +1876,7 @@ public partial class MainWindow : Window
 
     private void TunedField_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_loadingUi || _applyingAutoTune || sender is not TextBox { Tag: string key } || !_autoTuneKeeps.Add(key))
+        if (IsLoadingUi || _applyingAutoTune || sender is not TextBox { Tag: string key } || !_autoTuneKeeps.Add(key))
         {
             return;
         }
@@ -2323,7 +2277,7 @@ public partial class MainWindow : Window
 
     private async void SidebarAccountSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi || SidebarAccountSelector.SelectedItem is not ComboBoxItem { Tag: string keyId })
+        if (IsLoadingUi || SidebarAccountSelector.SelectedItem is not ComboBoxItem { Tag: string keyId })
         {
             return;
         }
@@ -2467,7 +2421,7 @@ public partial class MainWindow : Window
 
             _apiKeyVault = _apiKeyVault with { Entries = refreshed.ToArray() };
             _saveApiKeyVault(_apiKeyVault);
-            _hasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+            HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
             RebuildApiKeyViews();
             RefreshReadinessChecklist();
             ApiKeyStatusText.Text = $"Re-verified {_apiKeyVault.Entries.Count} key(s): {verifiedCount} valid.";
@@ -2522,7 +2476,7 @@ public partial class MainWindow : Window
                     status = "VALID";
                     walletCopper = result.CoinCopper;
                     verifiedAt = DateTimeOffset.UtcNow;
-                    _hasVerifiedApiKey = true;
+                    HasVerifiedApiKey = true;
                     statusDetail = $"{accountName}" +
                                    (result.CoinCopper.HasValue ? $" • Wallet {MarketScanItem.FormatCoins(result.CoinCopper.Value)}" : string.Empty) +
                                    " — Verified & saved securely.";
@@ -2633,7 +2587,7 @@ public partial class MainWindow : Window
 
             if (result.IsValid)
             {
-                _hasVerifiedApiKey = true;
+                HasVerifiedApiKey = true;
                 var coinText = result.CoinCopper.HasValue ? $" • Wallet: {MarketScanItem.FormatCoins(result.CoinCopper.Value)}" : string.Empty;
                 var accountText = !string.IsNullOrWhiteSpace(result.AccountName) ? $"{result.AccountName}" : "Account";
                 ApiKeyStatusText.Text = $"{accountText}{coinText} — {result.Message}";
@@ -2641,7 +2595,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                _hasVerifiedApiKey = false;
+                HasVerifiedApiKey = false;
                 ApiKeyStatusText.Text = $"API key test failed: {result.Message}";
             }
 
@@ -2665,7 +2619,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _hasVerifiedApiKey = false;
+        HasVerifiedApiKey = false;
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         AddLog("Cleared stored DPAPI GW2 API key.");
@@ -2673,7 +2627,7 @@ public partial class MainWindow : Window
 
     private void LatencyProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi || LatencyProfileSelector.SelectedItem is not ComboBoxItem { Tag: string profileId })
+        if (IsLoadingUi || LatencyProfileSelector.SelectedItem is not ComboBoxItem { Tag: string profileId })
         {
             return;
         }
@@ -2690,11 +2644,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void DetectGw2_Click(object sender, RoutedEventArgs e)
+    private async void DetectGw2_Click(object sender, RoutedEventArgs e) => await DetectGw2Async();
+
+    internal async Task DetectGw2Async()
     {
         var candidates = _discoverGw2Installs();
         var detected = candidates.FirstOrDefault()?.ExecutablePath ?? _detectGw2Path();
-        var dpi = _detectDisplayScale();
+        var dpi = DetectDisplayScale();
 
         var found = !string.IsNullOrWhiteSpace(detected);
         if (found)
@@ -3013,28 +2969,7 @@ public partial class MainWindow : Window
             MarketCyclePillBorder.ToolTip = $"{info.Summary}\n{info.Advice}";
         }
 
-        var localTz = TimeZoneInfo.Local;
-        var utcToday = new DateTimeOffset(nowUtc.UtcDateTime.Date, TimeSpan.Zero);
-        var euStart = TimeZoneInfo.ConvertTime(utcToday.AddHours(17), localTz);
-        var euEnd = TimeZoneInfo.ConvertTime(utcToday.AddHours(22), localTz);
-        var resetStart = TimeZoneInfo.ConvertTime(utcToday.AddDays(1), localTz);
-        var resetEnd = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddMinutes(90), localTz);
-        var naStart = TimeZoneInfo.ConvertTime(utcToday.AddHours(22), localTz);
-        var naEnd = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddHours(4), localTz);
-        var offStart = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddHours(4), localTz);
-        var offEnd = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddHours(17), localTz);
-
-        EuPrimeTimeText.Text = $"{euStart:HH:mm}–{euEnd:HH:mm}";
-        ResetTimeText.Text = $"{resetStart:HH:mm}–{resetEnd:HH:mm}";
-        NaPrimeTimeText.Text = $"{naStart:HH:mm}–{naEnd:HH:mm}";
-        OffPeakTimeText.Text = $"{offStart:HH:mm}–{offEnd:HH:mm}";
-
-        SetScheduleTileHighlight(EuPrimeTile, info.PhaseName == "EU Prime Time");
-        SetScheduleTileHighlight(ResetTile, info.PhaseName == "Daily Reset Spike");
-        SetScheduleTileHighlight(NaPrimeTile, info.PhaseName == "NA Prime Time");
-        SetScheduleTileHighlight(OffPeakTile, info.PhaseName == "Global Off-Peak");
-
-        GuideScheduleSummaryText.Text = $"Now ({localTz.DisplayName}): {info.Summary} — {info.Advice}";
+        GuidePage.UpdateSchedule(info, nowUtc);
     }
 
     private static string ShortPhaseName(string phase) => phase switch
@@ -3101,95 +3036,9 @@ public partial class MainWindow : Window
         return total >= 60 ? $"Swap in {total / 60}h {total % 60:00}m" : $"Swap in {total}m";
     }
 
-    private void SetScheduleTileHighlight(Border tile, bool isActive)
+    internal void RefreshReadinessChecklist()
     {
-        tile.Background = isActive
-            ? ResolveBrush("AccentSoftBrush", ResolveBrush("SurfaceRaisedBrush", Brushes.DimGray))
-            : ResolveBrush("SurfaceRaisedBrush", Brushes.DimGray);
-        tile.BorderBrush = isActive
-            ? ResolveBrush("AccentBrush", Brushes.DodgerBlue)
-            : ResolveBrush("BorderBrush", Brushes.Gray);
-        tile.BorderThickness = new Thickness(isActive ? 2 : 1);
-    }
-
-    private void RefreshReadinessChecklist()
-    {
-        var passBrush = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
-        var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
-        var readyCount = 0;
-
-        var hasKey = _hasVerifiedApiKey || !string.IsNullOrWhiteSpace(ResolveConfiguredApiKey());
-        if (hasKey)
-        {
-            readyCount++;
-            CheckApiKeyIcon.Text = "\uE73E";
-            CheckApiKeyIcon.Foreground = passBrush;
-            CheckApiKeyText.Text = _hasVerifiedApiKey
-                ? "GW2 API Key verified and stored securely via Windows DPAPI."
-                : "GW2 API Key configured (click Test Key in Settings to verify scopes).";
-        }
-        else
-        {
-            CheckApiKeyIcon.Text = "\uE7BA";
-            CheckApiKeyIcon.Foreground = warnBrush;
-            CheckApiKeyText.Text = "GW2 API Key missing — add a key with account, tradingpost, wallet scopes in Settings.";
-        }
-
-        var isSteamMode = string.Equals(GetSelectedLaunchPlatform(), Gw2ClientSettings.PlatformSteam, StringComparison.OrdinalIgnoreCase);
-        var gw2Path = Gw2ExecutablePathBox.Text?.Trim();
-        var hasGw2 = isSteamMode ||
-                     (!string.IsNullOrWhiteSpace(gw2Path) &&
-                      (Win32ProcessController.IsUriLaunch(gw2Path) || File.Exists(gw2Path)));
-        if (hasGw2)
-        {
-            readyCount++;
-            CheckGw2Icon.Text = "\uE73E";
-            CheckGw2Icon.Foreground = passBrush;
-            CheckGw2Text.Text = isSteamMode
-                ? $"GW2 client configured: Steam Auto-Login ({Gw2ClientSettings.SteamLaunchUri})"
-                : $"GW2 client configured: {gw2Path}";
-        }
-        else
-        {
-            CheckGw2Icon.Text = "\uE7BA";
-            CheckGw2Icon.Foreground = warnBrush;
-            CheckGw2Text.Text = string.IsNullOrWhiteSpace(gw2Path)
-                ? "GW2 client path not set — click Auto-Detect GW2 or Browse in Settings."
-                : $"Configured GW2 path not found on disk: {gw2Path}";
-        }
-
-        var dpi = _detectDisplayScale();
-        if (dpi.IsRecommendedScale)
-        {
-            readyCount++;
-            CheckDpiIcon.Text = "\uE73E";
-            CheckDpiIcon.Foreground = passBrush;
-        }
-        else
-        {
-            CheckDpiIcon.Text = "\uE7BA";
-            CheckDpiIcon.Foreground = warnBrush;
-        }
-
-        CheckDpiText.Text = $"Windows Display Scaling: {dpi.Summary}";
-
-        var hasCandidates = _customShoppingList.Count > 0 || !string.IsNullOrWhiteSpace(CandidatesPathBox.Text);
-        if (hasCandidates)
-        {
-            readyCount++;
-            CheckCandidatesIcon.Text = "\uE73E";
-            CheckCandidatesIcon.Foreground = passBrush;
-            CheckCandidatesText.Text = _customShoppingList.Count > 0
-                ? $"Flip targets ready ({_customShoppingList.Count} custom items + optional session file)."
-                : $"Flip targets ready ({Path.GetFileName(CandidatesPathBox.Text.Trim())}).";
-        }
-        else
-        {
-            CheckCandidatesIcon.Text = "\uE7BA";
-            CheckCandidatesIcon.Foreground = warnBrush;
-            CheckCandidatesText.Text = "No flip targets loaded yet — run Market Scanner and click 'Use All for Session'.";
-        }
-
+        var readyCount = GuidePage.RefreshChecklist();
         if (_bannerDismissed || readyCount == 4)
         {
             ReadinessBanner.Visibility = Visibility.Collapsed;
@@ -3209,7 +3058,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource CreateApiCancellationTokenSource() =>
         new(TimeSpan.FromSeconds(GetConfiguredApiTimeoutSeconds()));
 
-    private string? ResolveConfiguredApiKey() =>
+    internal string? ResolveConfiguredApiKey() =>
         _apiKeyVault.ActiveEntry?.ApiKey?.Trim() is { Length: > 0 } vaultKey
             ? vaultKey
             : Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey");
@@ -3228,13 +3077,13 @@ public partial class MainWindow : Window
     private void LoadApiKeyVault()
     {
         _apiKeyVault = _loadApiKeyVault();
-        _hasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
         if (!string.IsNullOrWhiteSpace(_apiKeyVault.ActiveEntry?.LaunchPlatform))
         {
-            var wasLoading = _loadingUi;
-            _loadingUi = true;
+            var wasLoading = IsLoadingUi;
+            IsLoadingUi = true;
             SelectComboByTag(LaunchPlatformSelector, _apiKeyVault.ActiveEntry.LaunchPlatform);
-            _loadingUi = wasLoading;
+            IsLoadingUi = wasLoading;
         }
 
         RebuildApiKeyViews();
@@ -3273,8 +3122,8 @@ public partial class MainWindow : Window
                 entry.CustomName));
         }
 
-        var wasLoading = _loadingUi;
-        _loadingUi = true;
+        var wasLoading = IsLoadingUi;
+        IsLoadingUi = true;
         try
         {
             SidebarAccountSelector.Items.Clear();
@@ -3307,7 +3156,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _loadingUi = wasLoading;
+            IsLoadingUi = wasLoading;
         }
 
         IncomeActiveAccountText.Text = _apiKeyVault.ActiveEntry is { } active
@@ -3333,13 +3182,13 @@ public partial class MainWindow : Window
 
         _apiKeyVault = _apiKeyVault with { ActiveKeyId = keyId };
         _saveApiKeyVault(_apiKeyVault);
-        _hasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
         if (!string.IsNullOrWhiteSpace(_apiKeyVault.ActiveEntry?.LaunchPlatform))
         {
-            var wasLoading = _loadingUi;
-            _loadingUi = true;
+            var wasLoading = IsLoadingUi;
+            IsLoadingUi = true;
             SelectComboByTag(LaunchPlatformSelector, _apiKeyVault.ActiveEntry.LaunchPlatform);
-            _loadingUi = wasLoading;
+            IsLoadingUi = wasLoading;
         }
 
         RebuildApiKeyViews();
@@ -3391,7 +3240,7 @@ public partial class MainWindow : Window
 
         _apiKeyVault = new Gw2ApiKeyVaultData(nextActiveId, remaining);
         _saveApiKeyVault(_apiKeyVault);
-        _hasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         AddLog("Removed API key from DPAPI vault.");
@@ -3722,8 +3571,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
     private static string LimitsPath => Path.Combine(RuntimePaths.Create().Profiles, "trading-limits.json");
     private static string ClientSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "client-settings.json");
     private static string OperatorSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "operator-settings.json");
@@ -3815,7 +3662,7 @@ public partial class MainWindow : Window
             LatencyDescriptionText.Text = latencyPreset.Description;
         }
 
-        var dpi = _detectDisplayScale();
+        var dpi = DetectDisplayScale();
         var installInfo = installs.FirstOrDefault() is { } first
             ? $"{first.Kind} ({first.Source})"
             : !string.IsNullOrWhiteSpace(Gw2ExecutablePathBox.Text) ? "Configured path" : "Not detected yet";
@@ -3879,34 +3726,6 @@ public partial class MainWindow : Window
         _blacklist.Clear();
         foreach (var entry in loadBlacklist()) _blacklist.Add(entry);
         UpdateListCounts();
-    }
-
-    private static void SelectComboByContent(ComboBox combo, string? content)
-    {
-        if (string.IsNullOrWhiteSpace(content)) return;
-        for (var i = 0; i < combo.Items.Count; i++)
-        {
-            if (combo.Items[i] is ComboBoxItem item &&
-                string.Equals(item.Content?.ToString(), content, StringComparison.OrdinalIgnoreCase))
-            {
-                combo.SelectedIndex = i;
-                return;
-            }
-        }
-    }
-
-    private static void SelectComboByTag(ComboBox combo, string? tag)
-    {
-        if (string.IsNullOrWhiteSpace(tag)) return;
-        for (var i = 0; i < combo.Items.Count; i++)
-        {
-            if (combo.Items[i] is ComboBoxItem item &&
-                string.Equals(item.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
-            {
-                combo.SelectedIndex = i;
-                return;
-            }
-        }
     }
 
     private bool TryReadLimits(out TradingLimits limits)
@@ -4344,14 +4163,14 @@ public partial class MainWindow : Window
 
     private void SessionReportsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         var selected = SessionReportsListBox.SelectedItem as SessionReportListItem;
         RenderSelectedReport(selected?.Report);
     }
 
     private void ReportOutcomeFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loadingUi) return;
+        if (IsLoadingUi) return;
         ApplyReportsFilter();
     }
 
