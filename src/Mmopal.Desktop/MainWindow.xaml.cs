@@ -35,7 +35,7 @@ public partial class MainWindow : Window
     internal Func<DisplayScaleInfo> DetectDisplayScale { get; }
     private readonly TradingLedgerStore? _ledgerStore;
     internal SessionReportStore? SessionReportStore { get; }
-    private readonly IGw2MarketScanner _marketScanner;
+    internal IGw2MarketScanner MarketScanner { get; }
     private readonly Func<Gw2ApiKeyVaultData> _loadApiKeyVault;
     private readonly Action<Gw2ApiKeyVaultData> _saveApiKeyVault;
     private readonly Action _requestAppClose;
@@ -45,7 +45,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _cycleTimer;
     private readonly DispatcherTimer _sessionClockTimer;
 
-    private readonly ObservableCollection<MarketScanItem> _scanResults = new();
     private readonly ObservableCollection<ItemPnlRow> _itemPnlRows = new();
     private readonly ObservableCollection<ActiveOrderViewRow> _activeOrderRows = new();
     private readonly ObservableCollection<LedgerHistoryViewRow> _ledgerRows = new();
@@ -56,7 +55,7 @@ public partial class MainWindow : Window
     private readonly List<(DateTime Timestamp, string Human, string Raw)> _logEntries = new();
 
     private Gw2ApiKeyVaultData _apiKeyVault = new(null, Array.Empty<Gw2ApiKeyEntry>());
-    private IReadOnlyList<Gw2LedgerTransaction> _archivedTransactions = Array.Empty<Gw2LedgerTransaction>();
+    internal IReadOnlyList<Gw2LedgerTransaction> ArchivedTransactions { get; private set; } = Array.Empty<Gw2LedgerTransaction>();
     private IReadOnlyList<ItemPnlRow> _allTimeframePnlRows = Array.Empty<ItemPnlRow>();
     private TradingIncomeReport? _lastIncomeReport;
     private Gw2EquitySnapshot? _latestEquitySnapshot;
@@ -75,7 +74,6 @@ public partial class MainWindow : Window
     private DateTimeOffset? _sessionExpiresAtUtc;
     private string? _lastHandledCapReportId;
 
-    private CancellationTokenSource? _scanCancellation;
     private WorkerState _lastWorkerState = WorkerState.Idle;
     internal bool IsLoadingUi { get; set; }
     // Launch automation (account sync, first-time Auto-Tune, market scan) runs only in the real app, not in tests.
@@ -170,7 +168,7 @@ public partial class MainWindow : Window
         DetectDisplayScale = detectDisplayScale ?? (() => new DisplayScaleInfo(96, 100, true, "100% (96 DPI)"));
         _ledgerStore = ledgerStore;
         SessionReportStore = sessionReportStore;
-        _marketScanner = marketScanner ?? new Gw2MarketScanner(_gw2HttpClient, _ledgerStore);
+        MarketScanner = marketScanner ?? new Gw2MarketScanner(_gw2HttpClient, _ledgerStore);
         _loadApiKeyVault = loadApiKeyVault ?? (() => new Gw2ApiKeyVaultData(null, Array.Empty<Gw2ApiKeyEntry>()));
         _saveApiKeyVault = saveApiKeyVault ?? (_ => { });
         _requestAppClose = requestAppClose ?? Close;
@@ -186,7 +184,7 @@ public partial class MainWindow : Window
         GuidePage.Attach(this);
         ListsPage.Attach(this);
         ReportsPage.Attach(this);
-        ScanResultsGrid.ItemsSource = _scanResults;
+        ScannerPage.Attach(this);
         ItemPnlGrid.ItemsSource = _itemPnlRows;
         ActiveOrdersGrid.ItemsSource = _activeOrderRows;
         LedgerHistoryGrid.ItemsSource = _ledgerRows;
@@ -234,8 +232,7 @@ public partial class MainWindow : Window
         {
             _cycleTimer.Stop();
             _sessionClockTimer.Stop();
-            _scanCancellation?.Cancel();
-            _scanCancellation?.Dispose();
+            ScannerPage.CancelRunningScan();
             _hotkeys.Dispose();
             SaveAllSettingsSilently();
             _gw2HttpClient.Dispose();
@@ -249,7 +246,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------------
 
     /// <summary>The pages in the content area. Each page's XAML has its own namescope.</summary>
-    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage];
+    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage, ScannerPage];
 
     /// <summary>Finds a named element in the shell or in any page.</summary>
     internal object? FindElement(string name) =>
@@ -257,7 +254,7 @@ public partial class MainWindow : Window
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
     {
-        if (SessionView is null || IncomeView is null || ReportsPage.ReportsView is null || ScannerView is null ||
+        if (SessionView is null || IncomeView is null || ReportsPage.ReportsView is null || ScannerPage.ScannerView is null ||
             ListsPage.ListsView is null || SettingsView is null || GuidePage.GuideView is null)
         {
             return;
@@ -266,7 +263,7 @@ public partial class MainWindow : Window
         SessionView.Visibility = NavSession.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         IncomeView.Visibility = NavIncome.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ReportsPage.ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        ScannerPage.ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ListsPage.ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         GuidePage.GuideView.Visibility = NavGuide.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
@@ -537,7 +534,7 @@ public partial class MainWindow : Window
         if (SidebarColumn is null || SidebarBorder is null || MainContentBorder is null ||
             SidebarStatusBorder is null || SidebarStatusRow is null || SidebarStatusDot is null ||
             SessionSelectorsGrid is null || SessionKpiGrid is null || IncomeKpiGrid is null ||
-            ScannerCoreFiltersGrid is null || ScannerAdvancedFiltersGrid is null)
+            ScannerPage.ScannerCoreFiltersGrid is null || ScannerPage.ScannerAdvancedFiltersGrid is null)
         {
             return;
         }
@@ -620,8 +617,8 @@ public partial class MainWindow : Window
         if (SessionSubtitleText is not null) SessionSubtitleText.Visibility = labelVisibility;
         if (IncomeSubtitleText is not null) IncomeSubtitleText.Visibility = labelVisibility;
         if (GuidePage.GuideScheduleGrid is not null) GuidePage.GuideScheduleGrid.Columns = cardColumns;
-        ScannerCoreFiltersGrid.Columns = columns;
-        ScannerAdvancedFiltersGrid.Columns = columns;
+        ScannerPage.ScannerCoreFiltersGrid.Columns = columns;
+        ScannerPage.ScannerAdvancedFiltersGrid.Columns = columns;
         if (ReportsPage.ReportDetailKpiGrid is not null)
         {
             ReportsPage.ReportDetailKpiGrid.Columns = columns;
@@ -999,9 +996,9 @@ public partial class MainWindow : Window
 
         // Re-scan during the session only when it runs on the scanner's own list, so a hand-made list is never replaced.
         MarketScanFilter? autoRescanFilter = null;
-        if (ReadAutoRescanHours() > 0 &&
+        if (ScannerPage.ReadAutoRescanHours() > 0 &&
             string.Equals(Path.GetFullPath(NullIfBlank(CandidatesPathBox.Text) ?? "."), Path.GetFullPath(ScannedCandidatesPath), StringComparison.OrdinalIgnoreCase) &&
-            TryReadScanFilter(out var currentScanFilter, out _))
+            ScannerPage.TryReadScanFilter(out var currentScanFilter, out _))
         {
             autoRescanFilter = currentScanFilter;
         }
@@ -1029,7 +1026,7 @@ public partial class MainWindow : Window
             ActiveAccountName: ResolveActiveSqlAccountName(),
             ReportSettings: opSettings.ToSessionReportPolicy(),
             AutoRescanFilter: autoRescanFilter,
-            AutoRescanIntervalMinutes: autoRescanFilter is null ? 0 : (int)Math.Round(ReadAutoRescanHours() * 60m)), PayloadJson);
+            AutoRescanIntervalMinutes: autoRescanFilter is null ? 0 : (int)Math.Round(ScannerPage.ReadAutoRescanHours() * 60m)), PayloadJson);
         await SendAsync(new WorkerCommand(WorkerCommandTypes.Start, Guid.NewGuid().ToString("N"), bot, mode, profile, payload));
     }
 
@@ -1081,7 +1078,7 @@ public partial class MainWindow : Window
 
     private async Task ReloadLedgerForActiveAccountAsync()
     {
-        _archivedTransactions = Array.Empty<Gw2LedgerTransaction>();
+        ArchivedTransactions = Array.Empty<Gw2LedgerTransaction>();
         _latestEquitySnapshot = null;
         _latestDelivery = null;
         _latestActiveOrders.Clear();
@@ -1101,15 +1098,15 @@ public partial class MainWindow : Window
         {
             await _ledgerStore.InitializeAsync();
             var accountFilter = ResolveActiveSqlAccountName();
-            _archivedTransactions = await _ledgerStore.GetTransactionsAsync(accountFilter);
+            ArchivedTransactions = await _ledgerStore.GetTransactionsAsync(accountFilter);
             var snapshots = await _ledgerStore.GetEquitySnapshotsAsync(null, accountFilter);
             _equitySnapshots = snapshots;
             _latestEquitySnapshot = snapshots.LastOrDefault();
-            if (_archivedTransactions.Count > 0 || _latestEquitySnapshot is not null)
+            if (ArchivedTransactions.Count > 0 || _latestEquitySnapshot is not null)
             {
                 var acctLabel = _apiKeyVault.ActiveEntry?.DisplayLabel ?? "local archive";
                 IncomeSyncStatusText.Text =
-                    $"Loaded {_archivedTransactions.Count:N0} archived transactions for {acctLabel}." +
+                    $"Loaded {ArchivedTransactions.Count:N0} archived transactions for {acctLabel}." +
                     (_latestEquitySnapshot is not null
                         ? $" Last equity snapshot: {_latestEquitySnapshot.CapturedAt.ToLocalTime():g}."
                         : string.Empty);
@@ -1173,7 +1170,7 @@ public partial class MainWindow : Window
                 RebuildApiKeyViews();
             }
 
-            _archivedTransactions = await _ledgerStore.GetTransactionsAsync(resolvedAccount);
+            ArchivedTransactions = await _ledgerStore.GetTransactionsAsync(resolvedAccount);
             _latestEquitySnapshot = result.LatestSnapshot;
             _equitySnapshots = await _ledgerStore.GetEquitySnapshotsAsync(null, resolvedAccount);
             _latestDelivery = result.Delivery;
@@ -1309,10 +1306,10 @@ public partial class MainWindow : Window
         }
 
         SetLaunchStep(LaunchScanText, LaunchStep.Running, "Scanning the market (~1 min)…");
-        if (await RunMarketScanCoreAsync(useCachedPrices: false))
+        if (await ScannerPage.RunMarketScanCoreAsync(useCachedPrices: false))
         {
             var listNote = RefreshSessionListAfterLaunchScan();
-            SetLaunchStep(LaunchScanText, LaunchStep.Done, $"{_scanResults.Count} flips found{listNote}");
+            SetLaunchStep(LaunchScanText, LaunchStep.Done, $"{ScannerPage.ScanResults.Count} flips found{listNote}");
         }
         else
         {
@@ -1354,7 +1351,7 @@ public partial class MainWindow : Window
         {
             // With Auto-Tune each session off, the operator tunes by hand: only suggest.
             var hint = $"Your wallet ({MarketScanItem.FormatCoins(wallet)}) now fits the '{preset.Name}' preset (last tuned: '{_lastAutoTunedPreset}'). Click Auto-Tune to switch.";
-            ScanStatusText.Text = hint;
+            ScannerPage.ScanStatusText.Text = hint;
             AddLog("Launch: " + hint);
             return (LaunchStep.Skipped, $"Auto-Tune off: '{ShortPresetName(preset.Name)}' fits now");
         }
@@ -1371,7 +1368,7 @@ public partial class MainWindow : Window
     /// <summary>Returns a short note for the Startup strip when the session list was replaced.</summary>
     private string RefreshSessionListAfterLaunchScan()
     {
-        if (_scanResults.Count == 0)
+        if (ScannerPage.ScanResults.Count == 0)
         {
             return string.Empty;
         }
@@ -1385,8 +1382,8 @@ public partial class MainWindow : Window
                 return string.Empty;
             }
 
-            BindScanResultsToSession();
-            AddLog($"Launch: no session list was set, so the fresh scan ({_scanResults.Count} items) is now the session list.");
+            ScannerPage.BindScanResultsToSession();
+            AddLog($"Launch: no session list was set, so the fresh scan ({ScannerPage.ScanResults.Count} items) is now the session list.");
             return " · now the session list";
         }
 
@@ -1395,14 +1392,14 @@ public partial class MainWindow : Window
             return " · your own list kept";
         }
 
-        var intervalHours = ReadAutoRescanHours();
+        var intervalHours = ScannerPage.ReadAutoRescanHours();
         var age = File.Exists(ScannedCandidatesPath)
             ? DateTime.UtcNow - File.GetLastWriteTimeUtc(ScannedCandidatesPath)
             : TimeSpan.MaxValue;
         if (intervalHours > 0 && age >= TimeSpan.FromHours((double)intervalHours))
         {
-            BindScanResultsToSession();
-            AddLog($"Launch: the scanned session list was {FormatAge(age)} old; replaced with today's scan ({_scanResults.Count} items).");
+            ScannerPage.BindScanResultsToSession();
+            AddLog($"Launch: the scanned session list was {FormatAge(age)} old; replaced with today's scan ({ScannerPage.ScanResults.Count} items).");
             return " · session list refreshed";
         }
 
@@ -1414,7 +1411,7 @@ public partial class MainWindow : Window
 
     private void UpdateLosingItemsPanel()
     {
-        var guidance = PortfolioProfitAdvisor.BuildGuidance(_archivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
+        var guidance = PortfolioProfitAdvisor.BuildGuidance(ArchivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
         var blacklisted = ListsPage.Blacklist.Select(ItemNameNormalizer.Normalize).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _losingItems = (guidance.LosingItems ?? Array.Empty<string>())
             .Where(name => !blacklisted.Contains(ItemNameNormalizer.Normalize(name)))
@@ -1445,20 +1442,6 @@ public partial class MainWindow : Window
         AddLog($"Blacklisted losing items: {string.Join(", ", items)}");
     }
 
-    /// <summary>Labels each scan row with what your own last 30 days of trades say about it.</summary>
-    private IReadOnlyList<MarketScanItem> AnnotateWithHistory(IReadOnlyList<MarketScanItem> items)
-    {
-        if (_archivedTransactions.Count == 0)
-        {
-            return items;
-        }
-
-        var guidance = PortfolioProfitAdvisor.BuildGuidance(_archivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
-        return items
-            .Select(item => guidance.TryGetAdvice(item.ItemId, item.ItemName) is { } advice ? item with { HistoryNote = advice.ShortLabel } : item)
-            .ToArray();
-    }
-
     private void IncomeTimeframe_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (IsLoadingUi) return;
@@ -1486,7 +1469,7 @@ public partial class MainWindow : Window
 
     private void ExportLedgerCsv_Click(object sender, RoutedEventArgs e)
     {
-        if (_archivedTransactions.Count == 0)
+        if (ArchivedTransactions.Count == 0)
         {
             IncomeSyncStatusText.Text = "No archived transactions to export yet. Click Sync GW2 Account first.";
             return;
@@ -1500,21 +1483,21 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog(this) != true) return;
 
-        TradingIncomeAnalytics.ExportLedgerCsv(dialog.FileName, _archivedTransactions);
-        IncomeSyncStatusText.Text = $"Exported {_archivedTransactions.Count:N0} transactions to {Path.GetFileName(dialog.FileName)}.";
-        AddLog($"Exported synced ledger ({_archivedTransactions.Count} rows) to {dialog.FileName}.");
+        TradingIncomeAnalytics.ExportLedgerCsv(dialog.FileName, ArchivedTransactions);
+        IncomeSyncStatusText.Text = $"Exported {ArchivedTransactions.Count:N0} transactions to {Path.GetFileName(dialog.FileName)}.";
+        AddLog($"Exported synced ledger ({ArchivedTransactions.Count} rows) to {dialog.FileName}.");
     }
 
     private void RecomputeIncomeDashboard()
     {
         var windowStart = ResolveSelectedTimeframeStartUtc();
-        var report = TradingIncomeAnalytics.Analyze(_archivedTransactions, windowStart);
+        var report = TradingIncomeAnalytics.Analyze(ArchivedTransactions, windowStart);
         _lastIncomeReport = report;
         _allTimeframePnlRows = report.ItemLeaderboard;
 
         var nowUtc = DateTimeOffset.UtcNow;
         IncomeMatchedProfitText.Text = MarketScanItem.FormatCoins(report.MatchedProfitCopper);
-        var fees = IncomeInsights.FeesPaid(_archivedTransactions, windowStart);
+        var fees = IncomeInsights.FeesPaid(ArchivedTransactions, windowStart);
         IncomeMatchedSubText.Text =
             $"ROI {report.MatchedRoiPercent:0.0}% · {report.MatchedUnitsSold:N0} sold · fees {MarketScanItem.FormatCoins(fees)}";
         IncomeMatchedSubText.ToolTip = $"Return on cost {report.MatchedRoiPercent:0.0}%, {report.MatchedUnitsSold:N0} units sold, {MarketScanItem.FormatCoins(fees)} paid in listing and exchange fees.";
@@ -1560,7 +1543,7 @@ public partial class MainWindow : Window
             IncomeOrdersSubText.Text = $"{_openBuyCount} orders • {_outbidBuyCount} outbid";
         }
 
-        var shelf = IncomeInsights.Shelf(_latestActiveOrders, _archivedTransactions, nowUtc);
+        var shelf = IncomeInsights.Shelf(_latestActiveOrders, ArchivedTransactions, nowUtc);
         IncomeDeliveryText.Text = shelf.Listings == 0 ? "—" : MarketScanItem.FormatCoins(shelf.ListedNetCopper);
         IncomeUnmatchedText.Text = shelf.Listings == 0
             ? "No listings"
@@ -1578,7 +1561,7 @@ public partial class MainWindow : Window
         ApplyItemPnlSearchFilter();
 
         _ledgerRows.Clear();
-        var filteredLedger = _archivedTransactions
+        var filteredLedger = ArchivedTransactions
             .Where(t => !windowStart.HasValue || t.PurchasedAt >= windowStart.Value)
             .OrderByDescending(t => t.PurchasedAt)
             .ThenByDescending(t => t.Id)
@@ -1734,21 +1717,12 @@ public partial class MainWindow : Window
     }
 
     // ---------------------------------------------------------------------
-    // Market Scanner (Built-in Profitable Item Finder)
+    // Auto-Tune (trading values from the wallet and recent results)
     // ---------------------------------------------------------------------
 
-    private void ApplyScannerPreset_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.CommandParameter is not string presetName) return;
-        var preset = TradingStrategyPresets.FindByName(presetName);
-        if (preset is null) return;
+    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e) => await AutoTuneForWalletAsync(sender as Button);
 
-        ApplyStrategyPresetToScanner(preset);
-        ScanStatusText.Text = $"Applied '{preset.Name}' preset: {preset.Rationale}";
-        AddLog($"Scanner Preset '{preset.Name}': {preset.Description}");
-    }
-
-    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e)
+    internal async Task AutoTuneForWalletAsync(Button? sender)
     {
         // Clicking Auto-Tune is an explicit "decide for me": hand-set values go back to Auto-Tune. The automatic runs
         // (launch, Start session) keep them.
@@ -1759,7 +1733,7 @@ public partial class MainWindow : Window
             UpdateAutoTuneKeepsHint();
         }
 
-        await RunAutoTuneAsync(sender as Button ?? AutoTuneSettingsButton);
+        await RunAutoTuneAsync(sender ?? AutoTuneSettingsButton);
     }
 
     private async Task<AutoTuneResult> RunAutoTuneAsync(Button? feedbackButton)
@@ -1797,7 +1771,7 @@ public partial class MainWindow : Window
         var tune = ApplySmartAutoTune(capitalCopper);
         var message = $"Auto-tuned from {sourceLabel}: {tune.Summary}";
         StatusText.Text = message;
-        ScanStatusText.Text = message;
+        ScannerPage.ScanStatusText.Text = message;
         AddLog($"Auto-Tune ({sourceLabel}): {tune.Summary}");
         if (feedbackButton is not null)
         {
@@ -1811,17 +1785,17 @@ public partial class MainWindow : Window
     private AutoTuneResult ApplySmartAutoTune(long walletCopper)
     {
         var snapshot = _latestEquitySnapshot;
-        var recent = _archivedTransactions.Count == 0
+        var recent = ArchivedTransactions.Count == 0
             ? null
-            : TradingIncomeAnalytics.Analyze(_archivedTransactions, DateTimeOffset.UtcNow.AddDays(-SmartAutoTuner.ResultsWindowDays));
+            : TradingIncomeAnalytics.Analyze(ArchivedTransactions, DateTimeOffset.UtcNow.AddDays(-SmartAutoTuner.ResultsWindowDays));
         var tune = SmartAutoTuner.Tune(new AutoTuneInputs(
             walletCopper,
             snapshot?.ActiveBuysCopper ?? 0,
             snapshot?.ActiveSellsNetCopper ?? 0,
             recent));
-        ApplyStrategyPresetToScanner(tune.Preset);
+        ScannerPage.ApplyStrategyPresetToScanner(tune.Preset);
         ApplyStrategyPresetToSettings(tune.Preset);
-        ScanMinTradesPerDayBox.Text = tune.MinTradesPerDay.ToString(CultureInfo.CurrentCulture);
+        ScannerPage.ScanMinTradesPerDayBox.Text = tune.MinTradesPerDay.ToString(CultureInfo.CurrentCulture);
         _lastAutoTunedPreset = tune.Preset.Name;
         SaveAllSettingsSilently();
         RefreshReadinessChecklist();
@@ -1831,7 +1805,7 @@ public partial class MainWindow : Window
         }
 
         var tip = $"Last Auto-Tune ({DateTime.Now:g}): {tune.Summary}";
-        AutoTuneScannerButton.ToolTip = tip;
+        ScannerPage.AutoTuneScannerButton.ToolTip = tip;
         AutoTuneSettingsButton.ToolTip = tip;
         return tune;
     }
@@ -1846,18 +1820,6 @@ public partial class MainWindow : Window
 
         var tune = ApplySmartAutoTune(snapshot.WalletCopper);
         AddLog($"Auto-Tune before session (gold as of the last account sync): {tune.Summary}");
-    }
-
-    private void ApplyStrategyPresetToScanner(TradingStrategyPreset preset)
-    {
-        ScanMinRoiBox.Text = preset.MinRoiPercent.ToString(CultureInfo.InvariantCulture);
-        ScanMaxRoiBox.Text = preset.MaxRoiPercent.ToString(CultureInfo.InvariantCulture);
-        ScanMinProfitSilverBox.Text = preset.MinProfitSilver.ToString(CultureInfo.InvariantCulture);
-        ScanMinBuySilverBox.Text = preset.MinBuySilver.ToString(CultureInfo.InvariantCulture);
-        ScanMaxBuyGoldBox.Text = preset.MaxBuyGold.ToString(CultureInfo.InvariantCulture);
-        ScanMinSupplyBox.Text = preset.MinSupply.ToString(CultureInfo.InvariantCulture);
-        ScanMinDemandBox.Text = preset.MinDemand.ToString(CultureInfo.InvariantCulture);
-        SelectComboByTag(ScanCategorySelector, preset.PreferredCategory);
     }
 
     private void TunedField_TextChanged(object sender, TextChangedEventArgs e)
@@ -1926,167 +1888,6 @@ public partial class MainWindow : Window
 
         // Session cap and character-swap interval are the operator's own schedule, not a function of wallet size,
         // so Auto-Tune leaves them as configured.
-    }
-
-    private void ScanMarket_Click(object sender, RoutedEventArgs e) => RunMarketScanAsync(useCachedPrices: false);
-
-    private void ReFilterCachedScan_Click(object sender, RoutedEventArgs e) => RunMarketScanAsync(useCachedPrices: true);
-
-    private async void RunMarketScanAsync(bool useCachedPrices) => await RunMarketScanCoreAsync(useCachedPrices);
-
-    private async Task<bool> RunMarketScanCoreAsync(bool useCachedPrices)
-    {
-        if (!TryReadScanFilter(out var filter, out var error))
-        {
-            ScanStatusText.Text = error ?? "Invalid scanner filter.";
-            return false;
-        }
-
-        _scanCancellation?.Cancel();
-        _scanCancellation?.Dispose();
-        _scanCancellation = new CancellationTokenSource();
-        var ct = _scanCancellation.Token;
-
-        ScanMarketButton.IsEnabled = false;
-        ReFilterButton.IsEnabled = false;
-        CancelScanButton.IsEnabled = true;
-        ScanProgressBar.Value = 0;
-        ScanStatusText.Text = useCachedPrices
-            ? "Re-filtering cached Trading Post prices..."
-            : "Starting GW2 API market scan...";
-
-        var progress = new Progress<MarketScanProgress>(p =>
-        {
-            ScanProgressBar.Value = p.TotalItems > 0 ? Math.Min(100, p.ScannedItems * 100.0 / p.TotalItems) : 5;
-            ScanStatusText.Text = p.TotalItems > 0
-                ? $"{p.Phase} ({p.ScannedItems:N0}/{p.TotalItems:N0} checked • {p.MatchesFound:N0} matches)"
-                : p.Phase;
-        });
-
-        try
-        {
-            var blacklistSnapshot = ListsPage.Blacklist.ToArray();
-            IReadOnlyList<MarketScanItem> items;
-            if (useCachedPrices && _marketScanner is Gw2MarketScanner concreteScanner && concreteScanner.HasCachedScan)
-            {
-                items = await concreteScanner.ReFilterCachedAsync(filter, blacklistSnapshot, progress, ct);
-            }
-            else
-            {
-                items = await _marketScanner.ScanAsync(filter, blacklistSnapshot, progress, ct);
-            }
-
-            items = AnnotateWithHistory(items);
-            _scanResults.Clear();
-            foreach (var item in items)
-            {
-                _scanResults.Add(item);
-            }
-
-            ScanProgressBar.Value = 100;
-            var spikeNote = _marketScanner is Gw2MarketScanner { LastSpikesSkipped: > 0 } spikeScanner
-                ? $" Skipped {spikeScanner.LastSpikesSkipped} price spike(s) vs the 7-day average."
-                : string.Empty;
-            ScanStatusText.Text = $"Found {items.Count} profitable items matching your filters.{spikeNote}";
-            AddLog($"Market Scanner: Found {items.Count} profitable items.{spikeNote}");
-            SaveOperatorSettingsIfValid();
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            ScanStatusText.Text = "Market scan cancelled.";
-        }
-        catch (Exception exception)
-        {
-            ScanStatusText.Text = $"Scan failed: {exception.Message}";
-            AddLog($"ERROR (Market Scanner): {exception.Message}");
-        }
-        finally
-        {
-            ScanMarketButton.IsEnabled = true;
-            ReFilterButton.IsEnabled = true;
-            CancelScanButton.IsEnabled = false;
-        }
-
-        return false;
-    }
-
-    private void CancelScan_Click(object sender, RoutedEventArgs e) => _scanCancellation?.Cancel();
-
-    private async void ImportScannerFile_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Import GW2BLTC / GW2Profits CSV or JSON",
-            Filter = "Supported Lists (*.csv;*.json)|*.csv;*.json|All Files (*.*)|*.*"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        try
-        {
-            var imported = await Gw2MarketScanner.ImportFromFileAsync(dialog.FileName);
-            _scanResults.Clear();
-            foreach (var item in imported)
-            {
-                _scanResults.Add(item);
-            }
-
-            ScanStatusText.Text = $"Imported {imported.Count} items from {Path.GetFileName(dialog.FileName)}.";
-            AddLog($"Imported {imported.Count} items into Market Scanner from {dialog.FileName}.");
-        }
-        catch (Exception exception)
-        {
-            ScanStatusText.Text = $"Import failed: {exception.Message}";
-        }
-    }
-
-    private async void UseScanResultsForSession_Click(object sender, RoutedEventArgs e)
-    {
-        if (_scanResults.Count == 0)
-        {
-            ScanStatusText.Text = "No scanned items to send to session yet.";
-            return;
-        }
-
-        BindScanResultsToSession();
-        AddLog($"Bound {_scanResults.Count} scanned items to session candidates.");
-        await FlashButtonFeedbackAsync(UseScanResultsButton, "✓ Sent to Session");
-    }
-
-    private void BindScanResultsToSession()
-    {
-        var path = ScannedCandidatesPath;
-        OperatorListsStore.SaveShoppingList(path, _scanResults.Select(item => item.ToCandidate()));
-        CandidatesPathBox.Text = path;
-        SaveOperatorSettingsIfValid();
-        RefreshReadinessChecklist();
-        ScanStatusText.Text = $"Saved {_scanResults.Count} items to session candidates ({Path.GetFileName(path)}).";
-    }
-
-    private void AddSelectedScanToCustomList_Click(object sender, RoutedEventArgs e)
-    {
-        if (ScanResultsGrid.SelectedItem is not MarketScanItem selected)
-        {
-            ScanStatusText.Text = "Select an item in the table first.";
-            return;
-        }
-
-        ListsPage.AddOrReplaceCustomCandidate(selected.ToCandidate());
-        RefreshReadinessChecklist();
-        ScanStatusText.Text = $"Added '{selected.ItemName}' to Custom Shopping List.";
-    }
-
-    private void BlacklistSelectedScanItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (ScanResultsGrid.SelectedItem is not MarketScanItem selected)
-        {
-            ScanStatusText.Text = "Select an item in the table first.";
-            return;
-        }
-
-        ListsPage.AddBlacklistEntry(selected.ItemName);
-        _scanResults.Remove(selected);
-        ScanStatusText.Text = $"Blacklisted '{selected.ItemName}'.";
     }
 
     // ---------------------------------------------------------------------
@@ -3269,100 +3070,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool TryReadScanFilter(out MarketScanFilter filter, out string? error)
-    {
-        filter = new MarketScanFilter();
-        error = null;
-        if (!decimal.TryParse(ScanMinRoiBox.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var minRoi) || minRoi < 0)
-        {
-            error = "Min ROI % must be 0 or greater.";
-            return false;
-        }
-
-        decimal? maxRoi = null;
-        if (!string.IsNullOrWhiteSpace(ScanMaxRoiBox.Text))
-        {
-            if (!decimal.TryParse(ScanMaxRoiBox.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedMaxRoi) || parsedMaxRoi <= 0)
-            {
-                error = "Max ROI % must be greater than 0, or blank.";
-                return false;
-            }
-
-            maxRoi = parsedMaxRoi;
-        }
-
-        if (!decimal.TryParse(ScanMinProfitSilverBox.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var minProfitSilver) || minProfitSilver < 0)
-        {
-            error = "Min Profit (silver) must be 0 or greater.";
-            return false;
-        }
-
-        if (!decimal.TryParse(ScanMinBuySilverBox.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var minBuySilver) || minBuySilver < 0)
-        {
-            error = "Min Buy (silver) must be 0 or greater.";
-            return false;
-        }
-
-        long? maxBuyCopper = null;
-        if (!string.IsNullOrWhiteSpace(ScanMaxBuyGoldBox.Text))
-        {
-            if (!decimal.TryParse(ScanMaxBuyGoldBox.Text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var maxBuyGold) || maxBuyGold <= 0)
-            {
-                error = "Max Buy (gold) must be positive or blank.";
-                return false;
-            }
-
-            maxBuyCopper = (long)decimal.Round(maxBuyGold * 10_000m, 0, MidpointRounding.AwayFromZero);
-        }
-
-        if (!long.TryParse(ScanMinSupplyBox.Text.Trim(), out var minSupply) || minSupply < 0 ||
-            !long.TryParse(ScanMinDemandBox.Text.Trim(), out var minDemand) || minDemand < 0)
-        {
-            error = "Min Supply and Min Demand must be whole numbers 0 or greater.";
-            return false;
-        }
-
-        var minTradesText = ScanMinTradesPerDayBox.Text.Trim();
-        double minTradesPerDay = 0;
-        if (minTradesText.Length > 0 &&
-            (!double.TryParse(minTradesText, NumberStyles.Number, CultureInfo.CurrentCulture, out minTradesPerDay) || minTradesPerDay < 0))
-        {
-            error = "Min trades/day must be a number 0 or greater (0 = off).";
-            return false;
-        }
-
-        var rarity = (ScanRaritySelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        var itemType = (ScanCategorySelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        var sortMode = (ScanSortSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? MarketScanSortModes.GoldPerDay;
-        var scopeText = (ScanScopeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "2000";
-        var maxScan = int.TryParse(scopeText, out var parsedScope) ? parsedScope : 2000;
-        var defaultQty = long.TryParse(DefaultQuantityBox.Text.Trim(), out var parsedQty) && parsedQty > 0 ? parsedQty : 1;
-        var overbid = int.TryParse(OverbidMinBox.Text.Trim(), out var parsedOb) && parsedOb >= 0 ? parsedOb : 0;
-        var undercut = int.TryParse(UndercutMinBox.Text.Trim(), out var parsedUc) && parsedUc >= 0 ? parsedUc : 0;
-
-        filter = new MarketScanFilter(
-            MinimumProfitPercentage: minRoi,
-            MinimumProfitCopper: (long)decimal.Round(minProfitSilver * 100m, 0, MidpointRounding.AwayFromZero),
-            MinimumBuyPriceCopper: (long)decimal.Round(minBuySilver * 100m, 0, MidpointRounding.AwayFromZero),
-            MaximumBuyPriceCopper: maxBuyCopper,
-            MinimumSupply: minSupply,
-            MinimumDemand: minDemand,
-            Rarity: rarity,
-            MaxItemsToScan: maxScan,
-            MaxResults: 150,
-            DefaultQuantity: defaultQty,
-            MaximumProfitPercentage: maxRoi,
-            ItemType: itemType,
-            OverbidCopper: overbid,
-            UndercutCopper: undercut,
-            CheckWallDepth: ScanCheckWallsCheckBox.IsChecked == true,
-            IncludeDataWarsVelocity: ScanVelocityCheckBox.IsChecked == true,
-            SortMode: sortMode,
-            MinimumDailyTrades: minTradesPerDay,
-            SkipPriceSpikes: ScanSkipSpikesCheckBox.IsChecked == true);
-        return true;
-    }
-
     private static string LimitsPath => Path.Combine(RuntimePaths.Create().Profiles, "trading-limits.json");
     private static string ClientSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "client-settings.json");
     private static string OperatorSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "operator-settings.json");
@@ -3370,12 +3077,8 @@ public partial class MainWindow : Window
     private static string ApiKeyVaultPath => Path.Combine(RuntimePaths.Create().Profiles, "gw2-api-keys.dpapi");
     internal static string CustomShoppingListPath => Path.Combine(RuntimePaths.Create().Profiles, "custom-shoppinglist.json");
     internal static string BlacklistStorePath => Path.Combine(RuntimePaths.Create().Profiles, "blacklist.json");
-    private decimal ReadAutoRescanHours() =>
-        decimal.TryParse(AutoRescanHoursBox?.Text?.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out var hours) && hours > 0
-            ? Math.Min(hours, 24m)
-            : 0m;
 
-    private static string ScannedCandidatesPath => Path.Combine(RuntimePaths.Create().Profiles, "scanned-candidates.json");
+    internal static string ScannedCandidatesPath => Path.Combine(RuntimePaths.Create().Profiles, "scanned-candidates.json");
     private static string LedgerDbPath => RuntimePaths.Create().Database;
 
     private static string ResolveTemplateRootDirectory()
@@ -3488,10 +3191,10 @@ public partial class MainWindow : Window
         FixturePathBox.Text = settings.FixturePath ?? string.Empty;
         RecordPathBox.Text = settings.RecordPath ?? string.Empty;
         CaptureFramesCheckBox.IsChecked = settings.CaptureFrames;
-        ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
+        ScannerPage.ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
         AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
-        AutoRescanHoursBox.Text = settings.AutoRescanHours.ToString(CultureInfo.CurrentCulture);
-        ApplyScannerUiState(settings.Scanner);
+        ScannerPage.AutoRescanHoursBox.Text = settings.AutoRescanHours.ToString(CultureInfo.CurrentCulture);
+        ScannerPage.ApplyScannerUiState(settings.Scanner);
         AutomateOnLaunchCheckBox.IsChecked = settings.AutomateOnLaunch;
         AutoTuneEachSessionCheckBox.IsChecked = settings.AutoTuneEachSession;
         _autoTuneKeeps.Clear();
@@ -3637,9 +3340,9 @@ public partial class MainWindow : Window
             FixturePath: NullIfBlank(FixturePathBox.Text),
             RecordPath: NullIfBlank(RecordPathBox.Text),
             CaptureFrames: CaptureFramesCheckBox.IsChecked == true,
-            EnableDataWarsVelocity: ScanVelocityCheckBox.IsChecked == true,
+            EnableDataWarsVelocity: ScannerPage.ScanVelocityCheckBox.IsChecked == true,
             AutoListBoughtFlipItems: AutoSellInventoryCheckBox.IsChecked == true,
-            AutoRescanHours: ReadAutoRescanHours(),
+            AutoRescanHours: ScannerPage.ReadAutoRescanHours(),
             AutoDockSideBySideWhenRunning: AutoDockBesideGw2CheckBox.IsChecked == true,
             UsePortfolioIntelligence: UsePortfolioIntelligenceCheckBox.IsChecked == true,
             SaveSessionReports: SaveSessionReportsCheckBox.IsChecked == true,
@@ -3648,57 +3351,13 @@ public partial class MainWindow : Window
             ReportAlwaysSaveIfTradesOccurred: ReportSaveOnTradesCheckBox.IsChecked == true,
             ReportAlwaysSaveOnErrors: ReportSaveOnErrorsCheckBox.IsChecked == true,
             MaxSavedSessionReports: maxSavedReports,
-            Scanner: CaptureScannerUiState(),
+            Scanner: ScannerPage.CaptureScannerUiState(),
             AutomateOnLaunch: AutomateOnLaunchCheckBox.IsChecked == true,
             LastAutoTunedPreset: _lastAutoTunedPreset,
             AutoTuneEachSession: AutoTuneEachSessionCheckBox.IsChecked == true,
             AutoTuneKeeps: _autoTuneKeeps.Count == 0 ? null : _autoTuneKeeps.OrderBy(key => key, StringComparer.Ordinal).ToArray());
         ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
         return true;
-    }
-
-    private ScannerUiState CaptureScannerUiState()
-    {
-        static string? TagOf(ComboBox box) => (box.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        return new ScannerUiState(
-            MinRoi: ScanMinRoiBox.Text.Trim(),
-            MaxRoi: ScanMaxRoiBox.Text.Trim(),
-            MinProfitSilver: ScanMinProfitSilverBox.Text.Trim(),
-            MinBuySilver: ScanMinBuySilverBox.Text.Trim(),
-            MaxBuyGold: ScanMaxBuyGoldBox.Text.Trim(),
-            MinSupply: ScanMinSupplyBox.Text.Trim(),
-            MinDemand: ScanMinDemandBox.Text.Trim(),
-            MinTradesPerDay: ScanMinTradesPerDayBox.Text.Trim(),
-            Rarity: TagOf(ScanRaritySelector),
-            Category: TagOf(ScanCategorySelector),
-            Sort: TagOf(ScanSortSelector),
-            Scope: TagOf(ScanScopeSelector),
-            CheckWalls: ScanCheckWallsCheckBox.IsChecked == true,
-            ShowTradesPerDay: ScanVelocityCheckBox.IsChecked == true,
-            SkipPriceSpikes: ScanSkipSpikesCheckBox.IsChecked == true);
-    }
-
-    private void ApplyScannerUiState(ScannerUiState? state)
-    {
-        if (state is null)
-        {
-            return;
-        }
-
-        ScanMinRoiBox.Text = state.MinRoi;
-        ScanMaxRoiBox.Text = state.MaxRoi;
-        ScanMinProfitSilverBox.Text = state.MinProfitSilver;
-        ScanMinBuySilverBox.Text = state.MinBuySilver;
-        ScanMaxBuyGoldBox.Text = state.MaxBuyGold;
-        ScanMinSupplyBox.Text = state.MinSupply;
-        ScanMinDemandBox.Text = state.MinDemand;
-        ScanMinTradesPerDayBox.Text = state.MinTradesPerDay;
-        if (state.Rarity is not null) SelectComboByTag(ScanRaritySelector, state.Rarity);
-        if (state.Category is not null) SelectComboByTag(ScanCategorySelector, state.Category);
-        if (state.Sort is not null) SelectComboByTag(ScanSortSelector, state.Sort);
-        if (state.Scope is not null) SelectComboByTag(ScanScopeSelector, state.Scope);
-        ScanCheckWallsCheckBox.IsChecked = state.CheckWalls;
-        ScanSkipSpikesCheckBox.IsChecked = state.SkipPriceSpikes;
     }
 
     internal void SaveOperatorSettingsIfValid()
