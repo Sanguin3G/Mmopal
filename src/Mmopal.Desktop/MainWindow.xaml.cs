@@ -1167,8 +1167,8 @@ public partial class MainWindow : Window
             ? Math.Clamp(notification.ShutdownCountdownSeconds, 10, 600)
             : 15;
         var summaryNote = notification.Saved
-            ? $"Session finished after {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)} — report archived."
-            : $"Session finished after {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)}.";
+            ? $"Reached the {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)} session cap · report saved in Session Reports"
+            : $"Reached the {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)} session cap";
 
         if (!IsVisible)
         {
@@ -1200,7 +1200,8 @@ public partial class MainWindow : Window
                     _requestAppClose();
                 }
             },
-            onCloseAppOnly: _requestAppClose)
+            onCloseAppOnly: _requestAppClose,
+            report: notification.Report)
         {
             Owner = this
         };

@@ -1,8 +1,8 @@
 <Window x:Class="Mmopal.Desktop.SessionCompletionWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Mmopal — Session Cap Reached"
-        Width="470"
+        Title="Mmopal — Session complete"
+        Width="460"
         SizeToContent="Height"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
@@ -10,88 +10,105 @@
         ShowInTaskbar="True"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         Foreground="{DynamicResource TextPrimaryBrush}"
-        Background="{DynamicResource AppBackgroundBrush}">
-    <Border Background="{DynamicResource SurfaceBrush}"
-            BorderBrush="{DynamicResource BorderBrush}"
-            BorderThickness="1"
-            CornerRadius="12"
-            Margin="14"
-            Padding="22,20">
-        <StackPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                <Border Width="38" Height="38" CornerRadius="10" Background="{DynamicResource AccentSoftBrush}" Margin="0,0,12,0">
-                    <TextBlock x:Name="ModeIconText"
-                               Text="&#xE7E8;"
-                               FontFamily="Segoe MDL2 Assets"
-                               FontSize="18"
-                               Foreground="{DynamicResource WarningBrush}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                </Border>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="HeadlineText"
-                               Text="Max Session Duration Reached"
-                               FontSize="17"
-                               FontWeight="Bold" />
-                    <TextBlock x:Name="SubheadlineText"
-                               Text="Trade session finalized and saved safely."
-                               FontSize="12"
-                               Foreground="{DynamicResource TextSecondaryBrush}"
-                               Margin="0,2,0,0" />
-                </StackPanel>
-            </StackPanel>
+        Background="{DynamicResource SurfaceBrush}">
+    <Window.Resources>
+        <Style x:Key="StatValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="StatLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+        </Style>
+    </Window.Resources>
 
-            <Border Background="{DynamicResource SurfaceRaisedBrush}"
-                    BorderBrush="{DynamicResource BorderSubtleBrush}"
-                    BorderThickness="1"
-                    CornerRadius="9"
-                    Padding="14,12"
-                    Margin="0,4,0,14">
-                <StackPanel>
-                    <TextBlock x:Name="BodyMessageText"
-                               Text="Guild Wars 2 was closed cleanly. Automated action will run when the countdown reaches zero unless cancelled."
-                               FontSize="12.5"
-                               Foreground="{DynamicResource TextSecondaryBrush}"
-                               TextWrapping="Wrap" />
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,6" VerticalAlignment="Center">
-                        <TextBlock Text="Time remaining:"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource TextSecondaryBrush}"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,8,0" />
-                        <TextBlock x:Name="CountdownSecondsText"
-                                   Text="60s"
-                                   FontSize="22"
-                                   FontWeight="Bold"
-                                   Foreground="{DynamicResource GoldAccentBrush}"
-                                   VerticalAlignment="Center" />
-                    </StackPanel>
-                    <ProgressBar x:Name="CountdownProgressBar"
-                                 Height="7"
-                                 Minimum="0"
-                                 Maximum="60"
-                                 Value="60"
-                                 Foreground="{DynamicResource WarningBrush}"
-                                 Background="{DynamicResource AppBackgroundBrush}" />
-                </StackPanel>
+    <StackPanel Margin="22,20,22,18">
+        <!-- Header: what happened, in one glance -->
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="ModeIconBorder" Width="42" Height="42" CornerRadius="21" Background="{DynamicResource AccentSoftBrush}" Margin="0,0,14,0" VerticalAlignment="Top">
+                <TextBlock x:Name="ModeIconText"
+                           Text="&#xE73E;"
+                           FontFamily="Segoe MDL2 Assets"
+                           FontSize="18"
+                           Foreground="{DynamicResource SuccessBrush}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center" />
             </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock x:Name="HeadlineText" Text="Session complete" FontSize="18" FontWeight="Bold" />
+                <TextBlock x:Name="SubheadlineText" Text="Ran 10h 0m · report saved" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </Grid>
 
-            <WrapPanel HorizontalAlignment="Right">
-                <Button x:Name="CancelButton"
-                        Content="Cancel Shutdown"
-                        IsCancel="True"
-                        Click="Cancel_Click"
-                        Margin="0,0,8,0" />
-                <Button x:Name="CloseAppOnlyButton"
-                        Content="Close App Only"
-                        Click="CloseAppOnly_Click"
-                        Margin="0,0,8,0" />
-                <Button x:Name="ExecuteNowButton"
-                        Content="Shut Down Now"
-                        Style="{StaticResource DangerButton}"
-                        Click="ExecuteNow_Click" />
-            </WrapPanel>
-        </StackPanel>
-    </Border>
+        <!-- What the session did -->
+        <Border x:Name="StatsBorder" Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="10" Padding="14,10" Margin="0,0,0,16">
+            <UniformGrid Columns="4">
+                <StackPanel>
+                    <TextBlock x:Name="StatDurationText" Text="—" Style="{StaticResource StatValue}" />
+                    <TextBlock Text="RUN TIME" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock x:Name="StatBuysText" Text="—" Style="{StaticResource StatValue}" />
+                    <TextBlock Text="BUY ORDERS" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock x:Name="StatListingsText" Text="—" Style="{StaticResource StatValue}" />
+                    <TextBlock Text="LISTINGS" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock x:Name="StatCoinsText" Text="—" Style="{StaticResource StatValue}" Foreground="{DynamicResource GoldAccentBrush}" />
+                    <TextBlock Text="COLLECTED" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+            </UniformGrid>
+        </Border>
+
+        <!-- What happens next -->
+        <TextBlock x:Name="BodyMessageText"
+                   Text="Guild Wars 2 was logged out and closed."
+                   FontSize="12.5"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,8" />
+        <DockPanel Margin="0,0,0,6">
+            <TextBlock x:Name="CountdownSecondsText" DockPanel.Dock="Right" Text="15 s" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" Typography.NumeralAlignment="Tabular" />
+            <TextBlock x:Name="CountdownLabelText" Text="Mmopal closes in" FontSize="13" FontWeight="SemiBold" />
+        </DockPanel>
+        <ProgressBar x:Name="CountdownProgressBar"
+                     Height="4"
+                     Minimum="0"
+                     Maximum="60"
+                     Value="60"
+                     BorderThickness="0"
+                     Foreground="{DynamicResource AccentBrush}"
+                     Background="{DynamicResource SurfaceRaisedBrush}"
+                     Margin="0,0,0,18" />
+
+        <!-- Actions: the safe choice on the left, the countdown's action on the right -->
+        <DockPanel LastChildFill="False">
+            <Button x:Name="CloseAppOnlyButton"
+                    DockPanel.Dock="Left"
+                    Content="Close app only"
+                    Style="{StaticResource CompactButton}"
+                    Click="CloseAppOnly_Click"
+                    ToolTip="Close Mmopal but keep this PC running." />
+            <Button x:Name="ExecuteNowButton"
+                    DockPanel.Dock="Right"
+                    Content="Close now"
+                    Style="{StaticResource PrimaryButton}"
+                    Click="ExecuteNow_Click" />
+            <Button x:Name="CancelButton"
+                    DockPanel.Dock="Right"
+                    Content="Keep Mmopal open"
+                    IsCancel="True"
+                    Click="Cancel_Click"
+                    Margin="0,0,8,0" />
+        </DockPanel>
+    </StackPanel>
 </Window>
