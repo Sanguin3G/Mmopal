@@ -1,0 +1,184 @@
+<UserControl x:Class="Mmopal.Desktop.Pages.ScannerPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid x:Name="ScannerView" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="Market Scanner" Style="{StaticResource PageTitle}" />
+                <TextBlock Text="Discover liquid flips from the official GW2 API with wall-depth checks, presets, and cached instant re-filtering." Style="{StaticResource HintText}" Margin="0,3,0,0" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Filter & Preset Card -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12" Padding="18,16">
+            <StackPanel>
+                <!-- Strategy Preset Strip -->
+                <WrapPanel Margin="0,0,0,10" VerticalAlignment="Center">
+                    <TextBlock Text="PRESETS:" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" Margin="0,0,10,4" />
+                    <Button Content="Starter (&lt; 100g)" CommandParameter="Starter (&lt; 100g)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
+                    <Button Content="Balanced (100g–1k)" CommandParameter="Balanced (100g–1,000g)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
+                    <Button Content="High Capital (1k+)" CommandParameter="High Capital (1,000g+)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
+                    <Button Content="High-Volume Safe" CommandParameter="High-Volume Safe" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,10,4" />
+                    <Button x:Name="AutoTuneScannerButton" Content="Auto-Tune from Wallet" Tag="&#xE9D9;" Click="AutoTuneForWallet_Click" Padding="10,5" FontSize="11.5" Margin="0,0,0,4" />
+                </WrapPanel>
+
+                <!-- Primary Clean 4-Column Responsive Filter Grid -->
+                <UniformGrid x:Name="ScannerCoreFiltersGrid" Columns="4" Margin="0,0,0,8">
+                    <StackPanel Margin="0,0,10,4">
+                        <TextBlock Text="MIN ROI %" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="ScanMinRoiBox" Text="10" ToolTip="Must beat GW2 15% tax; 10–15% is standard." />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,10,4">
+                        <TextBlock Text="MAX BUY (G)" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="ScanMaxBuyGoldBox" Text="50" ToolTip="Maximum unit buy price in gold. Blank = no cap." />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,10,4">
+                        <TextBlock Text="CATEGORY" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="ScanCategorySelector" SelectedIndex="0">
+                            <ComboBoxItem Content="All Categories" Tag="All" />
+                            <ComboBoxItem Content="Crafting Material" Tag="CraftingMaterial" />
+                            <ComboBoxItem Content="Upgrade (Runes/Sigils)" Tag="UpgradeComponent" />
+                            <ComboBoxItem Content="Consumable" Tag="Consumable" />
+                            <ComboBoxItem Content="Weapon" Tag="Weapon" />
+                            <ComboBoxItem Content="Armor" Tag="Armor" />
+                            <ComboBoxItem Content="Trinket" Tag="Trinket" />
+                            <ComboBoxItem Content="Bag" Tag="Bag" />
+                            <ComboBoxItem Content="Container" Tag="Container" />
+                            <ComboBoxItem Content="Gizmo" Tag="Gizmo" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Margin="0,0,0,4">
+                        <TextBlock Text="SORT BY" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="ScanSortSelector" SelectedIndex="0" ToolTip="Est. profit/day = net profit per unit × trades per day (7-day DataWars2 average, capped at 20). Favors items that actually fill over wide spreads that never trade.">
+                            <ComboBoxItem Content="Est. profit/day" Tag="GoldPerDay" />
+                            <ComboBoxItem Content="Balanced Score" Tag="BalancedScore" />
+                            <ComboBoxItem Content="Net Profit" Tag="NetProfit" />
+                            <ComboBoxItem Content="ROI %" Tag="Roi" />
+                            <ComboBoxItem Content="Liquidity" Tag="Liquidity" />
+                        </ComboBox>
+                    </StackPanel>
+                </UniformGrid>
+
+                <!-- Collapsible More Filters (De-clutters 9 rarely-changed controls) -->
+                <Expander x:Name="ScannerAdvancedExpander" IsExpanded="False" Margin="0,0,0,12" Padding="12,8" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                    <Expander.Header>
+                        <TextBlock Text="More Filters (ROI cap, depth, rarity, trades/day, scan scope &amp; walls)" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                    </Expander.Header>
+                    <StackPanel>
+                        <UniformGrid x:Name="ScannerAdvancedFiltersGrid" Columns="4" Margin="0,0,0,8">
+                            <StackPanel Margin="0,0,10,6">
+                                <TextBlock Text="MAX ROI %" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="ScanMaxRoiBox" Text="120" ToolTip="Caps suspicious wide spreads that are often dead or manipulated. Blank = no cap." />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,6">
+                                <TextBlock Text="MIN PROFIT (S)" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="ScanMinProfitSilverBox" Text="5" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,6">
+                                <TextBlock Text="MIN BUY (S)" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="ScanMinBuySilverBox" Text="10" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Text="RARITY" Style="{StaticResource FieldLabel}" />
+                                <ComboBox x:Name="ScanRaritySelector" SelectedIndex="0">
+                                    <ComboBoxItem Content="All" Tag="All" />
+                                    <ComboBoxItem Content="Fine" Tag="Fine" />
+                                    <ComboBoxItem Content="Masterwork" Tag="Masterwork" />
+                                    <ComboBoxItem Content="Rare" Tag="Rare" />
+                                    <ComboBoxItem Content="Exotic" Tag="Exotic" />
+                                    <ComboBoxItem Content="Ascended" Tag="Ascended" />
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,4">
+                                <TextBlock Text="MIN SUPPLY" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="ScanMinSupplyBox" Text="100" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,4">
+                                <TextBlock Text="MIN DEMAND" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="ScanMinDemandBox" Text="100" />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,4">
+                                <TextBlock Text="SCAN SCOPE" Style="{StaticResource FieldLabel}" />
+                                <ComboBox x:Name="ScanScopeSelector" SelectedIndex="1" ToolTip="Only used when Min trades/day is 0 or DataWars2 is unreachable. Otherwise every tradable item that trades often enough is checked (whole market).">
+                                    <ComboBoxItem Content="Quick (2,000 items)" Tag="2000" />
+                                    <ComboBoxItem Content="Standard (6,000 items)" Tag="6000" />
+                                    <ComboBoxItem Content="Full Market (All)" Tag="0" />
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,4">
+                                <TextBlock Text="AUTO RE-SCAN (H)" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="AutoRescanHoursBox" Text="3" ToolTip="During a session that uses the scanned list (Use All for Session), re-run this scan with these filters every N hours and swap in the fresh list. 0 = off. Open orders and items in bags are unaffected." />
+                            </StackPanel>
+                            <StackPanel Margin="0,0,0,4">
+                                <TextBlock Text="MIN TRADES/DAY" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="ScanMinTradesPerDayBox" Text="10" ToolTip="Skip items that trade fewer times per day than this (7-day average of the slower side: buy orders filled vs listings bought). 0 = off. Needs DataWars2; ignored if it is unreachable." />
+                            </StackPanel>
+                        </UniformGrid>
+                        <WrapPanel Orientation="Horizontal">
+                            <CheckBox x:Name="ScanCheckWallsCheckBox" Content="Check order-book walls" IsChecked="True" Margin="0,0,20,4" ToolTip="Queries v2/commerce/listings on matches to catch sell walls and bait spreads." />
+                            <CheckBox x:Name="ScanVelocityCheckBox" Content="Show trades/day (DataWars2)" IsChecked="False" Margin="0,0,20,4" ToolTip="Adds the Trades/day column from api.datawars2.ie. Always fetched when sorting by Est. profit/day or using Min trades/day." />
+                            <CheckBox x:Name="ScanSkipSpikesCheckBox" Content="Skip price spikes" IsChecked="True" Margin="0,0,0,4" ToolTip="Skips items whose top bid or lowest ask is more than 30% above its 7-day average (DataWars2). A spiked price makes the profit look real when it is not, and buying into a spike is how flips lose money." />
+                        </WrapPanel>
+                    </StackPanel>
+                </Expander>
+
+                <!-- Grouped Action Bar: Primary Scan/Session Actions vs Secondary List Actions -->
+                <DockPanel LastChildFill="True">
+                    <WrapPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                        <Button Content="Import CSV" Tag="&#xE8E5;" Click="ImportScannerFile_Click" Padding="10,6" FontSize="12" Margin="0,0,6,4" ToolTip="Import GW2BLTC / GW2Profits CSV or JSON" />
+                        <Button Content="Add to List" Tag="&#xE710;" Click="AddSelectedScanToCustomList_Click" Padding="10,6" FontSize="12" Margin="0,0,6,4" ToolTip="Add selected row to Custom Shopping List" />
+                        <Button Content="Blacklist Selected" Tag="&#xE8F8;" Click="BlacklistSelectedScanItem_Click" Padding="10,6" FontSize="12" Margin="0,0,0,4" />
+                    </WrapPanel>
+                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="ScanMarketButton" Content="Scan GW2 Market" Tag="&#xE721;" Style="{StaticResource PrimaryButton}" Click="ScanMarket_Click" Margin="0,0,8,4" />
+                        <Button x:Name="UseScanResultsButton" Content="Use All for Session" Tag="&#xE73E;" Style="{StaticResource SuccessButton}" Click="UseScanResultsForSession_Click" Margin="0,0,8,4" />
+                        <Button x:Name="ReFilterButton" Content="Re-Filter" Tag="&#xE71C;" Click="ReFilterCachedScan_Click" ToolTip="Instantly re-filter cached Trading Post prices without re-downloading." Margin="0,0,8,4" />
+                        <Button x:Name="CancelScanButton" Content="Cancel" Tag="&#xE711;" Click="CancelScan_Click" IsEnabled="False" Margin="0,0,12,4" />
+                    </WrapPanel>
+                </DockPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Progress Bar -->
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ProgressBar x:Name="ScanProgressBar" Minimum="0" Maximum="100" Value="0" VerticalAlignment="Center" Margin="0,0,14,0" />
+            <TextBlock x:Name="ScanStatusText" Grid.Column="1" Text="Pick a preset or click Scan GW2 Market to find flips." Style="{StaticResource HintText}" VerticalAlignment="Center" />
+        </Grid>
+
+        <!-- Results DataGrid -->
+        <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0" ClipToBounds="True">
+            <DataGrid x:Name="ScanResultsGrid" AutoGenerateColumns="False" IsReadOnly="True">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                        <Setter Property="ToolTip" Value="{Binding FeeBreakdownTooltip}" />
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="ITEM NAME" Binding="{Binding ItemName}" Width="2*" />
+                    <DataGridTextColumn Header="TYPE" Binding="{Binding ItemType}" Width="1*" />
+                    <DataGridTextColumn Header="RARITY" Binding="{Binding Rarity}" Width="0.75*" />
+                    <DataGridTextColumn Header="HIGHEST BUY" Binding="{Binding BuyFormatted}" Width="0.9*" />
+                    <DataGridTextColumn Header="LOWEST SELL" Binding="{Binding SellFormatted}" Width="0.9*" />
+                    <DataGridTextColumn Header="NET PROFIT" Binding="{Binding ProfitFormatted}" Width="0.9*" />
+                    <DataGridTextColumn Header="ROI" Binding="{Binding RoiFormatted}" Width="0.65*" />
+                    <DataGridTextColumn Header="DEMAND" Binding="{Binding BuyQuantity}" Width="0.65*" />
+                    <DataGridTextColumn Header="SUPPLY" Binding="{Binding SellQuantity}" Width="0.65*" />
+                    <DataGridTextColumn Header="TRADES/DAY" Binding="{Binding VolumeFormatted}" Width="0.8*" />
+                    <DataGridTextColumn Header="SIGNAL" Binding="{Binding RiskBadge}" Width="0.8*" />
+                    <DataGridTextColumn Header="YOUR HISTORY" Binding="{Binding HistoryNote}" Width="1*" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </Grid>
+</UserControl>

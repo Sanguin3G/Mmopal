@@ -50,71 +50,71 @@ public sealed class MainWindowSmokeTests
                 Assert.True(app.IsDarkTheme);
                 var bgBrush = Assert.IsType<SolidColorBrush>(window.Background);
                 Assert.Equal(Color.FromRgb(0x0D, 0x11, 0x17), bgBrush.Color);
-                Assert.IsType<ComboBox>(window.FindName("BotSelector"));
-                Assert.IsType<TextBox>(window.FindName("MinimumProfitBox"));
-                Assert.IsType<TextBox>(window.FindName("MaximumBuyGoldBox"));
-                Assert.IsType<PasswordBox>(window.FindName("ApiKeyPasswordBox"));
-                Assert.IsType<DataGrid>(window.FindName("ScanResultsGrid"));
-                Assert.IsType<DataGrid>(window.FindName("CustomShoppingListGrid"));
-                Assert.IsType<DataGrid>(window.FindName("ItemPnlGrid"));
-                Assert.IsType<DataGrid>(window.FindName("ActiveOrdersGrid"));
-                Assert.IsType<DataGrid>(window.FindName("LedgerHistoryGrid"));
-                Assert.IsType<TextBox>(window.FindName("MaxSessionHoursBox"));
-                Assert.IsType<TextBox>(window.FindName("ParkedCharactersBox"));
-                Assert.IsType<TextBox>(window.FindName("InteractKeyBox"));
-                Assert.IsType<TextBox>(window.FindName("ScanMaxRoiBox"));
-                var gw2PathBox = Assert.IsType<TextBox>(window.FindName("Gw2ExecutablePathBox"));
+                Assert.IsType<ComboBox>(window.FindElement("BotSelector"));
+                Assert.IsType<TextBox>(window.FindElement("MinimumProfitBox"));
+                Assert.IsType<TextBox>(window.FindElement("MaximumBuyGoldBox"));
+                Assert.IsType<PasswordBox>(window.FindElement("ApiKeyPasswordBox"));
+                Assert.IsType<DataGrid>(window.FindElement("ScanResultsGrid"));
+                Assert.IsType<DataGrid>(window.FindElement("CustomShoppingListGrid"));
+                Assert.IsType<DataGrid>(window.FindElement("ItemPnlGrid"));
+                Assert.IsType<DataGrid>(window.FindElement("ActiveOrdersGrid"));
+                Assert.IsType<DataGrid>(window.FindElement("LedgerHistoryGrid"));
+                Assert.IsType<TextBox>(window.FindElement("MaxSessionHoursBox"));
+                Assert.IsType<TextBox>(window.FindElement("ParkedCharactersBox"));
+                Assert.IsType<TextBox>(window.FindElement("InteractKeyBox"));
+                Assert.IsType<TextBox>(window.FindElement("ScanMaxRoiBox"));
+                var gw2PathBox = Assert.IsType<TextBox>(window.FindElement("Gw2ExecutablePathBox"));
                 Assert.Equal(@"C:\Games\Guild Wars 2\Gw2-64.exe", gw2PathBox.Text);
-                var swapHoursBox = Assert.IsType<TextBox>(window.FindName("SwapCharacterHoursBox"));
+                var swapHoursBox = Assert.IsType<TextBox>(window.FindElement("SwapCharacterHoursBox"));
                 Assert.Equal("2", swapHoursBox.Text);
-                var candidatesPathBox = Assert.IsType<TextBox>(window.FindName("CandidatesPathBox"));
+                var candidatesPathBox = Assert.IsType<TextBox>(window.FindElement("CandidatesPathBox"));
                 candidatesPathBox.Text = "D:/tmp/candidates.json";
 
-                var source = Assert.IsType<ComboBox>(window.FindName("SourceSelector"));
+                var source = Assert.IsType<ComboBox>(window.FindElement("SourceSelector"));
                 var selectedSource = Assert.IsType<ComboBoxItem>(source.SelectedItem);
                 Assert.Equal("replay", selectedSource.Tag);
                 var screenSource = Assert.IsType<ComboBoxItem>(source.Items[1]);
                 Assert.Equal("screen", screenSource.Tag);
                 Assert.Equal("Screen observe", screenSource.Content);
 
-                var mode = Assert.IsType<ComboBox>(window.FindName("ModeSelector"));
+                var mode = Assert.IsType<ComboBox>(window.FindElement("ModeSelector"));
                 var selectedMode = Assert.IsType<ComboBoxItem>(mode.SelectedItem);
                 Assert.Equal("DryRun", selectedMode.Tag);
                 var live = Assert.IsType<ComboBoxItem>(mode.Items[2]);
                 Assert.Equal("Live", live.Tag);
                 Assert.Equal("Live (Armed trading)", live.Content);
 
-                var status = Assert.IsType<TextBlock>(window.FindName("StatusText"));
+                var status = Assert.IsType<TextBlock>(window.FindElement("StatusText"));
                 Assert.Equal("Idle — waiting for a session", status.Text);
-                Assert.Equal("00:00:00", Assert.IsType<TextBlock>(window.FindName("SessionClockText")).Text);
+                Assert.Equal("00:00:00", Assert.IsType<TextBlock>(window.FindElement("SessionClockText")).Text);
 
                 window.Show();
                 Assert.True(window.IsVisible);
 
                 // Verify sidebar navigation toggles all 7 views cleanly.
-                Assert.IsType<RadioButton>(window.FindName("NavIncome")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("IncomeView")).Visibility);
-                Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(window.FindName("SessionView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavIncome")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("IncomeView")).Visibility);
+                Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(window.FindElement("SessionView")).Visibility);
 
-                Assert.IsType<RadioButton>(window.FindName("NavReports")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("ReportsView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavReports")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("ReportsView")).Visibility);
 
-                Assert.IsType<RadioButton>(window.FindName("NavScanner")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("ScannerView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavScanner")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("ScannerView")).Visibility);
 
-                Assert.IsType<RadioButton>(window.FindName("NavLists")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("ListsView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavLists")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("ListsView")).Visibility);
 
-                Assert.IsType<RadioButton>(window.FindName("NavSettings")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("SettingsView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavSettings")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("SettingsView")).Visibility);
 
-                Assert.IsType<RadioButton>(window.FindName("NavGuide")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("GuideView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavGuide")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("GuideView")).Visibility);
 
-                Assert.IsType<RadioButton>(window.FindName("NavSession")).IsChecked = true;
-                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindName("SessionView")).Visibility);
+                Assert.IsType<RadioButton>(window.FindElement("NavSession")).IsChecked = true;
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(window.FindElement("SessionView")).Visibility);
 
-                Assert.IsType<Button>(window.FindName("LaunchSnapButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); // icon button
+                Assert.IsType<Button>(window.FindElement("LaunchSnapButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); // icon button
                 var waitUntil = DateTime.UtcNow.AddSeconds(2);
                 while (status.Text != "Positioned Guild Wars 2 at top-left (0, 0) sized 1024x768." && DateTime.UtcNow < waitUntil)
                 {
@@ -130,7 +130,7 @@ public sealed class MainWindowSmokeTests
                 RequireButton(window, "Start session").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpDispatcher();
                 Assert.Equal("Session started", status.Text);
-                Assert.Equal("Starting", Assert.IsType<TextBlock>(window.FindName("StatusStateText")).Text);
+                Assert.Equal("Starting", Assert.IsType<TextBlock>(window.FindElement("StatusStateText")).Text);
                 Assert.Equal(WorkerCommandTypes.Start, supervisor.Commands[0].Type);
                 Assert.Equal(BotKind.TradingPost, supervisor.Commands[0].Bot);
                 Assert.Equal(RunMode.DryRun, supervisor.Commands[0].Mode);
@@ -166,7 +166,7 @@ public sealed class MainWindowSmokeTests
                 RequireButton(window, "Stop").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpDispatcher();
                 Assert.Equal("Session stopped", status.Text);
-                Assert.Equal("Stopped", Assert.IsType<TextBlock>(window.FindName("StatusStateText")).Text);
+                Assert.Equal("Stopped", Assert.IsType<TextBlock>(window.FindElement("StatusStateText")).Text);
                 Assert.Equal(WorkerCommandTypes.Stop, supervisor.Commands[1].Type);
                 Assert.Equal(2, supervisor.Commands.Count);
 
@@ -174,20 +174,20 @@ public sealed class MainWindowSmokeTests
                     WorkerEventTypes.Health,
                     """{"source":"replay","ui":{"tradingPostOpen":true,"itemWindowOpen":true},"visiblePrice":{"price":{"copper":4321}},"timings":{"api":3},"orderBook":"1 buy and 1 sell. 1 buy is behind the top bid.","characterSwap":"Next AFK swap (random character) in 120m."}"""));
                 PumpDispatcher();
-                Assert.Equal("replay", Assert.IsType<TextBlock>(window.FindName("ObservationSourceText")).Text);
+                Assert.Equal("replay", Assert.IsType<TextBlock>(window.FindElement("ObservationSourceText")).Text);
                 Assert.Equal(
                     "Trading Post: open; item: open",
-                    Assert.IsType<TextBlock>(window.FindName("ObservationUiText")).Text);
-                Assert.Equal("4321", Assert.IsType<TextBlock>(window.FindName("ObservationPriceText")).Text);
-                Assert.Contains("api", Assert.IsType<TextBlock>(window.FindName("ObservationTimingText")).Text, StringComparison.Ordinal);
+                    Assert.IsType<TextBlock>(window.FindElement("ObservationUiText")).Text);
+                Assert.Equal("4321", Assert.IsType<TextBlock>(window.FindElement("ObservationPriceText")).Text);
+                Assert.Contains("api", Assert.IsType<TextBlock>(window.FindElement("ObservationTimingText")).Text, StringComparison.Ordinal);
                 Assert.Equal(
                     "1 buy and 1 sell. 1 buy is behind the top bid.",
-                    Assert.IsType<TextBlock>(window.FindName("ObservationOrdersText")).Text);
-                Assert.Contains("Next AFK swap", Assert.IsType<TextBlock>(window.FindName("AfkSwapStatusText")).Text, StringComparison.Ordinal);
+                    Assert.IsType<TextBlock>(window.FindElement("ObservationOrdersText")).Text);
+                Assert.Contains("Next AFK swap", Assert.IsType<TextBlock>(window.FindElement("AfkSwapStatusText")).Text, StringComparison.Ordinal);
 
-                var armLiveBox = Assert.IsType<CheckBox>(window.FindName("ArmLiveInputCheckBox"));
-                var autoSellBox = Assert.IsType<CheckBox>(window.FindName("AutoSellInventoryCheckBox"));
-                var safeModePillText = Assert.IsType<TextBlock>(window.FindName("SafeModePillText"));
+                var armLiveBox = Assert.IsType<CheckBox>(window.FindElement("ArmLiveInputCheckBox"));
+                var autoSellBox = Assert.IsType<CheckBox>(window.FindElement("AutoSellInventoryCheckBox"));
+                var safeModePillText = Assert.IsType<TextBlock>(window.FindElement("SafeModePillText"));
                 Assert.False(armLiveBox.IsChecked == true);
                 Assert.False(autoSellBox.IsChecked == true);
 
@@ -203,23 +203,23 @@ public sealed class MainWindowSmokeTests
                 Assert.False(armLiveBox.IsChecked == true); // leaving Live disarms
 
                 // A hand-set gold floor survives Auto-Tune (it used to be reset from 25g to 80g on Start session).
-                var goldFloorBox = Assert.IsType<TextBox>(window.FindName("GoldThresholdNoBuyBox"));
+                var goldFloorBox = Assert.IsType<TextBox>(window.FindElement("GoldThresholdNoBuyBox"));
                 goldFloorBox.Text = "25";
                 PumpDispatcher();
-                Assert.Equal(Visibility.Visible, Assert.IsType<DockPanel>(window.FindName("AutoTuneKeepsPanel")).Visibility);
+                Assert.Equal(Visibility.Visible, Assert.IsType<DockPanel>(window.FindElement("AutoTuneKeepsPanel")).Visibility);
                 window.ApplyStrategyPresetToSettings(TradingStrategyPresets.All[1]);
                 Assert.Equal("25", goldFloorBox.Text);
                 Assert.Equal(TradingStrategyPresets.All[1].MaxBuyGold.ToString(System.Globalization.CultureInfo.CurrentCulture),
-                    Assert.IsType<TextBox>(window.FindName("MaximumBuyGoldBox")).Text);
+                    Assert.IsType<TextBox>(window.FindElement("MaximumBuyGoldBox")).Text);
 
                 armLiveBox.IsChecked = false;
                 mode.SelectedIndex = 0;
                 PumpDispatcher();
 
-                var startBtn = Assert.IsType<Button>(window.FindName("StartSessionButton"));
-                var pauseBtn = Assert.IsType<Button>(window.FindName("PauseSessionButton"));
-                var resumeBtn = Assert.IsType<Button>(window.FindName("ResumeSessionButton"));
-                var stopBtn = Assert.IsType<Button>(window.FindName("StopSessionButton"));
+                var startBtn = Assert.IsType<Button>(window.FindElement("StartSessionButton"));
+                var pauseBtn = Assert.IsType<Button>(window.FindElement("PauseSessionButton"));
+                var resumeBtn = Assert.IsType<Button>(window.FindElement("ResumeSessionButton"));
+                var stopBtn = Assert.IsType<Button>(window.FindElement("StopSessionButton"));
 
                 window.UpdateSessionButtonStates(WorkerState.Idle);
                 Assert.True(startBtn.IsEnabled);
@@ -243,55 +243,55 @@ public sealed class MainWindowSmokeTests
                 Assert.True(startBtn.IsEnabled);
                 Assert.Equal("Start session", startBtn.Content);
 
-                var timeframeCombo = Assert.IsType<ComboBox>(window.FindName("IncomeTimeframeSelector"));
+                var timeframeCombo = Assert.IsType<ComboBox>(window.FindElement("IncomeTimeframeSelector"));
                 Assert.True(timeframeCombo.MinWidth >= 120);
-                Assert.IsType<DataGrid>(window.FindName("ApiKeysGrid"));
-                Assert.IsType<ComboBox>(window.FindName("SidebarAccountSelector"));
+                Assert.IsType<DataGrid>(window.FindElement("ApiKeysGrid"));
+                Assert.IsType<ComboBox>(window.FindElement("SidebarAccountSelector"));
 
-                var latencyCombo = Assert.IsType<ComboBox>(window.FindName("LatencyProfileSelector"));
+                var latencyCombo = Assert.IsType<ComboBox>(window.FindElement("LatencyProfileSelector"));
                 latencyCombo.SelectedIndex = 0; // Low ping
                 PumpDispatcher();
-                Assert.Equal("3000", Assert.IsType<TextBox>(window.FindName("UiLoadWaitMsBox")).Text);
-                Assert.Equal("30", Assert.IsType<TextBox>(window.FindName("ApiTimeoutSecondsBox")).Text);
+                Assert.Equal("3000", Assert.IsType<TextBox>(window.FindElement("UiLoadWaitMsBox")).Text);
+                Assert.Equal("30", Assert.IsType<TextBox>(window.FindElement("ApiTimeoutSecondsBox")).Text);
 
                 Assert.NotNull(window.Icon);
-                Assert.IsType<ComboBox>(window.FindName("LaunchPlatformSelector"));
-                Assert.IsType<TextBox>(window.FindName("MaxRecoveryRetriesBox"));
-                Assert.IsType<TextBox>(window.FindName("MaxGameRestartsBox"));
-                Assert.IsType<CheckBox>(window.FindName("AutoRestartOnFailureCheckBox"));
-                Assert.IsType<CheckBox>(window.FindName("UsePortfolioIntelligenceCheckBox"));
-                Assert.IsType<TabControl>(window.FindName("SettingsTabControl"));
-                Assert.IsType<TextBlock>(window.FindName("PortfolioInsightsText"));
-                Assert.IsType<TextBlock>(window.FindName("SessionPaceSummaryText"));
-                var scannerCoreGrid = Assert.IsType<UniformGrid>(window.FindName("ScannerCoreFiltersGrid"));
-                var scannerAdvGrid = Assert.IsType<UniformGrid>(window.FindName("ScannerAdvancedFiltersGrid"));
+                Assert.IsType<ComboBox>(window.FindElement("LaunchPlatformSelector"));
+                Assert.IsType<TextBox>(window.FindElement("MaxRecoveryRetriesBox"));
+                Assert.IsType<TextBox>(window.FindElement("MaxGameRestartsBox"));
+                Assert.IsType<CheckBox>(window.FindElement("AutoRestartOnFailureCheckBox"));
+                Assert.IsType<CheckBox>(window.FindElement("UsePortfolioIntelligenceCheckBox"));
+                Assert.IsType<TabControl>(window.FindElement("SettingsTabControl"));
+                Assert.IsType<TextBlock>(window.FindElement("PortfolioInsightsText"));
+                Assert.IsType<TextBlock>(window.FindElement("SessionPaceSummaryText"));
+                var scannerCoreGrid = Assert.IsType<UniformGrid>(window.FindElement("ScannerCoreFiltersGrid"));
+                var scannerAdvGrid = Assert.IsType<UniformGrid>(window.FindElement("ScannerAdvancedFiltersGrid"));
 
-                var autoDockBox = Assert.IsType<CheckBox>(window.FindName("AutoDockBesideGw2CheckBox"));
+                var autoDockBox = Assert.IsType<CheckBox>(window.FindElement("AutoDockBesideGw2CheckBox"));
                 Assert.True(autoDockBox.IsChecked == true);
                 autoDockBox.IsChecked = false; // prevent actual screen resize while verifying layout API directly
 
-                var sidebarCol = Assert.IsType<ColumnDefinition>(window.FindName("SidebarColumn"));
-                var sidebarStatusBorder = Assert.IsType<Border>(window.FindName("SidebarStatusBorder"));
-                var sidebarStatusDot = Assert.IsType<System.Windows.Shapes.Ellipse>(window.FindName("SidebarStatusDot"));
-                var incomeActionsPanel = Assert.IsType<WrapPanel>(window.FindName("IncomeHeaderActionsPanel"));
-                var listsLeftCol = Assert.IsType<ColumnDefinition>(window.FindName("ListsLeftCol"));
-                var listsRightCol = Assert.IsType<ColumnDefinition>(window.FindName("ListsRightCol"));
-                var sessionClockText = Assert.IsType<TextBlock>(window.FindName("SessionClockText"));
+                var sidebarCol = Assert.IsType<ColumnDefinition>(window.FindElement("SidebarColumn"));
+                var sidebarStatusBorder = Assert.IsType<Border>(window.FindElement("SidebarStatusBorder"));
+                var sidebarStatusDot = Assert.IsType<System.Windows.Shapes.Ellipse>(window.FindElement("SidebarStatusDot"));
+                var incomeActionsPanel = Assert.IsType<WrapPanel>(window.FindElement("IncomeHeaderActionsPanel"));
+                var listsLeftCol = Assert.IsType<ColumnDefinition>(window.FindElement("ListsLeftCol"));
+                var listsRightCol = Assert.IsType<ColumnDefinition>(window.FindElement("ListsRightCol"));
+                var sessionClockText = Assert.IsType<TextBlock>(window.FindElement("SessionClockText"));
                 Assert.Matches(@"^\d{2}:\d{2}:\d{2}$", sessionClockText.Text);
                 Assert.NotNull(sidebarStatusBorder.ToolTip);
 
-                Assert.IsType<CheckBox>(window.FindName("AutoCloseGameOnCapCheckBox"));
-                Assert.IsType<CheckBox>(window.FindName("AutoCloseAppOnCapCheckBox"));
-                Assert.IsType<CheckBox>(window.FindName("ShutdownPcOnCapCheckBox"));
-                Assert.IsType<TextBox>(window.FindName("PcShutdownCountdownBox"));
-                Assert.IsType<CheckBox>(window.FindName("SaveSessionReportsCheckBox"));
-                Assert.IsType<TextBox>(window.FindName("ReportMinDurationBox"));
-                Assert.IsType<ListBox>(window.FindName("SessionReportsListBox"));
+                Assert.IsType<CheckBox>(window.FindElement("AutoCloseGameOnCapCheckBox"));
+                Assert.IsType<CheckBox>(window.FindElement("AutoCloseAppOnCapCheckBox"));
+                Assert.IsType<CheckBox>(window.FindElement("ShutdownPcOnCapCheckBox"));
+                Assert.IsType<TextBox>(window.FindElement("PcShutdownCountdownBox"));
+                Assert.IsType<CheckBox>(window.FindElement("SaveSessionReportsCheckBox"));
+                Assert.IsType<TextBox>(window.FindElement("ReportMinDurationBox"));
+                Assert.IsType<ListBox>(window.FindElement("SessionReportsListBox"));
 
-                var selectorsGrid = Assert.IsType<UniformGrid>(window.FindName("SessionSelectorsGrid"));
-                var sessionKpiGrid = Assert.IsType<UniformGrid>(window.FindName("SessionKpiGrid"));
-                var incomeKpiGrid = Assert.IsType<UniformGrid>(window.FindName("IncomeKpiGrid"));
-                var footerExpanded = Assert.IsType<StackPanel>(window.FindName("SidebarFooterExpanded"));
+                var selectorsGrid = Assert.IsType<UniformGrid>(window.FindElement("SessionSelectorsGrid"));
+                var sessionKpiGrid = Assert.IsType<UniformGrid>(window.FindElement("SessionKpiGrid"));
+                var incomeKpiGrid = Assert.IsType<UniformGrid>(window.FindElement("IncomeKpiGrid"));
+                var footerExpanded = Assert.IsType<StackPanel>(window.FindElement("SidebarFooterExpanded"));
 
                 window.ApplyResponsiveLayout(540);
                 Assert.Equal(64, sidebarCol.Width.Value);
