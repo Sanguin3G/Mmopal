@@ -6,15 +6,15 @@ namespace Mmopal.Gw2;
 
 public static class TradingIncomeAnalytics
 {
-    public static long CalculateListingFee(long sellUnitPriceCopper) =>
-        sellUnitPriceCopper <= 0
-            ? 0
-            : Math.Max(1L, (long)Math.Floor(sellUnitPriceCopper * 0.05m + 0.5m));
+    public static long CalculateListingFee(long sellUnitPriceCopper) => RoundedFee(sellUnitPriceCopper, 0.05m);
 
-    public static long CalculateExchangeFee(long sellUnitPriceCopper) =>
+    public static long CalculateExchangeFee(long sellUnitPriceCopper) => RoundedFee(sellUnitPriceCopper, 0.10m);
+
+    /// <summary>The fee rounded half up, and at least 1c on any positive price.</summary>
+    private static long RoundedFee(long sellUnitPriceCopper, decimal rate) =>
         sellUnitPriceCopper <= 0
             ? 0
-            : Math.Max(1L, (long)Math.Floor(sellUnitPriceCopper * 0.10m + 0.5m));
+            : Math.Max(1L, (long)Math.Floor(sellUnitPriceCopper * rate + 0.5m));
 
     public static long CalculateNetSaleUnitPrice(long sellUnitPriceCopper) =>
         sellUnitPriceCopper <= 0
@@ -62,13 +62,7 @@ public static class TradingIncomeAnalytics
 
             if (tx.Kind == TransactionType.Buy)
             {
-                if (!queues.TryGetValue(tx.ItemId, out var q))
-                {
-                    q = new Queue<BuyLot>();
-                    queues[tx.ItemId] = q;
-                }
-
-                q.Enqueue(new BuyLot(tx.Quantity, tx.UnitPriceCopper, tx.PurchasedAt));
+                GetOrAdd(queues, tx.ItemId).Enqueue(new BuyLot(tx.Quantity, tx.UnitPriceCopper, tx.PurchasedAt));
                 if (inWindow)
                 {
                     totalBuysSpentCopper += tx.UnitPriceCopper * tx.Quantity;
@@ -139,13 +133,7 @@ public static class TradingIncomeAnalytics
 
             hourlyProfit[localTime.Hour] += flipProfit;
 
-            var localDate = DateOnly.FromDateTime(localTime.DateTime);
-            if (!dailyMap.TryGetValue(localDate, out var dayAcc))
-            {
-                dayAcc = new DailyAccumulator();
-                dailyMap[localDate] = dayAcc;
-            }
-
+            var dayAcc = GetOrAdd(dailyMap, DateOnly.FromDateTime(localTime.DateTime));
             dayAcc.ProfitCopper += flipProfit;
             dayAcc.ClosedFlips++;
 
@@ -191,7 +179,6 @@ public static class TradingIncomeAnalytics
                     ? decimal.Round(acc.TotalNetProfitCopper * 100m / acc.TotalBuyCostCopper, 2)
                     : 0m;
                 var avgHold = acc.UnitsFlipped > 0 ? acc.TotalWeightedHoldHours / acc.UnitsFlipped : 0.0;
-                var badge = acc.TotalNetProfitCopper > 0 ? "Winner" : acc.TotalNetProfitCopper == 0 ? "Break-even" : "Loss";
                 return new ItemPnlRow(
                     acc.ItemId,
                     acc.ItemName,
@@ -201,7 +188,7 @@ public static class TradingIncomeAnalytics
                     acc.TotalNetProfitCopper,
                     roi,
                     avgHold,
-                    badge);
+                    OutcomeBadge(acc.TotalNetProfitCopper));
             })
             .OrderByDescending(row => row.NetProfitCopper)
             .ThenByDescending(row => row.UnitsFlipped)
@@ -273,42 +260,48 @@ public static class TradingIncomeAnalytics
         var minDate = dailyMap.Keys.Min();
         var maxDate = dailyMap.Keys.Max();
         var spanDays = maxDate.DayNumber - minDate.DayNumber;
-        long cumulative = 0;
+        // Up to 45 days every calendar day gets a point (idle days at 0); longer spans only list trading days.
+        var days = spanDays <= 45
+            ? Enumerable.Range(0, spanDays + 1).Select(minDate.AddDays)
+            : dailyMap.Keys.OrderBy(d => d);
 
-        if (spanDays <= 45)
+        long cumulative = 0;
+        foreach (var day in days)
         {
-            for (var day = minDate; day <= maxDate; day = day.AddDays(1))
-            {
-                dailyMap.TryGetValue(day, out var acc);
-                var profit = acc?.ProfitCopper ?? 0;
-                var flips = acc?.ClosedFlips ?? 0;
-                cumulative += profit;
-                points.Add(new DailyProfitPoint(
-                    day,
-                    profit,
-                    cumulative,
-                    flips,
-                    day.ToString("MM-dd", CultureInfo.InvariantCulture),
-                    $"{day:yyyy-MM-dd} • Net: {MarketScanItem.FormatCoins(profit)} • Cumulative: {MarketScanItem.FormatCoins(cumulative)} ({flips} sells)"));
-            }
-        }
-        else
-        {
-            foreach (var day in dailyMap.Keys.OrderBy(d => d))
-            {
-                var acc = dailyMap[day];
-                cumulative += acc.ProfitCopper;
-                points.Add(new DailyProfitPoint(
-                    day,
-                    acc.ProfitCopper,
-                    cumulative,
-                    acc.ClosedFlips,
-                    day.ToString("MM-dd", CultureInfo.InvariantCulture),
-                    $"{day:yyyy-MM-dd} • Net: {MarketScanItem.FormatCoins(acc.ProfitCopper)} • Cumulative: {MarketScanItem.FormatCoins(cumulative)} ({acc.ClosedFlips} sells)"));
-            }
+            dailyMap.TryGetValue(day, out var acc);
+            var profit = acc?.ProfitCopper ?? 0;
+            var flips = acc?.ClosedFlips ?? 0;
+            cumulative += profit;
+            points.Add(new DailyProfitPoint(
+                day,
+                profit,
+                cumulative,
+                flips,
+                day.ToString("MM-dd", CultureInfo.InvariantCulture),
+                $"{day:yyyy-MM-dd} • Net: {MarketScanItem.FormatCoins(profit)} • Cumulative: {MarketScanItem.FormatCoins(cumulative)} ({flips} sells)"));
         }
 
         return points;
+    }
+
+    private static string OutcomeBadge(long netProfitCopper)
+    {
+        if (netProfitCopper > 0) return "Winner";
+        if (netProfitCopper == 0) return "Break-even";
+        return "Loss";
+    }
+
+    private static TValue GetOrAdd<TKey, TValue>(Dictionary<TKey, TValue> map, TKey key)
+        where TKey : notnull
+        where TValue : new()
+    {
+        if (!map.TryGetValue(key, out var value))
+        {
+            value = new TValue();
+            map[key] = value;
+        }
+
+        return value;
     }
 
     private sealed class BuyLot(long quantity, long unitPriceCopper, DateTimeOffset purchasedAt)

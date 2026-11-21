@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Mmopal.Contracts;
 using Mmopal.Infrastructure;
 
@@ -184,10 +183,8 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
             matched.Add((entry, eval, liquidityScore, sortScore));
         }
 
-        var hasRarityFilter = !string.IsNullOrWhiteSpace(filter.Rarity) &&
-                              !filter.Rarity.Equals("All", StringComparison.OrdinalIgnoreCase);
-        var hasTypeFilter = !string.IsNullOrWhiteSpace(filter.ItemType) &&
-                            !filter.ItemType.Equals("All", StringComparison.OrdinalIgnoreCase);
+        var hasRarityFilter = IsActiveChoice(filter.Rarity);
+        var hasTypeFilter = IsActiveChoice(filter.ItemType);
 
         var multiplier = (hasRarityFilter ? 2 : 1) * (hasTypeFilter ? 3 : 1) * 2;
         var metadataLimit = Math.Max(filter.MaxResults, filter.MaxResults * multiplier);
@@ -212,7 +209,7 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
             .Select(ItemNameNormalizer.Normalize)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var filteredRows = new List<(Gw2CommercePrice Price, ProfitabilityResult Eval, double LiquidityScore, double SortScore, Gw2CachedItemInfo Info)>();
+        var filteredRows = new List<(Gw2CommercePrice Price, ProfitabilityResult Eval, double LiquidityScore, Gw2CachedItemInfo Info)>();
         foreach (var candidate in topCandidates)
         {
             if (!metadata.TryGetValue(candidate.Price.Id, out var info) || string.IsNullOrWhiteSpace(info.Name))
@@ -235,7 +232,7 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
                 continue;
             }
 
-            filteredRows.Add((candidate.Price, candidate.Eval, candidate.LiquidityScore, candidate.SortScore, info));
+            filteredRows.Add((candidate.Price, candidate.Eval, candidate.LiquidityScore, info));
             if (filteredRows.Count >= filter.MaxResults)
             {
                 break;
@@ -250,7 +247,7 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
         }
 
         var results = new List<MarketScanItem>(filteredRows.Count);
-        foreach (var (price, eval, liquidityScore, _, info) in filteredRows)
+        foreach (var (price, eval, liquidityScore, info) in filteredRows)
         {
             Gw2ListingsBook? book = null;
             orderBooks?.TryGetValue(price.Id, out book);
@@ -287,6 +284,10 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
         progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, results.Count, $"Scan complete: {results.Count} profitable items found." + SpikeNote(spikesSkipped)));
         return results;
     }
+
+    /// <summary>A Rarity / Item type choice narrows the scan unless it is blank or "All".</summary>
+    private static bool IsActiveChoice([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? choice) =>
+        !string.IsNullOrWhiteSpace(choice) && !choice.Equals("All", StringComparison.OrdinalIgnoreCase);
 
     private static string SpikeNote(int spikesSkipped) =>
         spikesSkipped > 0 ? $" Skipped {spikesSkipped} price spike(s) vs the 7-day average." : string.Empty;
@@ -480,5 +481,4 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
                $"Depth: {price.Buys!.Quantity:N0} demand / {price.Sells!.Quantity:N0} supply{volPart}\n" +
                $"Signal: {riskBadge}";
     }
-
 }

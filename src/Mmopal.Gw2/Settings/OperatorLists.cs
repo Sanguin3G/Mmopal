@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Mmopal.Contracts;
@@ -78,35 +79,16 @@ public static class OperatorSettingsFile
         WriteIndented = true
     };
 
-    public static OperatorSettings LoadOrDefault(string path)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            {
-                return new OperatorSettings();
-            }
-
-            return JsonSerializer.Deserialize<OperatorSettings>(File.ReadAllText(path), JsonOptions)
-                   ?? new OperatorSettings();
-        }
-        catch (JsonException)
-        {
-            return new OperatorSettings();
-        }
-        catch (IOException)
-        {
-            return new OperatorSettings();
-        }
-    }
+    public static OperatorSettings LoadOrDefault(string path) =>
+        SettingsFileIo.TryReadJson<OperatorSettings>(path, JsonOptions, out var settings) && settings is not null
+            ? settings
+            : new OperatorSettings();
 
     public static void Save(string path, OperatorSettings settings)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(settings);
-        var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(settings, JsonOptions));
+        SettingsFileIo.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
     }
 }
 
@@ -120,85 +102,56 @@ public static class OperatorListsStore
 
     public static IReadOnlyList<ItemCandidate> LoadShoppingList(string path)
     {
-        try
+        if (!SettingsFileIo.TryReadJson<List<ItemCandidate>>(path, JsonOptions, out var items))
         {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            {
-                return Array.Empty<ItemCandidate>();
-            }
+            return Array.Empty<ItemCandidate>();
+        }
 
-            return JsonSerializer.Deserialize<List<ItemCandidate>>(File.ReadAllText(path), JsonOptions)
-                   ?? [];
-        }
-        catch (JsonException)
-        {
-            return Array.Empty<ItemCandidate>();
-        }
-        catch (IOException)
-        {
-            return Array.Empty<ItemCandidate>();
-        }
+        return items ?? [];
     }
 
     public static void SaveShoppingList(string path, IEnumerable<ItemCandidate> items)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(items);
-        var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         var deduplicated = items
             .Where(item => !string.IsNullOrWhiteSpace(item.ItemName))
             .GroupBy(item => ItemNameNormalizer.Normalize(item.ItemName), StringComparer.OrdinalIgnoreCase)
             .Select(group => group.Last())
             .ToList();
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(deduplicated, JsonOptions));
+        SettingsFileIo.WriteAllText(path, JsonSerializer.Serialize(deduplicated, JsonOptions));
     }
 
     public static IReadOnlyList<string> LoadBlacklist(string path)
     {
-        try
+        if (!SettingsFileIo.TryReadJson<List<string>>(path, JsonOptions, out var entries))
         {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            {
-                return Array.Empty<string>();
-            }
+            return Array.Empty<string>();
+        }
 
-            return (JsonSerializer.Deserialize<List<string>>(File.ReadAllText(path), JsonOptions) ?? [])
-                .Where(entry => !string.IsNullOrWhiteSpace(entry))
-                .Select(entry => entry.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch (JsonException)
-        {
-            return Array.Empty<string>();
-        }
-        catch (IOException)
-        {
-            return Array.Empty<string>();
-        }
+        return (entries ?? [])
+            .Where(entry => !string.IsNullOrWhiteSpace(entry))
+            .Select(entry => entry.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public static void SaveBlacklist(string path, IEnumerable<string> entries)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(entries);
-        var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         var cleaned = entries
             .Where(entry => !string.IsNullOrWhiteSpace(entry))
             .Select(entry => entry.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(entry => entry, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(cleaned, JsonOptions));
+        SettingsFileIo.WriteAllText(path, JsonSerializer.Serialize(cleaned, JsonOptions));
     }
 
     public static void ExportShoppingListCsv(string path, IEnumerable<ItemCandidate> items)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         var sb = new StringBuilder();
         sb.AppendLine("ItemName;Rarity;Quantity;BuyPriceCopper;SellPriceCopper;ROI");
         foreach (var item in items)
@@ -208,18 +161,16 @@ public static class OperatorListsStore
               .Append(item.Quantity ?? 1).Append(';')
               .Append(item.BuyPriceCopper?.ToString() ?? string.Empty).Append(';')
               .Append(item.SellPriceCopper?.ToString() ?? string.Empty).Append(';')
-              .Append(item.Roi?.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty)
+              .Append(item.Roi?.ToString("0.##", CultureInfo.InvariantCulture) ?? string.Empty)
               .AppendLine();
         }
 
-        File.WriteAllText(fullPath, sb.ToString());
+        SettingsFileIo.WriteAllText(path, sb.ToString());
     }
 
     public static void ExportBlacklistCsv(string path, IEnumerable<string> entries)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         var sb = new StringBuilder();
         sb.AppendLine("ItemName");
         foreach (var entry in entries)
@@ -227,11 +178,46 @@ public static class OperatorListsStore
             sb.AppendLine(EscapeCsv(entry));
         }
 
-        File.WriteAllText(fullPath, sb.ToString());
+        SettingsFileIo.WriteAllText(path, sb.ToString());
     }
 
     private static string EscapeCsv(string value) =>
         value.Contains(';') || value.Contains('"')
             ? $"\"{value.Replace("\"", "\"\"")}\""
             : value;
+}
+
+/// <summary>File helpers shared by the settings and list stores.</summary>
+internal static class SettingsFileIo
+{
+    /// <summary>
+    /// Reads JSON from <paramref name="path"/>. False when the path is blank, the file is missing, or it cannot be
+    /// read or parsed (callers then fall back to defaults); true otherwise, even when the JSON is <c>null</c>.
+    /// </summary>
+    public static bool TryReadJson<T>(string path, JsonSerializerOptions options, out T? value)
+    {
+        value = default;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return false;
+            }
+
+            value = JsonSerializer.Deserialize<T>(File.ReadAllText(path), options);
+            return true;
+        }
+        catch (Exception exception) when (exception is JsonException or IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Writes <paramref name="contents"/> to the full path of <paramref name="path"/>, creating its folder first.</summary>
+    public static void WriteAllText(string path, string contents)
+    {
+        var fullPath = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, contents);
+    }
 }

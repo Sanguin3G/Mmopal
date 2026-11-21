@@ -26,31 +26,21 @@ public sealed record OrderBookReport(int Buys, int Sells, int BuysBehind, int Se
         var unknown = 0;
         foreach (var transaction in transactions ?? Array.Empty<Transaction>())
         {
-            if (transaction.Type == TransactionType.Buy)
+            var isBuy = transaction.Type == TransactionType.Buy;
+            if (isBuy) buys++;
+            else sells++;
+
+            switch (Position(transaction))
             {
-                buys++;
-                switch (Position(transaction))
-                {
-                    case BookPosition.Behind:
-                        buysBehind++;
-                        break;
-                    case BookPosition.Unknown:
-                        unknown++;
-                        break;
-                }
-            }
-            else
-            {
-                sells++;
-                switch (Position(transaction))
-                {
-                    case BookPosition.Behind:
-                        sellsBehind++;
-                        break;
-                    case BookPosition.Unknown:
-                        unknown++;
-                        break;
-                }
+                case BookPosition.Behind when isBuy:
+                    buysBehind++;
+                    break;
+                case BookPosition.Behind:
+                    sellsBehind++;
+                    break;
+                case BookPosition.Unknown:
+                    unknown++;
+                    break;
             }
         }
 

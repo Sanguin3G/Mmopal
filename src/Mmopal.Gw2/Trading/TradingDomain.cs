@@ -114,8 +114,14 @@ public sealed class ProfitabilityEngine
             NetSaleCopper: netSale,
             ProfitCopper: profit,
             ProfitPercentage: percentage,
-            Reason: profit <= 0 ? "Net sale value does not exceed the buy price." :
-                percentage <= minimum ? "Profit percentage is below the configured threshold." : null);
+            Reason: UnprofitableReason(profit, percentage, minimum));
+    }
+
+    private static string? UnprofitableReason(long profit, decimal percentage, decimal minimum)
+    {
+        if (profit <= 0) return "Net sale value does not exceed the buy price.";
+        if (percentage <= minimum) return "Profit percentage is below the configured threshold.";
+        return null;
     }
 
     private static long CalculateFee(long price, int basisPoints, bool round)

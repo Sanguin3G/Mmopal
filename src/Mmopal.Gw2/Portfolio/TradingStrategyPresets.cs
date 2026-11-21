@@ -1,7 +1,3 @@
-using System.Globalization;
-using System.Text;
-using Mmopal.Contracts;
-
 namespace Mmopal.Gw2;
 
 // Wallet-sized strategy presets (Starter, Balanced, High Capital, High-Volume Safe); SmartAutoTuner builds on these.

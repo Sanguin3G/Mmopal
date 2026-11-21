@@ -1,8 +1,4 @@
-using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Mmopal.Contracts;
-using Mmopal.Infrastructure;
 
 namespace Mmopal.Gw2;
 
