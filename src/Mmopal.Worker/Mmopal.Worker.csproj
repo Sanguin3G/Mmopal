@@ -19,4 +19,7 @@
     <None Include="..\..\config\profiles\*.json" LinkBase="config\profiles" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\assets\templates\tradingpost\*.png" LinkBase="assets\templates\tradingpost" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Vision\gw2-digit-glyphs.json" LogicalName="Mmopal.Worker.Vision.gw2-digit-glyphs.json" />
+  </ItemGroup>
 </Project>

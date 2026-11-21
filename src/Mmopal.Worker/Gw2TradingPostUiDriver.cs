@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Mmopal.Contracts;
 using Mmopal.Gw2;
 using Mmopal.Native;
+using Mmopal.Worker.Vision;
 
 namespace Mmopal.Worker;
 
@@ -1275,6 +1276,16 @@ public sealed class Gw2TradingPostUiDriver
             try
             {
                 var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+                // Digit shapes first: the price column only (the "Ordered"/"Available" text is left of it).
+                var priceColumn = new CaptureRegion(priceColumnMinX + 8, listRegion.Y, listRegion.X + listRegion.Width - priceColumnMinX - 8, listRegion.Height);
+                if (frame.Pixels.Length > 0 &&
+                    CoinPriceReader.ReadFirst(frame, priceColumn) is { } glyphPrice &&
+                    // Tighter than the OCR window: a shape read goes straight into the typed price.
+                    Math.Abs(glyphPrice.Copper - hintCopper) <= hintCopper * 0.15)
+                {
+                    return glyphPrice.Copper;
+                }
+
                 if (frame.Pixels.Length > 0 && _textLocator is not null)
                 {
                     var variants = new List<IReadOnlyList<OcrTextBox>>
@@ -1381,22 +1392,56 @@ public sealed class Gw2TradingPostUiDriver
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             await TypeDialogPriceAsync(unitCopper, cancellationToken).ConfigureAwait(false);
+
+            // Digit shapes first: exact, and immune to the OCR failures below. OCR stays as the fallback.
+            var glyphs = await ReadTotalByGlyphsAsync(cancellationToken).ConfigureAwait(false);
+            if (glyphs.Reading is { } glyphTotal && IsWholeMultiple(glyphTotal.Copper, unitCopper))
+            {
+                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (read by digit shapes: {glyphTotal.Text})" +
+                              (attempt == 1 ? "." : $" after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)})."));
+            }
+
             var texts = await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false);
             var totals = texts
                 .Select(ParseTotalPrice)
                 .Where(total => total is > 0)
                 .Select(total => total!.Value)
                 .ToArray();
-            if (totals.Length == 0)
+            if (totals.Length == 0 && glyphs.Reading is null)
             {
                 return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)}; the dialog total could not be read to confirm it.");
             }
 
-            if (totals.Any(total => IsWholeMultiple(total, unitCopper)))
+            if (totals.FirstOrDefault(total => IsWholeMultiple(total, unitCopper)) is var ocrTotal and > 0)
             {
+                // OCR confirmed what the digit shapes could not read: learn the unknown shapes for next time.
+                // Only when two OCR reads agree on it: a learned shape is kept for good, so its label must be right.
+                if (glyphs.Frame is { } frame && glyphs.Reading is null && totals.Count(total => total == ocrTotal) >= 2 &&
+                    CoinPriceReader.LearnFromConfirmed(frame, GlyphTotalRegion, ocrTotal) is var learned and > 0)
+                {
+                    _logger.LogInformation("Learned {Count} new digit shape(s) from the confirmed total {Total}.", learned, MarketScanItem.FormatCoins(ocrTotal));
+                }
+
                 return (true, attempt == 1
                     ? $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed."
                     : $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)}).");
+            }
+
+            if (glyphs.Reading is { } shown && !TotalMatchesAcrossReads(texts, unitCopper))
+            {
+                // The shapes read a definite, different total and OCR does not confirm the typed one either: the boxes
+                // did not take the value. Re-type, never assume.
+                lastSeen = shown.Copper;
+                if (attempt == 1)
+                {
+                    _logger.LogInformation(
+                        "Dialog shows {Seen} after typing {Typed} (read by digit shapes: {Text}); re-typing once.",
+                        MarketScanItem.FormatCoins(shown.Copper),
+                        MarketScanItem.FormatCoins(unitCopper),
+                        shown.Text);
+                }
+
+                continue;
             }
 
             // OCR often loses a "00"/"06" group on this line ("1g 00s 18c" read as "1 18"), which shifted the parse by
@@ -1429,6 +1474,23 @@ public sealed class Gw2TradingPostUiDriver
     /// silver or copper value whose two-digit form contains a 0 (00, 06, 50 …), which OCR tends to drop. Gold is never
     /// allowed to be missing, and no group may be extra or different.
     /// </summary>
+    // The Total line's digits, right of the "Total Price:" label (the label's letters would be read as digits).
+    private static readonly CaptureRegion GlyphTotalRegion = new(382, 330, 250, 44);
+
+    private async Task<(CoinReading? Reading, AutomationFrame? Frame)> ReadTotalByGlyphsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            return frame.Pixels.Length == 0 ? (null, null) : (CoinPriceReader.ReadFirst(frame, GlyphTotalRegion), frame);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug(exception, "Digit-shape read of the dialog total failed.");
+            return (null, null);
+        }
+    }
+
     internal static bool TotalMatchesWithUnreadZeroGroups(string? text, long unitCopper) =>
         TotalMatchesAcrossReads([text ?? string.Empty], unitCopper);
 
