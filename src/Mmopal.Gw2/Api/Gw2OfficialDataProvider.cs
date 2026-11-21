@@ -661,25 +661,3 @@ public sealed class Gw2OfficialDataProvider : IGw2DataProvider
         [property: JsonPropertyName("count")] long Count,
         [property: JsonPropertyName("binding")] string? Binding);
 }
-
-public sealed record Gw2LivePriceQuote(
-    int ItemId,
-    long HighestBuyCopper,
-    long BuyQuantity,
-    long LowestSellCopper,
-    long SellQuantity);
-
-public sealed record Gw2ApiKeyValidationResult(
-    bool IsValid,
-    string? AccountName,
-    IReadOnlyList<string> Permissions,
-    long? CoinCopper,
-    string Message);
-
-public sealed record Gw2PortfolioSyncResult(
-    int NewlyArchivedTransactions,
-    int TotalArchivedTransactions,
-    IReadOnlyList<Gw2ActiveOrder> ActiveOrders,
-    Gw2DeliverySnapshot Delivery,
-    Gw2EquitySnapshot LatestSnapshot,
-    string AccountName = "");
