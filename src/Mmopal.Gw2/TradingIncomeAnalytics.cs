@@ -177,7 +177,7 @@ public static class TradingStrategyPresets
             {
                 MaxBuyGold = maxBuy,
                 RecommendedGoldFloor = floor,
-                Rationale = $"Wallet ~{gold:0.#}g (Starter tier): Max Buy {maxBuy:0.#}g (~5% cap/item) and {floor:0.#}g reserve for listing fees."
+                Rationale = $"Total gold ~{gold:0.#}g (Starter tier): Max Buy {maxBuy:0.#}g (~5% cap/item) and {floor:0.#}g reserve for listing fees."
             };
         }
 
@@ -190,7 +190,7 @@ public static class TradingStrategyPresets
             {
                 MaxBuyGold = maxBuy,
                 RecommendedGoldFloor = floor,
-                Rationale = $"Wallet ~{gold:0}g (Balanced tier): Max Buy {maxBuy:0}g (~4% cap/item) and {floor:0}g reserve for listing fees."
+                Rationale = $"Total gold ~{gold:0}g (Balanced tier): Max Buy {maxBuy:0}g (~4% cap/item) and {floor:0}g reserve for listing fees."
             };
         }
 
@@ -201,7 +201,7 @@ public static class TradingStrategyPresets
         {
             MaxBuyGold = highMaxBuy,
             RecommendedGoldFloor = highFloor,
-            Rationale = $"Wallet ~{gold:0}g (High-Capital tier): Max Buy {highMaxBuy:0}g (~4% cap/item) and {highFloor:0}g reserve."
+            Rationale = $"Total gold ~{gold:0}g (High-Capital tier): Max Buy {highMaxBuy:0}g (~4% cap/item) and {highFloor:0}g reserve."
         };
     }
 }

@@ -50,6 +50,10 @@ public sealed class Gw2TradingPostUiDriver
     /// <summary>Items whose buy orders the last Outbid Refresh pass cancelled (for the bot-war guard).</summary>
     public IReadOnlyList<string> LastCanceledOutbidItems { get; private set; } = Array.Empty<string>();
 
+    // Slot the last swap picked: if Character Select shows up again right after, enter the same slot instead of a new
+    // random one (a swap picked slot #3, then the follow-up picked slot #4 and logged in twice).
+    private (int Offset, DateTimeOffset At)? _pendingSlot;
+
     /// <summary>The character entered last ("'Name' (slot #3)" or "slot #3"), for messages; null before any swap.</summary>
     public string? CurrentCharacterLabel { get; private set; }
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
@@ -458,7 +462,10 @@ public sealed class Gw2TradingPostUiDriver
             // Character Select lists the last played character first. On a fresh launch, a game restart or a
             // disconnect, that is the character the previous run ended on (possibly the one that could not open the
             // TP), so with several parked characters enter a different one, using the same rule as the AFK swap.
-            var slotOffset = PickParkedSlotOffset(_settings.RandomizeCharacterSelection, _settings.ParkedCharacterCount);
+            var slotOffset = _pendingSlot is { } pending && _utcNow() - pending.At < TimeSpan.FromMinutes(3)
+                ? pending.Offset
+                : PickParkedSlotOffset(_settings.RandomizeCharacterSelection, _settings.ParkedCharacterCount);
+            _pendingSlot = null;
             var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
             var portraitY = DeterministicCharSlotOnePoint.Y;
             var previousName = slotOffset > 0 ? await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) : null;
@@ -1395,9 +1402,12 @@ public sealed class Gw2TradingPostUiDriver
             // OCR often loses a "00"/"06" group on this line ("1g 00s 18c" read as "1 18"), which shifted the parse by
             // one coin and aborted 43 good orders in one 7 h session. Accept a read that is the expected total with only
             // zero-containing groups missing; a box that really missed its value still shows different digits.
-            if (texts.FirstOrDefault(text => TotalMatchesWithUnreadZeroGroups(text, unitCopper)) is { } zeroDropped)
+            // The raw and enhanced reads also fail differently ("56 56" and "2 56" for 2g 56s 56c; "81" and "88€ 814",
+            // the coin icon read as a 4, for 88s 81c), so the reads are combined: each must fit the expected total and
+            // together they must show every digit group that is not zero-ish (and always the gold).
+            if (TotalMatchesAcrossReads(texts, unitCopper))
             {
-                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{zeroDropped.Trim()}', zero groups unread).");
+                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{string.Join(" | ", texts.Select(text => text.Trim()))}').");
             }
 
             lastSeen = totals[0];
@@ -1419,16 +1429,37 @@ public sealed class Gw2TradingPostUiDriver
     /// silver or copper value whose two-digit form contains a 0 (00, 06, 50 …), which OCR tends to drop. Gold is never
     /// allowed to be missing, and no group may be extra or different.
     /// </summary>
-    internal static bool TotalMatchesWithUnreadZeroGroups(string? text, long unitCopper)
+    internal static bool TotalMatchesWithUnreadZeroGroups(string? text, long unitCopper) =>
+        TotalMatchesAcrossReads([text ?? string.Empty], unitCopper);
+
+    /// <summary>
+    /// True when the Total line reads fit unit × q (q = 1..250): every read that parses must be the expected digit
+    /// groups in order with some missing, and the reads together must show the gold group and every silver/copper group
+    /// whose two-digit form has no 0 (OCR drops "00", "06", "50" …). A 3-digit read in a silver/copper place may carry the
+    /// coin icon as a last digit ("814" for 81). A box that missed its value shows other digits and never matches.
+    /// </summary>
+    internal static bool TotalMatchesAcrossReads(IReadOnlyList<string> texts, long unitCopper)
     {
-        var observed = new List<long>();
-        foreach (var group in PriceDigitGroups(text))
+        if (unitCopper <= 0)
         {
-            if (!long.TryParse(group, out var value)) return false;
-            observed.Add(value);
+            return false;
         }
 
-        if (observed.Count == 0 || unitCopper <= 0)
+        var reads = new List<List<long>>();
+        foreach (var text in texts)
+        {
+            var groups = new List<long>();
+            var parsed = true;
+            foreach (var group in PriceDigitGroups(text))
+            {
+                if (!long.TryParse(group, out var value)) { parsed = false; break; }
+                groups.Add(value);
+            }
+
+            if (parsed && groups.Count > 0) reads.Add(groups);
+        }
+
+        if (reads.Count == 0)
         {
             return false;
         }
@@ -1437,11 +1468,22 @@ public sealed class Gw2TradingPostUiDriver
         {
             var total = unitCopper * quantity;
             var (gold, silver, copper) = (total / 10_000, total / 100 % 100, total % 100);
-            var expected = new List<(long Value, bool MayBeUnread)>();
-            if (gold > 0) expected.Add((gold, false));
-            if (gold > 0 || silver > 0) expected.Add((silver, IsZeroish(silver)));
-            expected.Add((copper, IsZeroish(copper)));
-            if (expected.Count > observed.Count && IsSubsequenceSkippingZeroish(observed, expected))
+            var expected = new List<(long Value, bool MustBeSeen, bool IsCoinPlace)>();
+            if (gold > 0) expected.Add((gold, true, false));
+            if (gold > 0 || silver > 0) expected.Add((silver, !IsZeroish(silver), true));
+            expected.Add((copper, !IsZeroish(copper), true));
+
+            var seen = new bool[expected.Count];
+            var anyFits = false;
+            foreach (var read in reads)
+            {
+                var positions = AlignRead(read, expected);
+                if (positions is null) continue;
+                anyFits = true;
+                foreach (var position in positions) seen[position] = true;
+            }
+
+            if (anyFits && expected.Select((e, i) => !e.MustBeSeen || seen[i]).All(ok => ok))
             {
                 return true;
             }
@@ -1452,22 +1494,26 @@ public sealed class Gw2TradingPostUiDriver
         static bool IsZeroish(long twoDigit) => twoDigit < 10 || twoDigit % 10 == 0;
     }
 
-    private static bool IsSubsequenceSkippingZeroish(List<long> observed, List<(long Value, bool MayBeUnread)> expected)
+    /// <summary>Positions of <paramref name="expected"/> that <paramref name="read"/> matches in order, or null.</summary>
+    private static List<int>? AlignRead(List<long> read, List<(long Value, bool MustBeSeen, bool IsCoinPlace)> expected)
     {
-        var o = 0;
-        foreach (var (value, mayBeUnread) in expected)
+        var positions = new List<int>(read.Count);
+        var e = 0;
+        foreach (var value in read)
         {
-            if (o < observed.Count && observed[o] == value)
+            while (e < expected.Count &&
+                   value != expected[e].Value &&
+                   !(expected[e].IsCoinPlace && value is >= 100 and <= 999 && value / 10 == expected[e].Value))
             {
-                o++;
+                e++;
             }
-            else if (!mayBeUnread)
-            {
-                return false;
-            }
+
+            if (e >= expected.Count) return null;
+            positions.Add(e);
+            e++;
         }
 
-        return o == observed.Count;
+        return positions;
     }
 
     /// <summary>
@@ -2020,6 +2066,7 @@ public sealed class Gw2TradingPostUiDriver
         }
 
         var slotOffset = PickParkedSlotOffset(randomize, parkedCharacterCount);
+        _pendingSlot = (slotOffset, _utcNow());
         var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
         var portraitY = DeterministicCharSlotOnePoint.Y;
 

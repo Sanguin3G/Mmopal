@@ -53,6 +53,9 @@ public sealed class WorkerRuntime
     private Task? _runTask;
     private string? _runId;
     private bool _pauseRequested;
+    // Graceful Stop: finish the current step (an order being typed, a listing), then leave the loop and save the report.
+    private bool _stopRequested;
+    private static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(90);
     private WorkerStatus _status = new(WorkerState.Idle, null, null, null, null, DateTimeOffset.UtcNow);
 
     public WorkerRuntime(
@@ -100,13 +103,25 @@ public sealed class WorkerRuntime
         }
     }
 
+    // A graceful stop also counts as "pause" so the driver and the cycle stop between actions, never mid-action.
     private bool IsPauseRequested
     {
         get
         {
             lock (_statusLock)
             {
-                return _pauseRequested;
+                return _pauseRequested || _stopRequested;
+            }
+        }
+    }
+
+    private bool IsStopRequested
+    {
+        get
+        {
+            lock (_statusLock)
+            {
+                return _stopRequested;
             }
         }
     }
@@ -126,7 +141,7 @@ public sealed class WorkerRuntime
                 WorkerCommandTypes.Start => await StartAsync(command, cancellationToken),
                 WorkerCommandTypes.Pause => Pause(),
                 WorkerCommandTypes.Resume => Resume(),
-                WorkerCommandTypes.Stop => await StopCommandAsync(cancellationToken),
+                WorkerCommandTypes.Stop => await GracefulStopAsync(cancellationToken),
                 WorkerCommandTypes.EmergencyStop => await EmergencyStopAsync(cancellationToken),
                 WorkerCommandTypes.Status => StatusEvent(),
                 WorkerCommandTypes.Shutdown => await StopCommandAsync(cancellationToken),
@@ -144,6 +159,7 @@ public sealed class WorkerRuntime
         lock (_statusLock)
         {
             _pauseRequested = false;
+            _stopRequested = false;
         }
 
         _runCancellation?.Cancel();
@@ -181,6 +197,7 @@ public sealed class WorkerRuntime
         lock (_statusLock)
         {
             _pauseRequested = false;
+            _stopRequested = false;
         }
 
         SetStatus(WorkerState.Starting, bot, mode, profile, "Starting", "Run requested.");
@@ -252,6 +269,75 @@ public sealed class WorkerRuntime
     private async Task<WorkerEvent> StopCommandAsync(CancellationToken cancellationToken)
     {
         await StopAsync(cancellationToken);
+        return StatusEvent();
+    }
+
+    /// <summary>
+    /// Stop: let the current step finish (the loop leaves at its next safe point and saves the session report), then
+    /// stop. Returns at once so Emergency stop still works meanwhile; after 90 s it stops anyway.
+    /// </summary>
+    private async Task<WorkerEvent> GracefulStopAsync(CancellationToken cancellationToken)
+    {
+        var runTask = _runTask;
+        if (runTask is null || runTask.IsCompleted)
+        {
+            await StopAsync(cancellationToken);
+            return StatusEvent();
+        }
+
+        lock (_statusLock)
+        {
+            _stopRequested = true;
+        }
+
+        _logger.LogInformation("Stop requested: finishing the current step, then stopping.");
+        SetStatus(Status.State, message: "Stopping after the current step…");
+
+        // Between steps the loop leaves within a moment: finish inline. Mid-step, hand off so the command gate stays
+        // free for Emergency stop.
+        try
+        {
+            await runTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
+            await StopAsync(cancellationToken);
+            return StatusEvent();
+        }
+        catch (TimeoutException)
+        {
+        }
+        catch (Exception) when (runTask.IsCompleted)
+        {
+            await StopAsync(cancellationToken);
+            return StatusEvent();
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await runTask.WaitAsync(GracefulStopTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("The current step did not finish within {Seconds} s; stopping now.", (int)GracefulStopTimeout.TotalSeconds);
+            }
+            catch (Exception)
+            {
+                // The run ended with an error; it is reported by the run itself.
+            }
+
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (ReferenceEquals(_runTask, runTask))
+                {
+                    await StopAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        });
         return StatusEvent();
     }
 
@@ -563,6 +649,14 @@ public sealed class WorkerRuntime
                     // not per whole session, so a 10-hour run is not halted by its third disconnect.
                     _logger.LogInformation("No game restart for {Hours}h; restart allowance refilled ({Max}).", GameRestartBudgetRefill.TotalHours, maxGameRestarts);
                     gameRestartsUsed = 0;
+                }
+
+                if (IsStopRequested)
+                {
+                    sessionOutcome = "Stopped by User";
+                    sessionOutcomeSummary = "Stopped after finishing the current step.";
+                    _logger.LogInformation("Stopped after finishing the current step.");
+                    break;
                 }
 
                 if (IsPauseRequested)

@@ -168,6 +168,10 @@ public sealed class TradingCycleController
     private readonly ConcurrentDictionary<string, DateTimeOffset> _blockedUntil = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (string Name, long Price, DateTimeOffset PlacedAt)> _placedPrices = new(StringComparer.Ordinal);
     private static readonly TimeSpan FailedItemCooldown = TimeSpan.FromMinutes(30);
+    // Items whose order dialog refused the typed price on two separate attempts (Berserker's Amulet showed the same
+    // total whatever was typed, three tries in 2 h): skipped for the rest of the run.
+    private readonly ConcurrentDictionary<string, int> _typingRefusals = new(StringComparer.Ordinal);
+    private const int TypingRefusalsBeforeSkip = 2;
 
     private static bool IsItemSpecificBuyFailure(string? message) =>
         message is not null &&
@@ -347,6 +351,14 @@ public sealed class TradingCycleController
                     // The same dialog shows the same wrong price / wrong item next cycle too (Pyre Dye was aborted
                     // four cycles in a row); give the slot to other items for a while.
                     _blockedUntil[GetItemKey(runId, action.ItemName)] = _options.UtcNow() + FailedItemCooldown;
+                    if (result.Message!.Contains("price boxes did not take", StringComparison.Ordinal) &&
+                        _typingRefusals.AddOrUpdate(GetItemKey(runId, action.ItemName), 1, (_, count) => count + 1) == TypingRefusalsBeforeSkip)
+                    {
+                        _logger.LogInformation(
+                            "Skipping {Item} for the rest of this session: its order dialog refused the typed price on {Count} attempts.",
+                            action.ItemName,
+                            TypingRefusalsBeforeSkip);
+                    }
                 }
 
                 if (result.Status == TradingActionStatus.Failed)
@@ -484,6 +496,15 @@ public sealed class TradingCycleController
                 selected.Add(CandidateDecision.Skip(
                     decision.Candidate,
                     $"Trading Post search for '{action.ItemName}' opens '{orderedInstead}' first (that is the order that appeared); skipped for this run so the wrong item is not bought again.",
+                    decision.Profitability));
+                continue;
+            }
+
+            if (_typingRefusals.TryGetValue(GetItemKey(runId, action.ItemName), out var refusals) && refusals >= TypingRefusalsBeforeSkip)
+            {
+                selected.Add(CandidateDecision.Skip(
+                    decision.Candidate,
+                    "Its order dialog refused the typed price twice; skipped for this session.",
                     decision.Profitability));
                 continue;
             }

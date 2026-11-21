@@ -630,10 +630,20 @@ public sealed class LiveTradingExecutorTests
     [InlineData("Total Price: 1", 5_000L, true)]              // 2 x 50s = 1g 00s 00c
     [InlineData("Total Price: 56 74", 12_837L, false)]        // 2 x 1g 28s 37c: gold missing is never accepted
     [InlineData("Total Price: 1 19", 10_018L, false)]         // different copper
-    [InlineData("Total Price: 1 00 18", 10_018L, false)]      // full read: handled by the normal parse, not here
+    [InlineData("Total Price: 1 00 18", 10_018L, true)]       // full read
     public void TotalMatchesWithUnreadZeroGroups_accepts_only_missing_zero_groups(string text, long unit, bool expected)
     {
         Assert.Equal(expected, Gw2TradingPostUiDriver.TotalMatchesWithUnreadZeroGroups(text, unit));
+    }
+
+    [Theory]
+    [InlineData("Total Price: 56• 56•", "Total Price: 2• 56 e", 12_828L, true)]    // 2 x 1g 28s 28c: gold in one read, copper in the other
+    [InlineData("Total Price: 56• 56•", "Total Price: 56 56", 12_828L, false)]     // no read shows the gold: the box really missed it
+    [InlineData("Total Price: 81 e", "Total Price: 88€ 814", 8_881L, true)]        // coin icon read as a trailing 4
+    [InlineData("Total Price: 27 • 87 •", "Total Price: 274. 87 e", 8_196L, false)] // Berserker's Amulet: total ignores the typed price
+    public void TotalMatchesAcrossReads_combines_the_raw_and_enhanced_reads(string first, string second, long unit, bool expected)
+    {
+        Assert.Equal(expected, Gw2TradingPostUiDriver.TotalMatchesAcrossReads([first, second], unit));
     }
 
     [Fact]
