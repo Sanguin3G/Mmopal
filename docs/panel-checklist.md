@@ -2,7 +2,7 @@
 
 This is a checklist of the old operator window, not a port. The new WPF window picks items from the "Still missing" list only when a later pass still wants them.
 
-REA inspected `runtime/legacy/mmopal.dll` without loading or running it. The assembly is `mmopal` 1.0.0.0, modern .NET CIL, AnyCPU. The window type is `MMOPal.UI.MainWindow`. Member coverage was complete. SHA-256 `866f5cb83697779dbf68c3d844686f74271751093e8b535973187bd98eb4c94d`. Evidence `ev_9a81560ac91d9fc39ac0558b10129bc9c7f042e2633cd19d6aafe898e8ac981b` (identity) and `ev_442483226605b5c1730b5f6cb972550b079c3263a586e6ea230119aa0752d302` (members).
+REA inspected the old `mmopal.dll` (from the former `runtime/legacy` folder, since deleted) without loading or running it. The assembly is `mmopal` 1.0.0.0, modern .NET CIL, AnyCPU. The window type is `MMOPal.UI.MainWindow`. Member coverage was complete. SHA-256 `866f5cb83697779dbf68c3d844686f74271751093e8b535973187bd98eb4c94d`. Evidence `ev_9a81560ac91d9fc39ac0558b10129bc9c7f042e2633cd19d6aafe898e8ac981b` (identity) and `ev_442483226605b5c1730b5f6cb972550b079c3263a586e6ea230119aa0752d302` (members).
 
 ## Already in the new window
 
@@ -30,7 +30,7 @@ These are the remaining GW2 controls the old window exposed. Add them only if yo
 - Seconds before canceling sale items, and seconds before canceling ordered items.
 - Iterations before selling, restarting the Trading Post, reselling, and getting info.
 
-Do not copy the old `runtime/legacy/lua-gw2/tradingbot/settings.ini` API key into git. Save your key in the **Settings** tab (encrypted via Windows DPAPI) or set `MMOPAL_Native__Gw2ApiKey`.
+Do not put a GW2 API key into git. Save your key in the **Settings** tab (encrypted via Windows DPAPI) or set `MMOPAL_Native__Gw2ApiKey`.
 
 ### Lists and transactions
 

@@ -29,7 +29,7 @@ dotnet run --project src/Mmopal.Desktop/Mmopal.Desktop.csproj
 
 Manage one or multiple GW2 API keys (`account`, `tradingpost`, `wallet`, `inventories` scopes) in **Settings → Accounts & API** — keys are stored encrypted with **Windows DPAPI (`CurrentUser`)** in `%LOCALAPPDATA%\Mmopal\profiles\gw2-api-keys.dpapi` (automatically migrating legacy single-key `gw2-api-key.dpapi`), with status verification, custom account labels, copy/reorder/delete controls, and per-account SQLite isolation. You can also supply `MMOPAL_Native__Gw2ApiKey` as an environment variable override.
 
-Template pictures load from `assets/templates/tradingpost` (configured by `Native:TemplateRoot` in `config/appsettings.json`) unless a `templateRoot` override is supplied in the payload. The worker never loads `core.dll` or `runtime/legacy`.
+Template pictures load from `assets/templates/tradingpost` (configured by `Native:TemplateRoot` in `config/appsettings.json`) unless a `templateRoot` override is supplied in the payload. The worker never loads `core.dll` or any file from the old Lua distribution.
 
 ## Where files go
 

@@ -1,6 +1,6 @@
 # Core behavior
 
-REA inspected `runtime/legacy/core.dll`. This note records that inspection and the owned frame code that can be tested without the module. It is not recovered vision source, and it is not a claim that the new score matches the packed module.
+REA inspected `core.dll` from the old distribution (the former `runtime/legacy` folder, since deleted; it remains in git history). This note records that inspection and the owned frame code that can be tested without the module. It is not recovered vision source, and it is not a claim that the new score matches the packed module.
 
 ## What the file is
 
@@ -90,5 +90,5 @@ Screen observe always uses `FrameTradingPostUiProbe` and `Gw2OfficialDataProvide
 
 ## What stays
 
-`Mmopal.LegacyBridge` has been removed and the solution no longer loads `core.dll` or reads from `runtime/legacy`. Template PNGs now live in `assets/templates/tradingpost`. Screen observe uses owned capture, OpenCV, Windows OCR, and the official Guild Wars 2 API. Live mode sends input only while armed; see [gw2-trading-controller.md](gw2-trading-controller.md). `GW2_FishHack` stays retired.
+`Mmopal.LegacyBridge` has been removed and the solution no longer loads `core.dll`. The old `runtime/legacy` distribution has been deleted from the repository. Template PNGs now live in `assets/templates/tradingpost`. Screen observe uses owned capture, OpenCV, Windows OCR, and the official Guild Wars 2 API. Live mode sends input only while armed; see [gw2-trading-controller.md](gw2-trading-controller.md). `GW2_FishHack` stays retired.
 

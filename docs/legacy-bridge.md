@@ -13,6 +13,6 @@
 | GW2 orders & wallet | `Gw2OfficialDataProvider` (official GW2 v2 API with full pagination) |
 | Local input | `Win32InputController` (`SendInput`, used by the worker in armed Live mode) |
 
-`runtime/legacy/` stays on disk only as an unreferenced archive of the original distribution. Neither `Mmopal.Desktop` nor `Mmopal.Worker` loads `core.dll`, `lua.dll`, `tesseract55.dll`, or any file from `runtime/legacy/`.
+The original distribution that lived in `runtime/legacy/` has been deleted from the repository; it remains in git history. Neither `Mmopal.Desktop` nor `Mmopal.Worker` loads `core.dll`, `lua.dll`, `tesseract55.dll`, or any other file from it.
 
 Do not put a real GW2 API key in committed configuration. Supply it through `MMOPAL_Native__Gw2ApiKey`.
