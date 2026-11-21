@@ -34,7 +34,7 @@ public partial class MainWindow : Window
     private readonly Func<IReadOnlyList<Gw2InstallCandidate>> _discoverGw2Installs;
     internal Func<DisplayScaleInfo> DetectDisplayScale { get; }
     private readonly TradingLedgerStore? _ledgerStore;
-    private readonly SessionReportStore? _sessionReportStore;
+    internal SessionReportStore? SessionReportStore { get; }
     private readonly IGw2MarketScanner _marketScanner;
     private readonly Func<Gw2ApiKeyVaultData> _loadApiKeyVault;
     private readonly Action<Gw2ApiKeyVaultData> _saveApiKeyVault;
@@ -52,17 +52,12 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ChartBarItem> _dailyChartBars = new();
     private readonly ObservableCollection<ChartBarItem> _hourlyChartBars = new();
     private readonly ObservableCollection<ApiKeyRowViewModel> _apiKeyRows = new();
-    private readonly ObservableCollection<SessionReportListItem> _sessionReportRows = new();
-    private readonly ObservableCollection<ReportTradeRow> _reportTradeRows = new();
-    private readonly ObservableCollection<ReportIncidentRow> _reportIncidentRows = new();
     private readonly List<Gw2ActiveOrder> _latestActiveOrders = new();
     private readonly List<(DateTime Timestamp, string Human, string Raw)> _logEntries = new();
 
     private Gw2ApiKeyVaultData _apiKeyVault = new(null, Array.Empty<Gw2ApiKeyEntry>());
     private IReadOnlyList<Gw2LedgerTransaction> _archivedTransactions = Array.Empty<Gw2LedgerTransaction>();
     private IReadOnlyList<ItemPnlRow> _allTimeframePnlRows = Array.Empty<ItemPnlRow>();
-    private IReadOnlyList<TradingSessionReport> _allLoadedReports = Array.Empty<TradingSessionReport>();
-    private TradingSessionReport? _selectedReport;
     private TradingIncomeReport? _lastIncomeReport;
     private Gw2EquitySnapshot? _latestEquitySnapshot;
     private IReadOnlyList<Gw2EquitySnapshot> _equitySnapshots = Array.Empty<Gw2EquitySnapshot>();
@@ -174,7 +169,7 @@ public partial class MainWindow : Window
         _discoverGw2Installs = discoverGw2Installs ?? (() => []);
         DetectDisplayScale = detectDisplayScale ?? (() => new DisplayScaleInfo(96, 100, true, "100% (96 DPI)"));
         _ledgerStore = ledgerStore;
-        _sessionReportStore = sessionReportStore;
+        SessionReportStore = sessionReportStore;
         _marketScanner = marketScanner ?? new Gw2MarketScanner(_gw2HttpClient, _ledgerStore);
         _loadApiKeyVault = loadApiKeyVault ?? (() => new Gw2ApiKeyVaultData(null, Array.Empty<Gw2ApiKeyEntry>()));
         _saveApiKeyVault = saveApiKeyVault ?? (_ => { });
@@ -190,6 +185,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         GuidePage.Attach(this);
         ListsPage.Attach(this);
+        ReportsPage.Attach(this);
         ScanResultsGrid.ItemsSource = _scanResults;
         ItemPnlGrid.ItemsSource = _itemPnlRows;
         ActiveOrdersGrid.ItemsSource = _activeOrderRows;
@@ -197,9 +193,6 @@ public partial class MainWindow : Window
         DailyProfitChartItems.ItemsSource = _dailyChartBars;
         HourlyActivityChartItems.ItemsSource = _hourlyChartBars;
         ApiKeysGrid.ItemsSource = _apiKeyRows;
-        SessionReportsListBox.ItemsSource = _sessionReportRows;
-        ReportTradesGrid.ItemsSource = _reportTradeRows;
-        ReportIncidentsGrid.ItemsSource = _reportIncidentRows;
         ShowRawLogCheckBox.Checked += (_, _) => RebuildLogList();
         ShowRawLogCheckBox.Unchecked += (_, _) => RebuildLogList();
 
@@ -234,7 +227,7 @@ public partial class MainWindow : Window
         Loaded += async (_, _) =>
         {
             await LoadCachedPortfolioOnStartupAsync();
-            await LoadSessionReportsAsync();
+            await ReportsPage.LoadSessionReportsAsync();
             await RunLaunchAutomationAsync();
         };
         Closed += (_, _) =>
@@ -256,7 +249,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------------
 
     /// <summary>The pages in the content area. Each page's XAML has its own namescope.</summary>
-    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage];
+    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage];
 
     /// <summary>Finds a named element in the shell or in any page.</summary>
     internal object? FindElement(string name) =>
@@ -264,7 +257,7 @@ public partial class MainWindow : Window
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
     {
-        if (SessionView is null || IncomeView is null || ReportsView is null || ScannerView is null ||
+        if (SessionView is null || IncomeView is null || ReportsPage.ReportsView is null || ScannerView is null ||
             ListsPage.ListsView is null || SettingsView is null || GuidePage.GuideView is null)
         {
             return;
@@ -272,7 +265,7 @@ public partial class MainWindow : Window
 
         SessionView.Visibility = NavSession.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         IncomeView.Visibility = NavIncome.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        ReportsPage.ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ListsPage.ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
@@ -280,7 +273,7 @@ public partial class MainWindow : Window
 
         if (NavReports.IsChecked == true)
         {
-            _ = LoadSessionReportsAsync();
+            _ = ReportsPage.LoadSessionReportsAsync();
         }
     }
 
@@ -308,10 +301,7 @@ public partial class MainWindow : Window
             RebuildIncomeCharts(_lastIncomeReport);
         }
 
-        if (_allLoadedReports.Count > 0)
-        {
-            ApplyReportsFilter();
-        }
+        ReportsPage.RefreshAfterThemeChange();
 
         RefreshReadinessChecklist();
         SaveOperatorSettingsIfValid();
@@ -632,9 +622,9 @@ public partial class MainWindow : Window
         if (GuidePage.GuideScheduleGrid is not null) GuidePage.GuideScheduleGrid.Columns = cardColumns;
         ScannerCoreFiltersGrid.Columns = columns;
         ScannerAdvancedFiltersGrid.Columns = columns;
-        if (ReportDetailKpiGrid is not null)
+        if (ReportsPage.ReportDetailKpiGrid is not null)
         {
-            ReportDetailKpiGrid.Columns = columns;
+            ReportsPage.ReportDetailKpiGrid.Columns = columns;
         }
 
         if (IncomeHeaderActionsPanel is not null)
@@ -713,33 +703,33 @@ public partial class MainWindow : Window
             }
         }
 
-        if (ReportsLeftCol is not null && ReportsRightCol is not null &&
-            ReportsTopRow is not null && ReportsBottomRow is not null &&
-            ReportsListCard is not null && ReportDetailCard is not null)
+        if (ReportsPage.ReportsLeftCol is not null && ReportsPage.ReportsRightCol is not null &&
+            ReportsPage.ReportsTopRow is not null && ReportsPage.ReportsBottomRow is not null &&
+            ReportsPage.ReportsListCard is not null && ReportsPage.ReportDetailCard is not null)
         {
             if (compact)
             {
-                ReportsLeftCol.Width = new GridLength(1, GridUnitType.Star);
-                ReportsRightCol.Width = new GridLength(0);
-                ReportsTopRow.Height = new GridLength(200);
-                ReportsBottomRow.Height = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(ReportsListCard, 0);
-                Grid.SetColumn(ReportsListCard, 0);
-                ReportsListCard.Margin = new Thickness(0, 0, 0, 12);
-                Grid.SetRow(ReportDetailCard, 1);
-                Grid.SetColumn(ReportDetailCard, 0);
+                ReportsPage.ReportsLeftCol.Width = new GridLength(1, GridUnitType.Star);
+                ReportsPage.ReportsRightCol.Width = new GridLength(0);
+                ReportsPage.ReportsTopRow.Height = new GridLength(200);
+                ReportsPage.ReportsBottomRow.Height = new GridLength(1, GridUnitType.Star);
+                Grid.SetRow(ReportsPage.ReportsListCard, 0);
+                Grid.SetColumn(ReportsPage.ReportsListCard, 0);
+                ReportsPage.ReportsListCard.Margin = new Thickness(0, 0, 0, 12);
+                Grid.SetRow(ReportsPage.ReportDetailCard, 1);
+                Grid.SetColumn(ReportsPage.ReportDetailCard, 0);
             }
             else
             {
-                ReportsLeftCol.Width = new GridLength(300);
-                ReportsRightCol.Width = new GridLength(1, GridUnitType.Star);
-                ReportsTopRow.Height = new GridLength(1, GridUnitType.Star);
-                ReportsBottomRow.Height = GridLength.Auto;
-                Grid.SetRow(ReportsListCard, 0);
-                Grid.SetColumn(ReportsListCard, 0);
-                ReportsListCard.Margin = new Thickness(0, 0, 14, 0);
-                Grid.SetRow(ReportDetailCard, 0);
-                Grid.SetColumn(ReportDetailCard, 1);
+                ReportsPage.ReportsLeftCol.Width = new GridLength(300);
+                ReportsPage.ReportsRightCol.Width = new GridLength(1, GridUnitType.Star);
+                ReportsPage.ReportsTopRow.Height = new GridLength(1, GridUnitType.Star);
+                ReportsPage.ReportsBottomRow.Height = GridLength.Auto;
+                Grid.SetRow(ReportsPage.ReportsListCard, 0);
+                Grid.SetColumn(ReportsPage.ReportsListCard, 0);
+                ReportsPage.ReportsListCard.Margin = new Thickness(0, 0, 14, 0);
+                Grid.SetRow(ReportsPage.ReportDetailCard, 0);
+                Grid.SetColumn(ReportsPage.ReportDetailCard, 1);
             }
         }
     }
@@ -2369,7 +2359,7 @@ public partial class MainWindow : Window
             saved = true;
 
             await ReloadLedgerForActiveAccountAsync();
-            await LoadSessionReportsAsync();
+            await ReportsPage.LoadSessionReportsAsync();
             if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
             {
                 await concreteSupervisor.RestartWorkerAsync();
@@ -2777,7 +2767,7 @@ public partial class MainWindow : Window
                         ? $"Session report saved [{rpt.Outcome}] — {rpt.TotalTradeActions} trade action(s), {rpt.DeliveryCollections} pickup(s), {rpt.CharacterSwapsCompleted} swap(s), duration {dur}."
                         : $"Session finished [{rpt.Outcome}] in {dur} (not saved per report eligibility rules).";
                     AddLog(msg, rawLog);
-                    _ = LoadSessionReportsAsync();
+                    _ = ReportsPage.LoadSessionReportsAsync();
                     if (notification.CapReached && (notification.ShutdownPc || notification.AutoCloseApp))
                     {
                         HandleSessionCapCompletion(notification);
@@ -2907,7 +2897,7 @@ public partial class MainWindow : Window
             ? vaultKey
             : Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey");
 
-    private string? ResolveActiveSqlAccountName()
+    internal string? ResolveActiveSqlAccountName()
     {
         var name = _apiKeyVault.ActiveEntry?.AccountName?.Trim();
         if (string.IsNullOrWhiteSpace(name) || string.Equals(name, "Default Account", StringComparison.OrdinalIgnoreCase))
@@ -3042,7 +3032,7 @@ public partial class MainWindow : Window
         var activeLabel = _apiKeyVault.ActiveEntry?.DisplayLabel ?? "Account";
         AddLog($"Switched active account to {activeLabel}.");
         await ReloadLedgerForActiveAccountAsync();
-        await LoadSessionReportsAsync();
+        await ReportsPage.LoadSessionReportsAsync();
 
         if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
         {
@@ -3090,7 +3080,7 @@ public partial class MainWindow : Window
         AddLog("Removed API key from DPAPI vault.");
 
         await ReloadLedgerForActiveAccountAsync();
-        await LoadSessionReportsAsync();
+        await ReportsPage.LoadSessionReportsAsync();
         if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
         {
             await concreteSupervisor.RestartWorkerAsync();
@@ -3516,7 +3506,7 @@ public partial class MainWindow : Window
         ReportSaveOnErrorsCheckBox.IsChecked = settings.ReportAlwaysSaveOnErrors;
         ReportMinDurationBox.Text = Math.Clamp(settings.ReportMinDurationMinutes, 0, 1440).ToString(CultureInfo.InvariantCulture);
         MaxSavedReportsBox.Text = Math.Clamp(settings.MaxSavedSessionReports, 10, 1000).ToString(CultureInfo.InvariantCulture);
-        UpdateReportRulesSummary(settings.ToSessionReportPolicy());
+        ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
     }
 
     private bool TryReadLimits(out TradingLimits limits)
@@ -3663,7 +3653,7 @@ public partial class MainWindow : Window
             LastAutoTunedPreset: _lastAutoTunedPreset,
             AutoTuneEachSession: AutoTuneEachSessionCheckBox.IsChecked == true,
             AutoTuneKeeps: _autoTuneKeeps.Count == 0 ? null : _autoTuneKeeps.OrderBy(key => key, StringComparer.Ordinal).ToArray());
-        UpdateReportRulesSummary(settings.ToSessionReportPolicy());
+        ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
         return true;
     }
 
@@ -3792,243 +3782,8 @@ public partial class MainWindow : Window
     }
 
     // ---------------------------------------------------------------------
-    // Trade Session Reports & Max Cap Completion Countdown
+    // Max Cap Completion Countdown
     // ---------------------------------------------------------------------
-
-    private async Task LoadSessionReportsAsync()
-    {
-        if (_sessionReportStore is null)
-        {
-            ApplyReportsFilter();
-            return;
-        }
-
-        try
-        {
-            await _sessionReportStore.InitializeAsync();
-            _allLoadedReports = await _sessionReportStore.GetReportsAsync(ResolveActiveSqlAccountName(), 100);
-            ApplyReportsFilter();
-        }
-        catch (Exception ex)
-        {
-            AddLog($"Note loading saved session reports: {ex.Message}");
-        }
-    }
-
-    private void ApplyReportsFilter()
-    {
-        if (_sessionReportRows is null || ReportsCountText is null || ReportOutcomeFilterSelector is null)
-        {
-            return;
-        }
-
-        var previouslySelectedId = _selectedReport?.Id;
-        var filterTag = (ReportOutcomeFilterSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "all";
-        IEnumerable<TradingSessionReport> filtered = _allLoadedReports;
-        if (filterTag == "completed")
-        {
-            filtered = filtered.Where(r => r.Outcome is "Completed" or "Time Cap Reached" or "Stopped by User");
-        }
-        else if (filterTag == "issues")
-        {
-            filtered = filtered.Where(r => r.HasIssues || r.Outcome is "Faulted" or "Needs Attention");
-        }
-
-        _sessionReportRows.Clear();
-        foreach (var report in filtered)
-        {
-            var outcomeBrush = report.Outcome switch
-            {
-                "Time Cap Reached" => ResolveBrush("GoldAccentBrush", Brushes.Goldenrod),
-                "Completed" => ResolveBrush("SuccessBrush", Brushes.SeaGreen),
-                "Needs Attention" => ResolveBrush("WarningBrush", Brushes.DarkOrange),
-                "Faulted" => ResolveBrush("DangerBrush", Brushes.IndianRed),
-                _ => ResolveBrush("AccentBrush", Brushes.DodgerBlue)
-            };
-            _sessionReportRows.Add(new SessionReportListItem(report, outcomeBrush));
-        }
-
-        ReportsCountText.Text = $"{_sessionReportRows.Count} report{(_sessionReportRows.Count == 1 ? string.Empty : "s")}";
-        if (_sessionReportRows.Count > 0)
-        {
-            var match = previouslySelectedId is not null
-                ? _sessionReportRows.FirstOrDefault(r => string.Equals(r.Id, previouslySelectedId, StringComparison.OrdinalIgnoreCase))
-                : null;
-            SessionReportsListBox.SelectedItem = match ?? _sessionReportRows[0];
-        }
-        else
-        {
-            RenderSelectedReport(null);
-        }
-    }
-
-    private void RenderSelectedReport(TradingSessionReport? report)
-    {
-        _selectedReport = report;
-        if (report is null)
-        {
-            ReportEmptyStatePanel.Visibility = Visibility.Visible;
-            ReportDetailContentPanel.Visibility = Visibility.Collapsed;
-            _reportTradeRows.Clear();
-            _reportIncidentRows.Clear();
-            return;
-        }
-
-        ReportEmptyStatePanel.Visibility = Visibility.Collapsed;
-        ReportDetailContentPanel.Visibility = Visibility.Visible;
-
-        var outcomeBrush = report.Outcome switch
-        {
-            "Time Cap Reached" => ResolveBrush("GoldAccentBrush", Brushes.Goldenrod),
-            "Completed" => ResolveBrush("SuccessBrush", Brushes.SeaGreen),
-            "Needs Attention" => ResolveBrush("WarningBrush", Brushes.DarkOrange),
-            "Faulted" => ResolveBrush("DangerBrush", Brushes.IndianRed),
-            _ => ResolveBrush("AccentBrush", Brushes.DodgerBlue)
-        };
-        ReportDetailOutcomeText.Text = report.Outcome.ToUpperInvariant();
-        ReportDetailOutcomeText.Foreground = outcomeBrush;
-        ReportDetailTitleText.Text = $"{report.AccountName} — {report.RunMode} • Pace {report.Profile}";
-        ReportDetailMetaText.Text =
-            $"Started {report.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  •  Ended {report.EndedAt.ToLocalTime():HH:mm:ss}  •  Source: {report.DataSource}";
-        ReportDetailSummaryText.Text = report.OutcomeSummary;
-
-        ReportKpiDurationText.Text = SessionReportFormatter.FormatDuration(report.DurationSeconds);
-        ReportKpiCyclesText.Text = $"{report.CyclesExecuted:N0} cycles • {report.DecisionsEvaluated:N0} items";
-
-        ReportKpiTradesText.Text = $"{report.TotalTradeActions:N0} action{(report.TotalTradeActions == 1 ? string.Empty : "s")}";
-        ReportKpiTradeBreakdownText.Text = $"{report.BuyOrdersPlaced} buys • {report.SellOrdersListed} sells • {report.OutbidBuysRefreshed} refreshed";
-
-        ReportKpiVolumeText.Text = MarketScanItem.FormatCoins(report.EstimatedBuyVolumeCopper);
-        var startBal = report.StartingWalletCopper.HasValue ? MarketScanItem.FormatCoins(report.StartingWalletCopper.Value) : "—";
-        var endBal = report.EndingWalletCopper.HasValue ? MarketScanItem.FormatCoins(report.EndingWalletCopper.Value) : "—";
-        ReportKpiWalletText.Text = $"Wallet: {startBal} -> {endBal}";
-
-        ReportKpiHealthText.Text = report.ErrorCount > 0
-            ? $"{report.ErrorCount} error(s)"
-            : report.WarningCount > 0 || report.RecoveryAttempts > 0 || report.GameRestarts > 0
-                ? $"{report.WarningCount} warn • {report.RecoveryAttempts + report.GameRestarts} rec"
-                : "Clean";
-        ReportKpiHealthText.Foreground = report.ErrorCount > 0
-            ? ResolveBrush("DangerBrush", Brushes.IndianRed)
-            : report.HasIssues
-                ? ResolveBrush("WarningBrush", Brushes.DarkOrange)
-                : ResolveBrush("SuccessBrush", Brushes.SeaGreen);
-        ReportKpiSwapsText.Text = $"{report.CharacterSwapsCompleted} swaps • {report.DeliveryCollections} delivery ({MarketScanItem.FormatCoins(report.DeliveryCoinsCollectedCopper)})";
-
-        ReportTradesTabItem.Header = $"Trade & Action Log ({report.Trades.Count})";
-        ReportIncidentsTabItem.Header = $"Incidents & Bugs ({report.Incidents.Count})";
-
-        _reportTradeRows.Clear();
-        foreach (var t in report.Trades)
-        {
-            _reportTradeRows.Add(new ReportTradeRow(t));
-        }
-
-        _reportIncidentRows.Clear();
-        foreach (var inc in report.Incidents)
-        {
-            _reportIncidentRows.Add(new ReportIncidentRow(inc));
-        }
-    }
-
-    private void UpdateReportRulesSummary(SessionReportPolicySettings policy)
-    {
-        if (ReportRulesSummaryText is null)
-        {
-            return;
-        }
-
-        if (!policy.SaveSessionReports)
-        {
-            ReportRulesSummaryText.Text = "Automatic session report archiving is currently disabled in Settings -> Hotkeys & Advanced.";
-            return;
-        }
-
-        var modeScope = policy.IncludeDryRunAndObserve ? "Live, Dry run & Observe" : "Live";
-        ReportRulesSummaryText.Text =
-            $"Saving {modeScope} sessions when duration >= {policy.MinDurationMinutes}m" +
-            (policy.AlwaysSaveIfTradesOccurred ? ", or any trade/swap occurred" : string.Empty) +
-            (policy.AlwaysSaveOnErrors ? ", or any error/bug occurred" : string.Empty) +
-            $". Keeps up to {policy.MaxSavedReports} reports.";
-    }
-
-    private void SessionReportsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (IsLoadingUi) return;
-        var selected = SessionReportsListBox.SelectedItem as SessionReportListItem;
-        RenderSelectedReport(selected?.Report);
-    }
-
-    private void ReportOutcomeFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (IsLoadingUi) return;
-        ApplyReportsFilter();
-    }
-
-    private async void RefreshReports_Click(object sender, RoutedEventArgs e) => await LoadSessionReportsAsync();
-
-    private void ExportReportMarkdown_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedReport is null)
-        {
-            StatusText.Text = "Select a session report first.";
-            return;
-        }
-
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export Session Report (Markdown)",
-            FileName = $"mmopal-session-{_selectedReport.StartedAt.ToLocalTime():yyyyMMdd-HHmm}.md",
-            Filter = "Markdown (*.md)|*.md|Text (*.txt)|*.txt"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        File.WriteAllText(dialog.FileName, SessionReportFormatter.ToMarkdown(_selectedReport));
-        AddLog($"Exported Markdown report to {dialog.FileName}.");
-    }
-
-    private void ExportReportJson_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedReport is null)
-        {
-            StatusText.Text = "Select a session report first.";
-            return;
-        }
-
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export Session Report (JSON)",
-            FileName = $"mmopal-session-{_selectedReport.StartedAt.ToLocalTime():yyyyMMdd-HHmm}.json",
-            Filter = "JSON (*.json)|*.json"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        var pretty = JsonSerializer.Serialize(_selectedReport, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
-        File.WriteAllText(dialog.FileName, pretty);
-        AddLog($"Exported JSON report to {dialog.FileName}.");
-    }
-
-    private async void DeleteReport_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedReport is null || _sessionReportStore is null)
-        {
-            return;
-        }
-
-        var id = _selectedReport.Id;
-        await _sessionReportStore.DeleteReportAsync(id);
-        await LoadSessionReportsAsync();
-        AddLog($"Deleted session report {id}.");
-    }
-
-    private void CustomizeReportSettings_Click(object sender, RoutedEventArgs e)
-    {
-        NavSettings.IsChecked = true;
-        if (SettingsTabControl is not null && SettingsTabControl.Items.Count >= 4)
-        {
-            SettingsTabControl.SelectedIndex = 3;
-        }
-    }
 
     internal void HandleSessionCapCompletion(SessionReportNotification notification)
     {
@@ -4109,35 +3864,4 @@ public partial class MainWindow : Window
         Close();
     }
 
-    private sealed class SessionReportListItem(TradingSessionReport report, Brush outcomeBrush)
-    {
-        public TradingSessionReport Report { get; } = report;
-        public string Id => Report.Id;
-        public string Outcome => Report.Outcome;
-        public Brush OutcomeBrush { get; } = outcomeBrush;
-        public string DurationFormatted => SessionReportFormatter.FormatDuration(Report.DurationSeconds);
-        public string StartedFormatted => $"{Report.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm}  •  {Report.AccountName}";
-        public string CompactStats =>
-            $"{Report.RunMode} • {Report.TotalTradeActions} trades • {Report.CharacterSwapsCompleted} swaps • {Report.ErrorCount} errors";
-    }
-
-    private sealed class ReportTradeRow(SessionTradeEvent entry)
-    {
-        public string TimeFormatted => entry.Timestamp.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-        public string ActionType => entry.ActionType;
-        public string ItemName => entry.ItemName;
-        public long Quantity => entry.Quantity;
-        public string CoinsFormatted => entry.UnitPriceCopper > 0 ? MarketScanItem.FormatCoins(entry.UnitPriceCopper) : "—";
-        public string Status => entry.Status;
-        public string Details => entry.Details;
-    }
-
-    private sealed class ReportIncidentRow(SessionIncidentEvent entry)
-    {
-        public string TimeFormatted => entry.Timestamp.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-        public string Severity => entry.Severity;
-        public string Category => entry.Category;
-        public string RecoveredLabel => entry.Recovered ? "Yes" : "No";
-        public string Message => entry.Message;
-    }
 }
