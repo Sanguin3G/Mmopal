@@ -50,12 +50,28 @@ public sealed class PendingSellInventoryTracker
     private static readonly TimeSpan NotFoundRetryBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ErrorRetryBackoff = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan HeldRetryBackoff = TimeSpan.FromMinutes(30);
-    private static readonly TimeSpan DoubleMissSuppression = TimeSpan.FromMinutes(15);
+    // Bags belong to one character: a stack missed twice is on another character, so it waits for a character change
+    // (CharacterChanged) instead of being re-checked every 15 min (124 wasted searches in one 7 h session).
+    private static readonly TimeSpan DoubleMissSuppression = TimeSpan.FromHours(3);
 
     private readonly Dictionary<string, PendingEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> _suppressedUntilUtc = new(StringComparer.OrdinalIgnoreCase);
 
     public int Count => _entries.Count;
+
+    /// <summary>After a character swap or game restart the bags are different: re-check everything.</summary>
+    public void CharacterChanged(DateTimeOffset nowUtc)
+    {
+        _suppressedUntilUtc.Clear();
+        foreach (var entry in _entries.Values)
+        {
+            entry.MissCount = 0;
+            if (entry.NextEligibleAttemptUtc > nowUtc)
+            {
+                entry.NextEligibleAttemptUtc = nowUtc;
+            }
+        }
+    }
 
     public void RecordDeliveryPickup(IEnumerable<string> itemNames, DateTimeOffset nowUtc)
     {

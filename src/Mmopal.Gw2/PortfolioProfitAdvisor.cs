@@ -170,13 +170,13 @@ public static class PortfolioProfitAdvisor
         var topWinner = report.ItemLeaderboard.FirstOrDefault(r => r.NetProfitCopper > 0 && r.UnitsFlipped > 0);
         if (topWinner is not null)
         {
-            parts.Add($"Top flipper: {topWinner.ItemName} (+{MarketScanItem.FormatCoins(topWinner.NetProfitCopper)}, {topWinner.AvgHoldFormatted} hold)");
+            parts.Add($"Best item: {topWinner.ItemName} (+{MarketScanItem.FormatCoins(topWinner.NetProfitCopper)}, sells in ~{topWinner.AvgHoldFormatted})");
         }
 
         var loserCount = report.ItemLeaderboard.Count(IsChronicLoser);
         if (loserCount > 0)
         {
-            parts.Add($"Auto-guarded losers: {loserCount}");
+            parts.Add($"Skipped for losing money: {loserCount}");
         }
 
         var bestHour = report.HourlySeries
@@ -185,7 +185,7 @@ public static class PortfolioProfitAdvisor
             .FirstOrDefault();
         if (bestHour is not null)
         {
-            parts.Add($"Peak local hour: {bestHour.LocalHour:00}:00");
+            parts.Add($"Best hour: {bestHour.LocalHour:00}:00");
         }
 
         var overExposed = activeOrders
@@ -194,11 +194,11 @@ public static class PortfolioProfitAdvisor
             .Count(g => g.Count() >= 2 || g.Sum(x => Math.Max(1L, x.Quantity)) >= 2);
         if (overExposed > 0)
         {
-            parts.Add($"Heavy sell stacks held: {overExposed}");
+            parts.Add($"Items listed in several stacks: {overExposed}");
         }
 
         var cycle = Gw2MarketCycle.Describe(nowUtc);
-        parts.Add($"Phase: {cycle.PhaseName}");
+        parts.Add($"Market now: {cycle.PhaseName}");
         return parts.Count == 1
             ? $"Live Advisor ready ({cycle.PhaseName}) — sync trades to unlock per-item FIFO winner boosts & loser guards."
             : string.Join("  •  ", parts);

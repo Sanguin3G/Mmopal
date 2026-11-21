@@ -518,33 +518,36 @@
                     <UniformGrid x:Name="IncomeKpiGrid" Grid.Row="2" Columns="4" Margin="0,0,0,6">
                         <Border Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
-                                <TextBlock Text="REALIZED FLIP PROFIT (FIFO)" Style="{StaticResource FieldLabel}" />
+                                <TextBlock Text="PROFIT FROM SALES" Style="{StaticResource FieldLabel}" ToolTip="Sale price after the 5% listing and 10% exchange fees, minus what those units cost (matched oldest purchase first). Only items that have sold count." />
                                 <TextBlock x:Name="IncomeMatchedProfitText" Text="0c" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource GoldAccentBrush}" />
-                                <TextBlock x:Name="IncomeMatchedSubText" Text="ROI: 0.0% • Win rate: 0% • Avg 0c/day" Style="{StaticResource HintText}" Margin="0,4,0,0" />
+                                <TextBlock x:Name="IncomeMatchedSubText" Text="ROI 0.0% • 0 sold • fees 0c" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeProfitNoteText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" ToolTip="Sales with no recorded purchase: bought before the GW2 API's 90-day history, or loot. They are income but not flip profit, so they are left out above." />
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
-                                <TextBlock Text="TOTAL TRADING EQUITY" Style="{StaticResource FieldLabel}" />
+                                <TextBlock Text="NET WORTH" Style="{StaticResource FieldLabel}" ToolTip="Everything on the trading account: wallet + gold in buy orders + listings (after fees) + Delivery Box. The best single number for 'am I making money'." />
                                 <TextBlock x:Name="IncomeTotalEquityText" Text="—" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource SuccessBrush}" />
-                                <TextBlock x:Name="IncomeEquityBreakdownText" Text="Sync account to snapshot Wallet + Buys + 90% Sells" Style="{StaticResource HintText}" Margin="0,4,0,0" />
+                                <TextBlock x:Name="IncomeNetWorthChangeText" Text="Sync to start tracking" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeEquityBreakdownText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource KpiCard}" Margin="0,0,10,8">
                             <StackPanel>
-                                <TextBlock Text="DELIVERY BOX &amp; UNMATCHED" Style="{StaticResource FieldLabel}" />
+                                <TextBlock Text="STOCK ON THE SHELF" Style="{StaticResource FieldLabel}" ToolTip="Your listings: what they would bring after fees if they sold at your prices, how many are undercut, and what the unsold units cost you." />
                                 <TextBlock x:Name="IncomeDeliveryText" Text="—" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" />
-                                <TextBlock x:Name="IncomeUnmatchedText" Text="Unmatched loot/pre-sync sales: 0c" Style="{StaticResource HintText}" Margin="0,4,0,0" />
+                                <TextBlock x:Name="IncomeUnmatchedText" Text="No listings yet" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="IncomeShelfNoteText" Text="" Style="{StaticResource HintText}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource KpiCard}" Margin="0,0,0,8">
                             <StackPanel>
-                                <TextBlock Text="ACTIVE ORDERS HEALTH" Style="{StaticResource FieldLabel}" />
-                                <TextBlock x:Name="IncomeOrdersHealthText" Text="0 open" FontSize="20" FontWeight="Bold" />
-                                <TextBlock x:Name="IncomeOrdersSubText" Text="Top of book vs Outbid buys vs Undercut sells" Style="{StaticResource HintText}" Margin="0,4,0,0" />
+                                <TextBlock Text="GOLD IN BUY ORDERS" Style="{StaticResource FieldLabel}" ToolTip="Gold waiting in buy orders. Outbid orders are free to cancel and re-place; the bot keeps at most the share set in Settings → Trading &amp; Portfolio here." />
+                                <TextBlock x:Name="IncomeOrdersHealthText" Text="—" FontSize="20" FontWeight="Bold" />
+                                <TextBlock x:Name="IncomeOrdersSubText" Text="No buy orders" Style="{StaticResource HintText}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Border>
                     </UniformGrid>
@@ -568,7 +571,10 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Daily Realized Profit" Style="{StaticResource FieldLabel}" Margin="0" TextTrimming="CharacterEllipsis" ToolTip="Hover bars for exact daily breakdown" />
+                                    <ComboBox x:Name="IncomeChartModeSelector" SelectedIndex="0" Width="150" HorizontalAlignment="Left" SelectionChanged="IncomeChartMode_SelectionChanged" ToolTip="Net worth over time is the honest headline; daily profit only counts items that sold. Hover bars for values.">
+                                        <ComboBoxItem Content="Net worth over time" Tag="NetWorth" />
+                                        <ComboBoxItem Content="Profit per day" Tag="DailyProfit" />
+                                    </ComboBox>
                                     <TextBlock x:Name="DailyChartSummaryText" Grid.Column="1" Text="" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Margin="8,0,0,0" />
                                 </Grid>
                                 <Border Background="{DynamicResource SurfaceRaisedBrush}" CornerRadius="8" Padding="10,12,10,8" Height="132">
@@ -680,6 +686,7 @@
                                     <DataGridTextColumn Header="MARKET TOP" Binding="{Binding MarketTopFormatted}" Width="1*" />
                                     <DataGridTextColumn Header="BOOK STATUS" Binding="{Binding BookStatus}" Width="0.9*" />
                                     <DataGridTextColumn Header="CREATED" Binding="{Binding CreatedFormatted}" Width="1.1*" />
+                                    <DataGridTextColumn Header="AGE" Binding="{Binding AgeFormatted}" Width="0.5*" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </TabItem>
@@ -1646,7 +1653,12 @@
                                                 <Button x:Name="ClearAutoTuneKeepsButton" DockPanel.Dock="Right" Content="Let Auto-Tune decide" Click="ClearAutoTuneKeeps_Click" Padding="10,3" FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center" ToolTip="Forget your hand-set values; Auto-Tune sets them again at the next launch or Start session." />
                                                 <TextBlock x:Name="AutoTuneKeepsText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
                                             </DockPanel>
-                                            <CheckBox x:Name="ProtectSellListingsCheckBox" Content="Keep sell listings active — avoid auto-canceling to save the 5% fee" IsChecked="True" Margin="0,0,0,6" />
+                                            <CheckBox x:Name="RelistStaleSellsCheckBox" Content="Relist listings undercut for 12 h+ (items that trade, only if the new price still covers what you paid plus the lost 5% fee)" IsChecked="True" Margin="0,0,0,6" ToolTip="Each relist pays a new 5% listing fee, so this is narrow: listed 12 h or more, undercut, on the scanner's list (it trades), at most once a day per item, and only when the new price still nets more than what Mmopal paid plus the fee lost on the old listing. Anything else waits." />
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                <TextBlock Text="Keep at most" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                <TextBox x:Name="MaxBuyOrderShareBox" Text="50" Width="56" VerticalAlignment="Center" ToolTip="Share of your total gold (wallet + buy orders + listings after fees) that may sit in buy orders. 0 = no limit." />
+                                                <TextBlock Text="% of my gold in buy orders (the rest stays free for items that fill)" VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap" />
+                                            </StackPanel>
                                             <CheckBox x:Name="UseCustomListOnStartCheckBox" Content="Include Custom Shopping List &amp; Blacklist automatically on Start session" IsChecked="True" />
                                         </StackPanel>
                                     </Border>

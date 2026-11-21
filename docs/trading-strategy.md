@@ -34,6 +34,9 @@ Their top bids had not moved for hours, competitors undercut by 1–30c within m
 | Learn from your own trades | The last 30 days of your trades (Income & Portfolio) boost items you flipped fast at a profit and skip items that lost money on 2+ flips. The scanner's **Your history** column shows this, and Income & Portfolio lists the skipped items with an **Add to Blacklist** button. The ledger syncs at launch and every 45 minutes during a session. |
 | Fee math | Every profit figure uses 5% listing + 10% exchange with the 1c minimums. |
 | Don't chase undercuts | Outbid Refresh keeps an outbid buy order for at least 20 minutes and never cancels during the 00:00–01:30 UTC reset window. |
+| Leave bot wars alone | An item outbid 3 times without a single fill is paused for 3 hours (`Pausing buys of X for 3 h`); a fill resets it. In one 7 h session ~100 buy orders went to items that never filled. |
+| Keep gold free | At most 50% of total gold (wallet + buy orders + listings after fees) sits in buy orders (Settings → Trading & Portfolio); above that, new buys wait for fills. |
+| Relist stale listings, carefully | A listing undercut for 12 h+ is cancelled and relisted when the item trades (it is on the scanner's list), it was not relisted in the last 24 h, and the new price still nets more than what was paid plus the 5% fee lost on the old listing. At most 2 per pass. Turn off in Settings → Trading & Portfolio. |
 | Spread capital | Max buy price per unit and a gold reserve floor, quantity per order, 3 actions per cycle. Set by **Auto-Tune** (below). |
 | Live re-pricing | Each cycle re-prices the list from `v2/commerce/prices` and drops items whose spread collapsed. |
 
@@ -48,7 +51,7 @@ On by default (Settings → Trading & Portfolio → "Auto-Tune at every launch a
    - Items taking over 2 days to sell: Min trades/day ×2 and Max ROI capped at 60% (very wide spreads rarely fill).
 3. **Where the gold sits:** half or more in unsold listings lowers Max Buy by 25% and asks for busier items until they sell; 70%+ idle in the wallet with profitable flips raises order size by 50%.
 
-Min ROI stays within 8–25% and Min trades/day within 5–50. **Values you change by hand are kept** (for example a lower gold floor if you want to take more risk): the Settings page lists them, and **Let Auto-Tune decide** hands them back. The result and its reasons are in the Activity Log and the Auto-Tune button's tooltip.
+Min ROI stays within 8–25% and Min trades/day within 5–50. **Values you change by hand are kept** (for example a lower gold floor if you want to take more risk): the Settings page lists them. Clicking the **Auto-Tune** button (or **Let Auto-Tune decide**) hands them back; the automatic runs at launch and Start session keep them. The result and its reasons are in the Activity Log and the Auto-Tune button's tooltip.
 
 ## On launch
 
@@ -69,6 +72,6 @@ You don't need trading experience to use these. Let the scanner build the shoppi
 Ordered by expected impact; none of these exist yet.
 
 1. **Order size from volume:** quantity = min(configured quantity, ~5% of daily trades), so slow items get 1 unit and busy items more.
-2. **Competition filter:** gnashblade also defines listings-per-sale, delisted-per-sale and day-over-day spread compression from DataWars2 history; use them to skip bot-war items.
+2. **Competition filter before buying:** gnashblade's listings-per-sale and delisted-per-sale from DataWars2 history, to skip bot-war items before the first order (today they are paused after 3 outbids).
 3. **More auto-blacklist suggestions:** items with search mismatches, buys that stay unfilled for 24h+, or repeated spread collapse (items that lose money are already listed in Income & Portfolio).
-4. **Sell-side rules:** a minimum time before relisting an undercut sell, since each relist costs another 5% listing fee.
+4. **Choose the swap target:** the API knows which character holds unsold flip items; swapping to that character would list them sooner. Character Select only shows the selected name, so this needs a reliable name read first.

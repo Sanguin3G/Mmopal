@@ -66,6 +66,7 @@ public partial class MainWindow : Window
     private TradingSessionReport? _selectedReport;
     private TradingIncomeReport? _lastIncomeReport;
     private Gw2EquitySnapshot? _latestEquitySnapshot;
+    private IReadOnlyList<Gw2EquitySnapshot> _equitySnapshots = Array.Empty<Gw2EquitySnapshot>();
     private Gw2DeliverySnapshot? _latestDelivery;
     private int _openBuyCount;
     private int _openSellCount;
@@ -1142,6 +1143,7 @@ public partial class MainWindow : Window
             var accountFilter = ResolveActiveSqlAccountName();
             _archivedTransactions = await _ledgerStore.GetTransactionsAsync(accountFilter);
             var snapshots = await _ledgerStore.GetEquitySnapshotsAsync(null, accountFilter);
+            _equitySnapshots = snapshots;
             _latestEquitySnapshot = snapshots.LastOrDefault();
             if (_archivedTransactions.Count > 0 || _latestEquitySnapshot is not null)
             {
@@ -1213,6 +1215,7 @@ public partial class MainWindow : Window
 
             _archivedTransactions = await _ledgerStore.GetTransactionsAsync(resolvedAccount);
             _latestEquitySnapshot = result.LatestSnapshot;
+            _equitySnapshots = await _ledgerStore.GetEquitySnapshotsAsync(null, resolvedAccount);
             _latestDelivery = result.Delivery;
 
             _latestActiveOrders.Clear();
@@ -1537,37 +1540,66 @@ public partial class MainWindow : Window
         _lastIncomeReport = report;
         _allTimeframePnlRows = report.ItemLeaderboard;
 
+        var nowUtc = DateTimeOffset.UtcNow;
         IncomeMatchedProfitText.Text = MarketScanItem.FormatCoins(report.MatchedProfitCopper);
-        var avgDayText = MarketScanItem.FormatCoins((long)Math.Round(report.AvgProfitPerActiveDayCopper));
+        var fees = IncomeInsights.FeesPaid(_archivedTransactions, windowStart);
         IncomeMatchedSubText.Text =
-            $"ROI: {report.MatchedRoiPercent:0.0}%  •  Win: {report.WinRatePercent:0}%  •  Avg {avgDayText}/day";
+            $"ROI {report.MatchedRoiPercent:0.0}%  •  {report.MatchedUnitsSold:N0} sold  •  fees paid {MarketScanItem.FormatCoins(fees)}";
+        IncomeProfitNoteText.Text = report.UnmatchedSellRevenueCopper > 0
+            ? $"Not counted: {MarketScanItem.FormatCoins(report.UnmatchedSellRevenueCopper)} of sales with no recorded buy"
+            : string.Empty;
 
         if (_latestEquitySnapshot is { } snap)
         {
             IncomeTotalEquityText.Text = MarketScanItem.FormatCoins(snap.TotalEquityCopper);
-            IncomeEquityBreakdownText.Text =
-                $"Wallet {MarketScanItem.FormatCoins(snap.WalletCopper)} • " +
-                $"Buys {MarketScanItem.FormatCoins(snap.ActiveBuysCopper)} • " +
-                $"Sells(90%) {MarketScanItem.FormatCoins(snap.ActiveSellsNetCopper)}";
+            if (IncomeInsights.NetWorthChange(_equitySnapshots, windowStart) is { } change)
+            {
+                var delta = change.End.ValueCopper - change.Start.ValueCopper;
+                IncomeNetWorthChangeText.Text =
+                    $"{(delta >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(delta))} since {change.Start.At.ToLocalTime():MMM d, HH:mm}";
+                IncomeNetWorthChangeText.Foreground = delta >= 0
+                    ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
+                    : ResolveBrush("DangerBrush", Brushes.IndianRed);
+            }
+            else
+            {
+                IncomeNetWorthChangeText.Text = "Change shows after the next sync";
+                IncomeNetWorthChangeText.ClearValue(TextBlock.ForegroundProperty);
+            }
+
             var deliveryTotal = snap.DeliveryCopper + snap.DeliveryItemsCopper;
-            IncomeDeliveryText.Text = MarketScanItem.FormatCoins(deliveryTotal);
-            var itemCount = _latestDelivery?.Items.Sum(i => i.Count) ?? 0;
-            IncomeUnmatchedText.Text =
-                $"Delivery: {MarketScanItem.FormatCoins(snap.DeliveryCopper)} ({itemCount} items) • Unmatched loot: {MarketScanItem.FormatCoins(report.UnmatchedSellRevenueCopper)}";
+            IncomeEquityBreakdownText.Text =
+                $"Wallet {MarketScanItem.FormatCoins(snap.WalletCopper)} • Buy orders {MarketScanItem.FormatCoins(snap.ActiveBuysCopper)} • " +
+                $"Listings {MarketScanItem.FormatCoins(snap.ActiveSellsNetCopper)}" +
+                (deliveryTotal > 0 ? $" • Delivery {MarketScanItem.FormatCoins(deliveryTotal)}" : string.Empty);
+            IncomeEquityBreakdownText.ToolTip = IncomeEquityBreakdownText.Text;
+
+            var share = snap.TotalEquityCopper > 0 ? snap.ActiveBuysCopper * 100.0 / snap.TotalEquityCopper : 0;
+            IncomeOrdersHealthText.Text = MarketScanItem.FormatCoins(snap.ActiveBuysCopper);
+            IncomeOrdersSubText.Text = $"{share:0}% of net worth • {_openBuyCount} orders • {_outbidBuyCount} outbid (free to re-place)";
         }
         else
         {
             IncomeTotalEquityText.Text = "—";
-            IncomeEquityBreakdownText.Text = "Sync account to snapshot Wallet + Buys + 90% Sells";
-            IncomeDeliveryText.Text = "—";
-            IncomeUnmatchedText.Text = $"Unmatched loot/pre-sync sales: {MarketScanItem.FormatCoins(report.UnmatchedSellRevenueCopper)}";
+            IncomeNetWorthChangeText.Text = "Sync to start tracking";
+            IncomeEquityBreakdownText.Text = string.Empty;
+            IncomeOrdersHealthText.Text = "—";
+            IncomeOrdersSubText.Text = $"{_openBuyCount} orders • {_outbidBuyCount} outbid";
         }
 
-        var openTotal = _openBuyCount + _openSellCount;
-        IncomeOrdersHealthText.Text = $"{openTotal} open ({_openBuyCount}B / {_openSellCount}S)";
-        IncomeOrdersSubText.Text =
-            $"Outbid buys: {_outbidBuyCount} (free to update)  •  Undercut sells: {_undercutSellCount} (hold)";
-        PortfolioInsightsText.Text = PortfolioProfitAdvisor.BuildDashboardInsightSummary(report, _latestActiveOrders, DateTimeOffset.UtcNow);
+        var shelf = IncomeInsights.Shelf(_latestActiveOrders, _archivedTransactions, nowUtc);
+        IncomeDeliveryText.Text = shelf.Listings == 0 ? "—" : MarketScanItem.FormatCoins(shelf.ListedNetCopper);
+        IncomeUnmatchedText.Text = shelf.Listings == 0
+            ? "No listings"
+            : $"{shelf.Listings} listings • {shelf.Undercut} undercut" + (shelf.UndercutOver12h > 0 ? $" ({shelf.UndercutOver12h} for 12 h+)" : string.Empty);
+        IncomeShelfNoteText.Text = shelf.UnsoldCostCopper > 0
+            ? $"Bought, not sold yet: {MarketScanItem.FormatCoins(shelf.UnsoldCostCopper)} at cost"
+            : string.Empty;
+
+        var insight = PortfolioProfitAdvisor.BuildDashboardInsightSummary(report, _latestActiveOrders, nowUtc);
+        PortfolioInsightsText.Text = shelf.UndercutOver12h > 0
+            ? $"{insight}  •  {shelf.UndercutOver12h} listing(s) undercut for 12 h+"
+            : insight;
         UpdateLosingItemsPanel();
 
         ApplyItemPnlSearchFilter();
@@ -1611,21 +1643,14 @@ public partial class MainWindow : Window
         var mutedBrush = ResolveBrush("BorderBrush", Brushes.Gray);
 
         _dailyChartBars.Clear();
-        var recentDays = report.DailySeries.TakeLast(24).ToArray();
-        var maxDailyAbs = recentDays.Length > 0
-            ? Math.Max(1L, recentDays.Max(d => Math.Abs(d.ProfitCopper)))
-            : 1L;
-        foreach (var day in recentDays)
+        if ((IncomeChartModeSelector.SelectedItem as ComboBoxItem)?.Tag as string != "DailyProfit")
         {
-            var ratio = Math.Abs(day.ProfitCopper) / (double)maxDailyAbs;
-            var height = day.ProfitCopper == 0 ? 4.0 : Math.Max(8.0, ratio * 84.0);
-            var brush = day.ProfitCopper > 0 ? successBrush : day.ProfitCopper < 0 ? dangerBrush : mutedBrush;
-            _dailyChartBars.Add(new ChartBarItem(day.Label, height, brush, day.Tooltip, MarketScanItem.FormatCoins(day.ProfitCopper)));
+            RebuildNetWorthChart(accentBrush);
         }
-
-        DailyChartSummaryText.Text = recentDays.Length > 0
-            ? $"{recentDays.Length} day(s) • Total {MarketScanItem.FormatCoins(report.MatchedProfitCopper)}"
-            : "No closed flips in timeframe";
+        else
+        {
+            RebuildDailyProfitChart(report, successBrush, dangerBrush, mutedBrush);
+        }
 
         _hourlyChartBars.Clear();
         var hasProfitBars = report.HourlySeries.Any(h => h.RealizedProfitCopper != 0);
@@ -1658,6 +1683,57 @@ public partial class MainWindow : Window
         HourlyChartSummaryText.Text = bestHour is { RealizedProfitCopper: > 0 }
             ? $"Best local hour: {bestHour.LocalHour:00}:00 ({MarketScanItem.FormatCoins(bestHour.RealizedProfitCopper)})"
             : "Local timezone 00–23h";
+    }
+
+    private void IncomeChartMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingUi || _lastIncomeReport is null) return;
+        RebuildIncomeCharts(_lastIncomeReport);
+    }
+
+    /// <summary>Net worth bars scaled between the period's low and high, so a 10% move is visible.</summary>
+    private void RebuildNetWorthChart(Brush accentBrush)
+    {
+        var points = IncomeInsights.NetWorthSeries(_equitySnapshots, ResolveSelectedTimeframeStartUtc());
+        if (points.Count == 0)
+        {
+            DailyChartSummaryText.Text = "Sync the account to start tracking";
+            return;
+        }
+
+        var low = points.Min(p => p.ValueCopper);
+        var high = points.Max(p => p.ValueCopper);
+        var range = Math.Max(1L, high - low);
+        var labelEvery = Math.Max(1, (int)Math.Ceiling(points.Count / 8.0));
+        for (var i = 0; i < points.Count; i++)
+        {
+            var point = points[i];
+            var height = 14.0 + (point.ValueCopper - low) / (double)range * 70.0;
+            var tooltip = $"{point.At.ToLocalTime():g}: {MarketScanItem.FormatCoins(point.ValueCopper)}";
+            _dailyChartBars.Add(new ChartBarItem(i % labelEvery == 0 ? point.Label : string.Empty, height, accentBrush, tooltip, MarketScanItem.FormatCoins(point.ValueCopper)));
+        }
+
+        var delta = points[^1].ValueCopper - points[0].ValueCopper;
+        DailyChartSummaryText.Text = $"{(delta >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(delta))} • low {MarketScanItem.FormatCoins(low)} • high {MarketScanItem.FormatCoins(high)}";
+    }
+
+    private void RebuildDailyProfitChart(TradingIncomeReport report, Brush successBrush, Brush dangerBrush, Brush mutedBrush)
+    {
+        var recentDays = report.DailySeries.TakeLast(24).ToArray();
+        var maxDailyAbs = recentDays.Length > 0
+            ? Math.Max(1L, recentDays.Max(d => Math.Abs(d.ProfitCopper)))
+            : 1L;
+        foreach (var day in recentDays)
+        {
+            var ratio = Math.Abs(day.ProfitCopper) / (double)maxDailyAbs;
+            var height = day.ProfitCopper == 0 ? 4.0 : Math.Max(8.0, ratio * 84.0);
+            var brush = day.ProfitCopper > 0 ? successBrush : day.ProfitCopper < 0 ? dangerBrush : mutedBrush;
+            _dailyChartBars.Add(new ChartBarItem(day.Label, height, brush, day.Tooltip, MarketScanItem.FormatCoins(day.ProfitCopper)));
+        }
+
+        DailyChartSummaryText.Text = recentDays.Length > 0
+            ? $"{recentDays.Length} day(s) • Total {MarketScanItem.FormatCoins(report.MatchedProfitCopper)}"
+            : "No closed flips in timeframe";
     }
 
     private DateTimeOffset? ResolveSelectedTimeframeStartUtc()
@@ -1695,7 +1771,19 @@ public partial class MainWindow : Window
         AddLog($"Scanner Preset '{preset.Name}': {preset.Description}");
     }
 
-    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e) => await RunAutoTuneAsync(sender as Button ?? AutoTuneSettingsButton);
+    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e)
+    {
+        // Clicking Auto-Tune is an explicit "decide for me": hand-set values go back to Auto-Tune. The automatic runs
+        // (launch, Start session) keep them.
+        if (_autoTuneKeeps.Count > 0)
+        {
+            AddLog($"Auto-Tune button: your hand-set values ({DescribeAutoTuneKeeps()}) are handed back to Auto-Tune.");
+            _autoTuneKeeps.Clear();
+            UpdateAutoTuneKeepsHint();
+        }
+
+        await RunAutoTuneAsync(sender as Button ?? AutoTuneSettingsButton);
+    }
 
     private async Task<AutoTuneResult> RunAutoTuneAsync(Button? feedbackButton)
     {
@@ -1821,7 +1909,7 @@ public partial class MainWindow : Window
         }
 
         AutoTuneKeepsPanel.Visibility = _autoTuneKeeps.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        AutoTuneKeepsText.Text = $"Auto-Tune keeps what you set: {DescribeAutoTuneKeeps()}. It tunes the rest.";
+        AutoTuneKeepsText.Text = $"Auto-Tune keeps what you set: {DescribeAutoTuneKeeps()}. It tunes the rest at launch and Start session; clicking Auto-Tune hands everything back.";
     }
 
     private string DescribeAutoTuneKeeps() =>
@@ -3649,7 +3737,8 @@ public partial class MainWindow : Window
         ParkedCharactersBox.Text = Math.Max(1, settings.ParkedCharacterCount).ToString(CultureInfo.InvariantCulture);
         InteractKeyBox.Text = string.IsNullOrWhiteSpace(settings.InteractKeybind) ? "F" : settings.InteractKeybind;
         TpKeyBox.Text = string.IsNullOrWhiteSpace(settings.TradingPostKeybind) ? "O" : settings.TradingPostKeybind;
-        ProtectSellListingsCheckBox.IsChecked = settings.ProtectSellListingsFromCancel;
+        RelistStaleSellsCheckBox.IsChecked = settings.RelistStaleUndercutSells;
+        MaxBuyOrderShareBox.Text = Math.Clamp(settings.MaxBuyOrderSharePercent, 0, 100).ToString(CultureInfo.InvariantCulture);
         SwapCharacterHoursBox.Text = settings.FormatSwapHours();
         SwapJitterMinutesBox.Text = settings.SwapCharacterJitterMinutes.ToString(CultureInfo.InvariantCulture);
         SnapWindowOnStartCheckBox.IsChecked = settings.AutoPrepareOnScreenStart;
@@ -3833,7 +3922,8 @@ public partial class MainWindow : Window
             ParkedCharacterCount: parkedChars,
             InteractKeybind: interactKey,
             TradingPostKeybind: tpKey,
-            ProtectSellListingsFromCancel: ProtectSellListingsCheckBox.IsChecked == true,
+            RelistStaleUndercutSells: RelistStaleSellsCheckBox.IsChecked == true,
+            MaxBuyOrderSharePercent: int.TryParse(MaxBuyOrderShareBox.Text.Trim(), out var buyShare) ? Math.Clamp(buyShare, 0, 100) : 50,
             LatencyProfile: latencyProfile,
             UiLoadWaitMs: uiLoadWaitMs,
             ActionSettleDelayMs: actionSettleMs,
@@ -3993,6 +4083,7 @@ public partial class MainWindow : Window
             : (order.MarketLowestSellCopper is { } s ? MarketScanItem.FormatCoins(s) : "—");
         public string BookStatus => order.BookStatus;
         public string CreatedFormatted => order.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        public string AgeFormatted => IncomeInsights.FormatAge(DateTimeOffset.UtcNow - order.CreatedAt);
     }
 
     private sealed class LedgerHistoryViewRow(Gw2LedgerTransaction tx)

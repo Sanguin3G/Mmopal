@@ -29,6 +29,14 @@ public sealed class WorkerRuntime
     private DateTimeOffset _lastDeliveryUnlockAttemptUtc = DateTimeOffset.MinValue;
     private DateTimeOffset _lastCharacterSwapUtc = DateTimeOffset.MinValue;
     private static readonly TimeSpan DeliveryUnlockBackoff = TimeSpan.FromMinutes(10);
+    // Session-scoped adaptive state (reset at session start).
+    private BuyCompetitionTracker _buyCompetition = new();
+    private PendingSellInventoryTracker? _sessionSellTracker;
+    private readonly Dictionary<string, DateTimeOffset> _relistedAtUtc = new(StringComparer.OrdinalIgnoreCase);
+    // First time the Delivery Box was still locked after reopening at the trader on the current character.
+    private DateTimeOffset? _deliveryLockedSinceUtc;
+    private static readonly TimeSpan DeliveryStuckBeforeSwap = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan MinTimeBetweenDeliverySwaps = TimeSpan.FromMinutes(60);
     // Logging out and in repeatedly gets the account disconnected by the server ("lost its connection ... wait a
     // few minutes before restarting", Code=7:11:3:202:101 after ~12 swaps in 40 minutes).
     private static readonly TimeSpan MinTimeBetweenRecoverySwaps = TimeSpan.FromMinutes(20);
@@ -337,6 +345,9 @@ public sealed class WorkerRuntime
         _activeClientSettings = effectiveClientSettings;
         _lastDeliveryUnlockAttemptUtc = DateTimeOffset.MinValue;
         _lastCharacterSwapUtc = DateTimeOffset.MinValue;
+        _buyCompetition = new BuyCompetitionTracker();
+        _relistedAtUtc.Clear();
+        _deliveryLockedSinceUtc = null;
         var templateRoot = string.IsNullOrWhiteSpace(request.TemplateRoot)
             ? _templateRoot ?? string.Empty
             : Path.GetFullPath(Environment.ExpandEnvironmentVariables(request.TemplateRoot));
@@ -479,7 +490,8 @@ public sealed class WorkerRuntime
                 MaxRetries = Math.Max(0, profile.MaxRetries),
                 MaxMarketAge = TimeSpan.FromSeconds(Math.Max(profile.ApiTransactionRefreshSeconds * 2, apiTimeoutSeconds * 2)),
                 MaxActionsPerCycle = Math.Max(1, profile.MaxOverbidUpdatesPerPass),
-                MinimumBalanceCopper = minBalanceCopper
+                MinimumBalanceCopper = minBalanceCopper,
+                MaxBuyOrderSharePercent = Math.Clamp(effectiveClientSettings.MaxBuyOrderSharePercent, 0, 100)
             });
         var policy = request.Policy ?? new ProfitabilityPolicy();
         var interval = TimeSpan.FromSeconds(Math.Max(2, profile.OverbidScanIntervalSeconds));
@@ -490,6 +502,7 @@ public sealed class WorkerRuntime
         var sessionCap = new SessionDurationCap(effectiveClientSettings.MaxSessionDurationMinutes, _utcNow());
         var blacklistMatcher = new BlacklistMatcher(blacklist);
         var pendingSellTracker = new PendingSellInventoryTracker();
+        _sessionSellTracker = pendingSellTracker;
         var candidateNameSet = candidates
             .Where(c => !string.IsNullOrWhiteSpace(c.ItemName))
             .Select(c => c.ItemName.Trim())
@@ -729,6 +742,11 @@ public sealed class WorkerRuntime
                     request.UndercutBufferMinCopper,
                     portfolioGuidance,
                     cancellationToken);
+                var cycleNow = _utcNow();
+                if (_buyCompetition.PausedItems(cycleNow).Count > 0)
+                {
+                    cycleCandidates = cycleCandidates.Where(c => !_buyCompetition.IsPaused(c.ItemName, cycleNow)).ToArray();
+                }
 
                 if (IsPauseRequested) continue;
 
@@ -865,6 +883,14 @@ public sealed class WorkerRuntime
                         result.Market.Transactions,
                         Math.Max(1, profile.MaxOverbidUpdatesPerPass),
                         cancellationToken);
+                    foreach (var paused in _buyCompetition.RecordOutbidCancels(liveDriver.LastCanceledOutbidItems, _utcNow()))
+                    {
+                        _logger.LogInformation(
+                            "Pausing buys of {Item} for {Hours} h: outbid {Count} times without a single fill (another bot is camping it); its order slots go to items that fill.",
+                            paused,
+                            (int)BuyCompetitionTracker.PauseDuration.TotalHours,
+                            BuyCompetitionTracker.OutbidCancelsBeforePause);
+                    }
                     if (canceledOutbidBuys > 0)
                     {
                         reportAccumulator.RecordTrade(
@@ -880,15 +906,32 @@ public sealed class WorkerRuntime
 
                 if (IsPauseRequested) continue;
 
+                if (liveDriver is not null && effectiveClientSettings.RelistStaleUndercutSells && result.Market is not null)
+                {
+                    await RelistStaleUndercutSellsAsync(liveDriver, result.Market.Transactions, candidateNameSet, request.UndercutBufferMinCopper, reportAccumulator, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (IsPauseRequested) continue;
+
                 var now = _utcNow();
                 var buyPausedLowGold = result.Market?.Balance is { } bal &&
                                        (bal.Copper <= 0 || (minBalanceCopper > 0 && bal.Copper <= minBalanceCopper));
-                var characterSwapDue = afkSwapSchedule.IsDue(now);
+                var deliveryStuckSwap = IsDeliveryStuckSwapDue(now, effectiveClientSettings.ParkedCharacterCount);
+                var characterSwapDue = afkSwapSchedule.IsDue(now) || deliveryStuckSwap;
                 if (characterSwapDue)
                 {
                     if (liveDriver is not null && effectiveClientSettings.ParkedCharacterCount > 1)
                     {
+                        if (deliveryStuckSwap)
+                        {
+                            _logger.LogInformation(
+                                "Swapping character early: the Delivery Box has been locked on {Character} for {Minutes} min (it is not standing next to a Black Lion trader).",
+                                liveDriver.CurrentCharacterLabel ?? "this character",
+                                (int)(now - _deliveryLockedSinceUtc!.Value).TotalMinutes);
+                        }
+
                         _lastCharacterSwapUtc = now;
+                        _deliveryLockedSinceUtc = null;
                         var (swapped, swapMsg) = await liveDriver.RotateParkedCharacterAsync(
                             afkSwapSchedule.RandomizeCharacter,
                             effectiveClientSettings.ParkedCharacterCount,
@@ -896,6 +939,7 @@ public sealed class WorkerRuntime
                         if (swapped)
                         {
                             reportAccumulator.RecordCharacterSwap(_utcNow(), true, swapMsg);
+                            pendingSellTracker.CharacterChanged(_utcNow());
                         }
                         else
                         {
@@ -983,7 +1027,8 @@ public sealed class WorkerRuntime
                         characterSwapDue,
                         nextCharacterSwapAt = afkSwapSchedule.NextSwapAt,
                         sessionCap = sessionCap.Describe(now),
-                        marketList = DescribeMarketList(request, candidates.Count, lastRescanCount, lastRescanUtc, now),
+                        marketList = DescribeMarketList(request, candidates.Count, lastRescanCount, lastRescanUtc, now) +
+                                     (_buyCompetition.PausedItems(now).Count is var botWar and > 0 ? $" · {botWar} paused (outbid, no fills)" : string.Empty),
                         portfolio = DescribePortfolio(request, portfolioGuidance, lastLedgerSyncNote),
                         sessionStartedAt = sessionCap.StartedAt,
                         sessionExpiresAt = sessionCap.ExpiresAt,
@@ -1383,10 +1428,20 @@ public sealed class WorkerRuntime
         }
 
         var collected = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogInformation(
-            collected
-                ? "Delivery Box unlocked at the trader and collected."
-                : "Delivery Box still locked after reopening at the trader; trying again in 10 minutes. Make sure each parked character stands right next to a Black Lion trader.");
+        if (collected)
+        {
+            _deliveryLockedSinceUtc = null;
+            _logger.LogInformation("Delivery Box unlocked at the trader and collected.");
+        }
+        else
+        {
+            _deliveryLockedSinceUtc ??= now;
+            _logger.LogInformation(
+                "Delivery Box still locked after reopening at the trader on {Character}; trying again in 10 minutes. Move that character right next to a Black Lion trader (after {Minutes} min locked Mmopal swaps to another character).",
+                liveDriver.CurrentCharacterLabel ?? "this character",
+                (int)DeliveryStuckBeforeSwap.TotalMinutes);
+        }
+
         return collected;
     }
 
@@ -1521,6 +1576,58 @@ public sealed class WorkerRuntime
     }
 
     private static readonly TimeSpan LedgerSyncInterval = TimeSpan.FromMinutes(45);
+
+    /// <summary>
+    /// Early swap when the Delivery Box has been locked for 30+ min (this character is not at a trader, so coins and
+    /// items pile up until the next AFK swap, up to 2.5 h). At most once an hour: swapping on every locked cycle once
+    /// caused ~12 logouts in 40 minutes and a server kick.
+    /// </summary>
+    private bool IsDeliveryStuckSwapDue(DateTimeOffset nowUtc, int parkedCharacterCount) =>
+        parkedCharacterCount > 1 &&
+        _deliveryLockedSinceUtc is { } since &&
+        nowUtc - since >= DeliveryStuckBeforeSwap &&
+        nowUtc - _lastCharacterSwapUtc >= MinTimeBetweenDeliverySwaps;
+
+    /// <summary>Cancels listings that have stayed undercut 12 h+ when relisting still covers cost and the lost fee.</summary>
+    private async Task RelistStaleUndercutSellsAsync(
+        Gw2TradingPostUiDriver liveDriver,
+        IReadOnlyList<Transaction> orders,
+        IReadOnlySet<string> tradedItems,
+        int undercutCopper,
+        SessionReportAccumulator reportAccumulator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var now = _utcNow();
+            if (!orders.Any(order => order.Type == TransactionType.Sell && now - order.Created >= SellRelistPolicy.MinListingAge))
+            {
+                return;
+            }
+
+            var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (name, cost) in await _store.GetOrderedItemCostsAsync(now.AddDays(-30), cancellationToken).ConfigureAwait(false))
+            {
+                paid[name.Trim()] = Math.Max(cost, paid.GetValueOrDefault(name.Trim()));
+            }
+
+            var picks = SellRelistPolicy.Select(orders, paid, tradedItems, _relistedAtUtc, Math.Max(1, undercutCopper), now, maxPerPass: 2);
+            if (picks.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var name in await liveDriver.CancelSellListingsAsync(picks, cancellationToken).ConfigureAwait(false))
+            {
+                _relistedAtUtc[name] = now;
+                reportAccumulator.RecordTrade(now, "Relist", name, 1, 0, "Canceled", "Undercut listing cancelled for relisting; it returns via the Delivery Box.");
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Relist pass skipped ({Message}).", ex.Message);
+        }
+    }
 
     /// <summary>
     /// Start the re-scan clock at the scanned list's file time, so a list saved hours or days ago is refreshed on the
@@ -1692,6 +1799,7 @@ public sealed class WorkerRuntime
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
 
+                _buyCompetition.RecordFills(filledFlipNames);
                 if (filledFlipNames.Length > 0)
                 {
                     var pickedUp = false;
@@ -2071,6 +2179,7 @@ public sealed class WorkerRuntime
 
             if (ok)
             {
+                _sessionSellTracker?.CharacterChanged(_utcNow());
                 var okText = $"Recovered GW2 Trading Post on retry {retry}/{maxRecoveryRetries}: {recoverMsg}";
                 _logger.LogInformation("{Message}", okText);
                 return (true, okText);
@@ -2106,6 +2215,8 @@ public sealed class WorkerRuntime
                 var (reopened, reopenMsg) = await liveDriver.EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
                 if (reopened)
                 {
+                    _sessionSellTracker?.CharacterChanged(_utcNow());
+                    _deliveryLockedSinceUtc = null;
                     var recoveredAfterRestart = $"Recovered session after restarting Guild Wars 2 ({restartsUsed}/{maxGameRestarts}).";
                     _logger.LogInformation("{Message}", recoveredAfterRestart);
                     return (true, recoveredAfterRestart);

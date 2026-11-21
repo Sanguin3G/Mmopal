@@ -34,7 +34,11 @@ public sealed record Gw2ClientSettings(
     int PcShutdownCountdownSeconds = 60,
     // How buy and sell prices are set in the order dialog: TypeExact (type the exact gold/silver/copper from the
     // live top bid / lowest ask and verify the total; default) or ClickRow (click the top row, tap the spinner).
-    string PriceEntryMode = "TypeExact")
+    string PriceEntryMode = "TypeExact",
+    // Most of total gold that may sit in buy orders (0 = no limit); the rest stays free for items that fill.
+    int MaxBuyOrderSharePercent = 50,
+    // Cancel and relist a listing undercut for 12 h+ when the new price still covers cost + the lost 5% fee.
+    bool RelistStaleUndercutSells = true)
 {
     public const string PriceEntryClickRow = "ClickRow";
     public const string PriceEntryTypeExact = "TypeExact";

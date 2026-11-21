@@ -136,6 +136,6 @@ public sealed class LiveCandidateProfitRefresherTests
             [new Gw2ActiveOrder(99, TransactionType.Sell, 303, "Overexposed Helmet", 25_000, 3, t0, 15_000, 24_000, "Undercut")],
             t0);
         Assert.Contains("Fast Winner Material", insight);
-        Assert.Contains("Auto-guarded losers: 1", insight);
+        Assert.Contains("Skipped for losing money: 1", insight);
     }
 }

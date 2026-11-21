@@ -41,6 +41,17 @@ public sealed class Gw2TradingPostUiDriver
     // prints "Listing Fee" / "Exchange Fee" from x ~658, which would garble the read.
     private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 380, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
+
+    // Per item: search confirmations seen / missed. Some names never confirm on screen (Tyria's Best Nougat Center
+    // 24 of 24, Unstable Rift Motivation 22 of 22), and each miss waited the full 7.5 s: 41 min in a 7 h session.
+    private readonly Dictionary<string, (int Seen, int Missed)> _searchConfirmStats = new(StringComparer.OrdinalIgnoreCase);
+    internal const int ShortSearchWaitMs = 2_000;
+
+    /// <summary>Items whose buy orders the last Outbid Refresh pass cancelled (for the bot-war guard).</summary>
+    public IReadOnlyList<string> LastCanceledOutbidItems { get; private set; } = Array.Empty<string>();
+
+    /// <summary>The character entered last ("'Name' (slot #3)" or "slot #3"), for messages; null before any swap.</summary>
+    public string? CurrentCharacterLabel { get; private set; }
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     // Black Lion sidebar scales icon measured at (14..53, 215..234) on 1024x768 (Gem Store and TP tabs alike).
     private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 195, 80, 80);
@@ -464,8 +475,10 @@ public sealed class Gw2TradingPostUiDriver
                 await SettleShortAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            CurrentCharacterLabel = $"slot #{slotOffset + 1}";
             if (slotOffset > 0 && await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) is { } selectedName)
             {
+                CurrentCharacterLabel = $"'{selectedName}' (slot #{slotOffset + 1})";
                 _logger.LogInformation("Character Select now shows '{Name}' (slot #{Slot}).", selectedName, slotOffset + 1);
             }
 
@@ -1783,6 +1796,7 @@ public sealed class Gw2TradingPostUiDriver
             return 0;
         }
 
+        LastCanceledOutbidItems = Array.Empty<string>();
         var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung);
         if (keptYoung > 0)
         {
@@ -1833,6 +1847,7 @@ public sealed class Gw2TradingPostUiDriver
         }
 
         var canceled = 0;
+        var canceledNames = new List<string>();
         foreach (var order in outbidBuys)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1863,6 +1878,7 @@ public sealed class Gw2TradingPostUiDriver
                 await ClickCenterAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
                 await SettleAsync(cancellationToken).ConfigureAwait(false);
                 canceled++;
+                canceledNames.Add(order.ItemName);
                 _logger.LogInformation(
                     "Outbid Refresh canceled buy order for {Item}: our bid {OurBid}c, API top bid {TopBid}c.",
                     order.ItemName,
@@ -1871,7 +1887,86 @@ public sealed class Gw2TradingPostUiDriver
             }
         }
 
+        LastCanceledOutbidItems = canceledNames;
         return canceled;
+    }
+
+    /// <summary>
+    /// Cancels the given sell listings (Transactions → Current → Selling, search, Cancel, Confirm). The items return
+    /// to the Delivery Box, and the sell pass relists them at the typed price with the break-even floor. Returns the
+    /// names that were cancelled.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> CancelSellListingsAsync(
+        IReadOnlyList<SellRelist> relists,
+        CancellationToken cancellationToken = default)
+    {
+        var canceledNames = new List<string>();
+        if (relists.Count == 0)
+        {
+            return canceledNames;
+        }
+
+        var txTab = await WaitForTemplateAsync("transactions.png", TransactionsTabRegion, 0.72m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
+                    ?? await TryFindOnceAsync("transactions.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+        if (txTab is null)
+        {
+            return canceledNames;
+        }
+
+        await ClickCenterAsync(txTab, cancellationToken).ConfigureAwait(false);
+        await SettleAsync(cancellationToken).ConfigureAwait(false);
+        await ResetFiltersAsync(cancellationToken).ConfigureAwait(false);
+        var currentBtn = await WaitForTemplateAsync("transactions_current.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        if (currentBtn is not null)
+        {
+            await ClickCenterAsync(currentBtn, cancellationToken).ConfigureAwait(false);
+            await SettleAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var sellingBtn = await WaitForTemplateAsync("transactions_selling.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        if (sellingBtn is null)
+        {
+            _logger.LogInformation("Relist skipped: the Selling list of Current transactions was not found.");
+            return canceledNames;
+        }
+
+        await ClickCenterAsync(sellingBtn, cancellationToken).ConfigureAwait(false);
+        await SettleAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (var relist in relists)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (IsPaused) break;
+            await DismissTransientPopupAsync("Relist", cancellationToken).ConfigureAwait(false);
+            if (!await SearchItemAsync(relist.Listing.ItemName, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            var cancelBtn = await WaitForTemplateAsync("transactions_cancel.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
+                            ?? await TryFindOnceAsync("cancel.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+            if (cancelBtn is null || IsPaused)
+            {
+                continue;
+            }
+
+            await ClickCenterAsync(cancelBtn, cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            var confirmBtn = await WaitForTemplateAsync("transactions_confirm.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
+                             ?? await TryFindOnceAsync("confirm.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+            if (confirmBtn is null || IsPaused)
+            {
+                continue;
+            }
+
+            await ClickCenterAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
+            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            canceledNames.Add(relist.Listing.ItemName);
+            _logger.LogInformation("Relist: cancelled the undercut listing for {Item} ({Reason}).", relist.Listing.ItemName, relist.Reason);
+        }
+
+        return canceledNames;
     }
 
     public async Task<(bool Succeeded, string Message)> RotateParkedCharacterAsync(
@@ -1960,8 +2055,9 @@ public sealed class Gw2TradingPostUiDriver
             cancellationToken).ConfigureAwait(false);
         await SettleAsync(cancellationToken).ConfigureAwait(false);
 
-        var (reopened, openMsg) = await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
         var who = selectedName is null ? $"slot #{slotOffset + 1}" : $"'{selectedName}' (slot #{slotOffset + 1})";
+        CurrentCharacterLabel = who;
+        var (reopened, openMsg) = await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
         return reopened
             ? (true, $"Swapped to parked character {who} and reopened Trading Post.")
             : (false, $"Swapped to parked character {who}, but could not reopen Trading Post: {openMsg}");
@@ -3027,6 +3123,13 @@ public sealed class Gw2TradingPostUiDriver
 
         var query = NormalizeItemName(itemName);
         var timeoutMs = _requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs, 4_000) : _uiWaitMs;
+        var stats = _searchConfirmStats.GetValueOrDefault(query);
+        var neverConfirms = UsesShortSearchWait(stats.Seen, stats.Missed);
+        if (neverConfirms)
+        {
+            timeoutMs = Math.Min(timeoutMs, ShortSearchWaitMs);
+        }
+
         var deadline = _utcNow() + TimeSpan.FromMilliseconds(timeoutMs);
         var started = _utcNow();
         while (true)
@@ -3041,6 +3144,7 @@ public sealed class Gw2TradingPostUiDriver
             var texts = await ReadTextVariantsAsync(SearchResultsListRegion, cancellationToken).ConfigureAwait(false);
             if (texts.Any(text => FuzzyContains(NormalizeItemName(text), query)))
             {
+                _searchConfirmStats[query] = (stats.Seen + 1, stats.Missed);
                 var waited = (_utcNow() - started).TotalMilliseconds;
                 if (waited > 1_500)
                 {
@@ -3052,10 +3156,17 @@ public sealed class Gw2TradingPostUiDriver
 
             if (_utcNow() >= deadline)
             {
+                _searchConfirmStats[query] = (stats.Seen, stats.Missed + 1);
+                if (neverConfirms)
+                {
+                    return; // known to never confirm on screen; the opened item's title is still verified
+                }
+
                 _logger.LogInformation(
-                    "Search results for '{Item}' were not confirmed within {Ms} ms; continuing (the opened item is still verified).",
+                    "Search results for '{Item}' were not confirmed within {Ms} ms; continuing (the opened item is still verified).{Note}",
                     itemName,
-                    timeoutMs);
+                    timeoutMs,
+                    UsesShortSearchWait(stats.Seen, stats.Missed + 1) ? $" Its name never shows up readably, so later searches wait {ShortSearchWaitMs / 1000} s." : string.Empty);
                 await SaveDiagnosticFrameAsync("search-unconfirmed", cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -3063,6 +3174,9 @@ public sealed class Gw2TradingPostUiDriver
             await Task.Delay(Math.Max(_pollMs, 250), cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>Two misses and no confirmation yet: the name does not read on screen, so waiting longer will not help.</summary>
+    internal static bool UsesShortSearchWait(int seen, int missed) => seen == 0 && missed >= 2;
 
     /// <summary>True when <paramref name="text"/> contains <paramref name="query"/>, allowing ~15% OCR noise.</summary>
     internal static bool FuzzyContains(string text, string query)

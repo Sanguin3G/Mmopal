@@ -125,6 +125,12 @@ public sealed class TradingControllerOptions
     public int MaxActionsPerCycle { get; init; } = 3;
 
     /// <summary>
+    /// Most of total gold (wallet + buy orders + listings after fees) that may sit in buy orders; 0 = no limit. In a
+    /// 7 h session 60% sat in buy orders while a third filled, leaving no gold for items that do fill.
+    /// </summary>
+    public int MaxBuyOrderSharePercent { get; init; }
+
+    /// <summary>
     /// How long an item is held back after an order was placed for it. This only has to outlast the
     /// GW2 API cache (~5 min) so a just-placed order that hasn't reached <c>current/buys</c> yet isn't placed twice.
     /// </summary>
@@ -257,7 +263,8 @@ public sealed class TradingCycleController
                 : null;
             DetectSearchMismatches(runId, market.Transactions);
             AuditPlacedPrices(runId, market.Transactions);
-            decisions = SelectActionsForCycle(runId, decisions, remainingSpendable);
+            var buyBudget = BuyOrderBudget(market, _options.MaxBuyOrderSharePercent);
+            decisions = SelectActionsForCycle(runId, decisions, remainingSpendable, buyBudget);
             foreach (var decision in decisions)
             {
                 // ~150 skip lines per cycle buried the log; skips go to Debug and are summarized below.
@@ -431,11 +438,35 @@ public sealed class TradingCycleController
     /// per-cycle cap and the gold budget only count actions that will actually run. Doing the cooldown
     /// check before the cap keeps recently-ordered items from occupying all slots and starving the list.
     /// </summary>
+    /// <summary>Gold still allowed into new buy orders under the share limit, with the figures for the skip reason.</summary>
+    public static (long Remaining, long InBuyOrders, long TotalGold, int Percent)? BuyOrderBudget(MarketSnapshot market, int sharePercent)
+    {
+        if (sharePercent is <= 0 or >= 100 || market.Balance is not { } balance)
+        {
+            return null;
+        }
+
+        long inBuys = 0;
+        long sellsNet = 0;
+        foreach (var order in market.Transactions)
+        {
+            var value = Math.Max(0, order.PriceCopper) * Math.Max(1, order.Quantity);
+            if (order.Type == TransactionType.Buy) inBuys += value;
+            else sellsNet += (long)(value * 0.85m);
+        }
+
+        var total = Math.Max(0, balance.Copper) + inBuys + sellsNet;
+        var allowed = total * sharePercent / 100;
+        return (Math.Max(0, allowed - inBuys), inBuys, total, sharePercent);
+    }
+
     private IReadOnlyList<CandidateDecision> SelectActionsForCycle(
         string runId,
         IReadOnlyList<CandidateDecision> decisions,
-        long? remainingSpendable)
+        long? remainingSpendable,
+        (long Remaining, long InBuyOrders, long TotalGold, int Percent)? buyBudget = null)
     {
+        var budgetLeft = buyBudget?.Remaining;
         var now = _options.UtcNow();
         var accepted = 0;
         var selected = new List<CandidateDecision>(decisions.Count);
@@ -486,6 +517,21 @@ public sealed class TradingCycleController
             {
                 selected.Add(CandidateDecision.Skip(decision.Candidate, "Per-cycle action limit reached.", decision.Profitability));
                 continue;
+            }
+
+            if (action.Kind == TradingActionKind.PlaceBuyOrder && budgetLeft is { } left && buyBudget is { } budget)
+            {
+                var orderCost = (long)Math.Min(long.MaxValue, (decimal)action.PriceCopper * Math.Max(1L, action.Quantity));
+                if (orderCost > left)
+                {
+                    selected.Add(CandidateDecision.Skip(
+                        decision.Candidate,
+                        $"Buy orders already hold {MarketScanItem.FormatCoins(budget.InBuyOrders)} of {MarketScanItem.FormatCoins(budget.TotalGold)} (limit {budget.Percent}%); waiting for fills.",
+                        decision.Profitability));
+                    continue;
+                }
+
+                budgetLeft = left - orderCost;
             }
 
             if (action.Kind == TradingActionKind.PlaceBuyOrder && remainingSpendable is { } spendable)
