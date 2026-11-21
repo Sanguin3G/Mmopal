@@ -101,12 +101,13 @@ public static class SellRelistPolicy
             if (picks.Count >= maxPerPass) break;
             var name = group.Key;
             var oldest = group.OrderBy(order => order.Created).First();
+            var age = nowUtc - oldest.Created;
             if (group.Any(order => order.MinimumSellPriceCopper is not { } ask || ask <= 0 || ask >= order.PriceCopper))
             {
                 continue; // one of our listings is at (or is) the lowest ask, or the market is unknown: it can still sell
             }
 
-            if (nowUtc - oldest.Created < MinListingAge ||
+            if (age < MinListingAge ||
                 !tradedItems.Contains(name) ||
                 !paidByItem.TryGetValue(name, out var paid) || paid <= 0 ||
                 (lastRelistedUtc.TryGetValue(name, out var last) && nowUtc - last < MinTimeBetweenRelists))
@@ -126,10 +127,12 @@ public static class SellRelistPolicy
             picks.Add(new SellRelist(
                 oldest,
                 newPrice,
-                $"listed {(int)(nowUtc - oldest.Created).TotalHours} h at {MarketScanItem.FormatCoins(oldest.PriceCopper)}, undercut to {MarketScanItem.FormatCoins(lowestAsk)}; " +
-                $"relisting at {MarketScanItem.FormatCoins(newPrice)} still nets {MarketScanItem.FormatCoins(newNet)} vs {MarketScanItem.FormatCoins(paid)} paid + {MarketScanItem.FormatCoins(lostFee)} lost fee"));
+                $"listed {(int)age.TotalHours} h at {Coins(oldest.PriceCopper)}, undercut to {Coins(lowestAsk)}; " +
+                $"relisting at {Coins(newPrice)} still nets {Coins(newNet)} vs {Coins(paid)} paid + {Coins(lostFee)} lost fee"));
         }
 
         return picks;
     }
+
+    private static string Coins(long copper) => MarketScanItem.FormatCoins(copper);
 }

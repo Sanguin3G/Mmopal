@@ -21,10 +21,7 @@ public static class IncomeInsights
     /// <summary>Net worth at the first snapshot inside the window and now; null without two snapshots.</summary>
     public static (NetWorthPoint Start, NetWorthPoint End)? NetWorthChange(IReadOnlyList<Gw2EquitySnapshot> snapshots, DateTimeOffset? windowStartUtc)
     {
-        var inWindow = snapshots
-            .Where(s => s.TotalEquityCopper > 0 && (windowStartUtc is null || s.CapturedAt >= windowStartUtc))
-            .OrderBy(s => s.CapturedAt)
-            .ToArray();
+        var inWindow = SnapshotsInWindow(snapshots, windowStartUtc);
         if (inWindow.Length < 2)
         {
             return null;
@@ -39,10 +36,7 @@ public static class IncomeInsights
     /// </summary>
     public static IReadOnlyList<NetWorthPoint> NetWorthSeries(IReadOnlyList<Gw2EquitySnapshot> snapshots, DateTimeOffset? windowStartUtc, int maxPoints = 24)
     {
-        var inWindow = snapshots
-            .Where(s => s.TotalEquityCopper > 0 && (windowStartUtc is null || s.CapturedAt >= windowStartUtc))
-            .OrderBy(s => s.CapturedAt)
-            .ToArray();
+        var inWindow = SnapshotsInWindow(snapshots, windowStartUtc);
         if (inWindow.Length == 0)
         {
             return Array.Empty<NetWorthPoint>();
@@ -73,7 +67,7 @@ public static class IncomeInsights
     public static long FeesPaid(IEnumerable<Gw2LedgerTransaction> history, DateTimeOffset? windowStartUtc) =>
         history
             .Where(t => t.Kind == TransactionType.Sell && (windowStartUtc is null || t.PurchasedAt >= windowStartUtc))
-            .Sum(t => (TradingIncomeAnalytics.CalculateListingFee(t.UnitPriceCopper) + TradingIncomeAnalytics.CalculateExchangeFee(t.UnitPriceCopper)) * Math.Max(0, t.Quantity));
+            .Sum(t => UnitFees(t.UnitPriceCopper) * Math.Max(0, t.Quantity));
 
     /// <summary>Cost of bought units not sold yet (first in, first out): in bags, in the Delivery Box or listed.</summary>
     public static long UnsoldCost(IEnumerable<Gw2LedgerTransaction> history)
@@ -125,17 +119,37 @@ public static class IncomeInsights
             UnsoldCost(history));
     }
 
-    public static string FormatAge(TimeSpan age) =>
-        age.TotalHours < 1 ? $"{Math.Max(0, (int)age.TotalMinutes)}m"
-        : age.TotalHours < 48 ? $"{(int)age.TotalHours}h"
-        : string.Create(CultureInfo.InvariantCulture, $"{age.TotalDays:0.#}d");
+    public static string FormatAge(TimeSpan age)
+    {
+        if (age.TotalHours < 1)
+        {
+            return $"{Math.Max(0, (int)age.TotalMinutes)}m";
+        }
+
+        if (age.TotalHours < 48)
+        {
+            return $"{(int)age.TotalHours}h";
+        }
+
+        return string.Create(CultureInfo.InvariantCulture, $"{age.TotalDays:0.#}d");
+    }
+
+    /// <summary>Snapshots with a known net worth, captured inside the window (null: all), oldest first.</summary>
+    private static Gw2EquitySnapshot[] SnapshotsInWindow(IReadOnlyList<Gw2EquitySnapshot> snapshots, DateTimeOffset? windowStartUtc) =>
+        snapshots
+            .Where(s => s.TotalEquityCopper > 0 && (windowStartUtc is null || s.CapturedAt >= windowStartUtc))
+            .OrderBy(s => s.CapturedAt)
+            .ToArray();
+
+    private static long UnitFees(long unitPriceCopper) =>
+        TradingIncomeAnalytics.CalculateListingFee(unitPriceCopper) + TradingIncomeAnalytics.CalculateExchangeFee(unitPriceCopper);
 
     private static NetWorthPoint ToPoint(Gw2EquitySnapshot snapshot, bool dayLabel)
     {
-        var local = snapshot.CapturedAt.ToLocalTime();
+        var format = dayLabel ? "MM-dd" : "HH:mm";
         return new NetWorthPoint(
             snapshot.CapturedAt,
             snapshot.TotalEquityCopper,
-            dayLabel ? local.ToString("MM-dd", CultureInfo.InvariantCulture) : local.ToString("HH:mm", CultureInfo.InvariantCulture));
+            snapshot.CapturedAt.ToLocalTime().ToString(format, CultureInfo.InvariantCulture));
     }
 }

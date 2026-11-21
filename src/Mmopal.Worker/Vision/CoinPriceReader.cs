@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Mmopal.Contracts;
@@ -33,6 +34,7 @@ public static class CoinPriceReader
         distance <= MaxDigitDistance || (distance <= MaxDigitDistanceWithMargin && runnerUp - distance >= MinRunnerUpMargin);
 
     private static Lazy<List<DigitTemplate>> Templates = new(LoadTemplates);
+    private static readonly object LearnLock = new();
 
     /// <summary>Drops the loaded templates so the next read loads them again (tests point LearnedTemplatesPath elsewhere first).</summary>
     internal static void ReloadTemplates()
@@ -42,7 +44,6 @@ public static class CoinPriceReader
             Templates = new Lazy<List<DigitTemplate>>(LoadTemplates);
         }
     }
-    private static readonly object LearnLock = new();
 
     /// <summary>Where digit shapes learned at runtime are kept (added to the embedded set).</summary>
     public static string LearnedTemplatesPath { get; set; } = Path.Combine(
@@ -114,18 +115,17 @@ public static class CoinPriceReader
         }
 
         long gold = 0, silver = 0, copper = 0;
-        var seen = new HashSet<Coin>();
         var worst = 0.0;
         var text = new List<string>();
-        var lastCoin = -1;
+        Coin? lastCoin = null;
         foreach (var group in groups)
         {
-            if (!seen.Add(group.Coin) || (int)group.Coin <= lastCoin)
+            if (lastCoin is { } previous && group.Coin <= previous)
             {
                 return null; // a coin twice, or out of gold → silver → copper order
             }
 
-            lastCoin = (int)group.Coin;
+            lastCoin = group.Coin;
             long value = 0;
             foreach (var digit in group.Digits)
             {
@@ -151,7 +151,7 @@ public static class CoinPriceReader
                 default: copper = value; break;
             }
 
-            text.Add($"{value}{group.Coin.ToString()[0].ToString().ToLowerInvariant()}");
+            text.Add($"{value}{char.ToLowerInvariant(group.Coin.ToString()[0])}");
         }
 
         return text.Count == 0 ? null : new CoinReading(gold * 10_000 + silver * 100 + copper, string.Join(" ", text), worst);
@@ -180,7 +180,11 @@ public static class CoinPriceReader
         var best = -1;
         for (var d = 0; d < 10; d++)
         {
-            if (bestPerDigit[d] < double.MaxValue && (best < 0 || bestPerDigit[d] < bestPerDigit[best])) best = d;
+            var hasMatch = bestPerDigit[d] < double.MaxValue;
+            if (hasMatch && (best < 0 || bestPerDigit[d] < bestPerDigit[best]))
+            {
+                best = d;
+            }
         }
 
         if (best < 0)
@@ -212,9 +216,7 @@ public static class CoinPriceReader
             var row = (y0 + y) * stride;
             for (var x = 0; x < w; x++)
             {
-                var i = row + (x0 + x) * 4;
-                var max = Math.Max(frame.Pixels[i], Math.Max(frame.Pixels[i + 1], frame.Pixels[i + 2]));
-                bright[y * w + x] = max >= BrightThreshold ? (byte)1 : (byte)0;
+                bright[y * w + x] = Brightness(frame.Pixels, row + (x0 + x) * 4) >= BrightThreshold ? (byte)1 : (byte)0;
             }
         }
 
@@ -272,7 +274,6 @@ public static class CoinPriceReader
 
         int bw = maxX - minX + 1, bh = maxY - minY + 1;
         // Brightness (max channel) of the bounding box, area-sampled into a fixed grid and normalised 0..1.
-        var shape = new float[ShapeWidth * ShapeHeight];
         double lo = 255, hi = 0;
         var cells = new double[ShapeWidth * ShapeHeight];
         for (var cy = 0; cy < ShapeHeight; cy++)
@@ -284,8 +285,7 @@ public static class CoinPriceReader
             for (var y = sy0; y < sy1; y++)
             for (var x = sx0; x < sx1; x++)
             {
-                var i = (y0 + y) * stride + (x0 + x) * 4;
-                sum += Math.Max(pixels[i], Math.Max(pixels[i + 1], pixels[i + 2]));
+                sum += Brightness(pixels, (y0 + y) * stride + (x0 + x) * 4);
                 count++;
             }
 
@@ -295,10 +295,18 @@ public static class CoinPriceReader
         }
 
         var range = Math.Max(1, hi - lo);
-        for (var k = 0; k < cells.Length; k++) shape[k] = (float)((cells[k] - lo) / range);
+        var shape = new float[cells.Length];
+        for (var k = 0; k < cells.Length; k++)
+        {
+            shape[k] = (float)((cells[k] - lo) / range);
+        }
 
         return new Blob(regionX + minX, regionY + minY, bw, bh, members.Count, satSum / members.Count, grSum / members.Count, shape);
     }
+
+    /// <summary>Brightest channel of the BGRA pixel at byte offset <paramref name="i"/>.</summary>
+    private static byte Brightness(byte[] pixels, int i) =>
+        Math.Max(pixels[i], Math.Max(pixels[i + 1], pixels[i + 2]));
 
     /// <summary>Clusters blobs into text lines by vertical centre (within 5 px of the line's first blob), top to bottom.</summary>
     private static List<List<Blob>> GroupIntoLines(List<Blob> blobs)
@@ -417,10 +425,7 @@ public static class CoinPriceReader
 
         try
         {
-            if (File.Exists(LearnedTemplatesPath))
-            {
-                templates.AddRange(JsonSerializer.Deserialize<List<DigitTemplate>>(File.ReadAllText(LearnedTemplatesPath), JsonOptions) ?? []);
-            }
+            templates.AddRange(ReadLearnedTemplates());
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -429,6 +434,11 @@ public static class CoinPriceReader
 
         return templates;
     }
+
+    private static List<DigitTemplate> ReadLearnedTemplates() =>
+        File.Exists(LearnedTemplatesPath)
+            ? JsonSerializer.Deserialize<List<DigitTemplate>>(File.ReadAllText(LearnedTemplatesPath), JsonOptions) ?? []
+            : [];
 
     /// <summary>
     /// After a price was confirmed (so the line is known to show <paramref name="expectedCopper"/>), learn the shapes
@@ -466,7 +476,7 @@ public static class CoinPriceReader
                 {
                     var blob = groups[g].Digits[d];
                     var want = expected[g][d] - '0';
-                    var (best, distance, _) = templates.Count == 0 ? (-1, double.MaxValue, double.MaxValue) : Classify(blob, templates);
+                    var (best, distance, _) = Classify(blob, templates);
                     if (distance <= MaxDigitDistance)
                     {
                         if (best != want) return 0; // a confident digit disagrees: the line is not what we think
@@ -485,9 +495,7 @@ public static class CoinPriceReader
             templates.AddRange(learned);
             try
             {
-                var saved = File.Exists(LearnedTemplatesPath)
-                    ? JsonSerializer.Deserialize<List<DigitTemplate>>(File.ReadAllText(LearnedTemplatesPath), JsonOptions) ?? []
-                    : [];
+                var saved = ReadLearnedTemplates();
                 saved.AddRange(learned);
                 Directory.CreateDirectory(Path.GetDirectoryName(LearnedTemplatesPath)!);
                 File.WriteAllText(LearnedTemplatesPath, JsonSerializer.Serialize(saved.TakeLast(400).ToList(), JsonOptions));
@@ -509,7 +517,12 @@ public static class CoinPriceReader
             return null;
         }
 
-        var all = new[] { (copper / 10_000).ToString(System.Globalization.CultureInfo.InvariantCulture), (copper / 100 % 100).ToString(System.Globalization.CultureInfo.InvariantCulture), (copper % 100).ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        var all = new[]
+        {
+            (copper / 10_000).ToString(CultureInfo.InvariantCulture),
+            (copper / 100 % 100).ToString(CultureInfo.InvariantCulture),
+            (copper % 100).ToString(CultureInfo.InvariantCulture),
+        };
         // Higher coins can only be left out when they are 0 (rows omit a zero gold; the Total line shows it).
         for (var skipped = 0; skipped < 3 - groupCount; skipped++)
         {

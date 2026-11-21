@@ -34,7 +34,8 @@ public static class SmartAutoTuner
     {
         ArgumentNullException.ThrowIfNull(inputs);
         var wallet = Math.Max(0, inputs.WalletCopper);
-        var inOrders = Math.Max(0, inputs.ActiveBuysCopper) + Math.Max(0, inputs.ActiveSellsNetCopper);
+        var inListings = Math.Max(0, inputs.ActiveSellsNetCopper);
+        var inOrders = Math.Max(0, inputs.ActiveBuysCopper) + inListings;
         var capital = wallet + inOrders;
         var preset = TradingStrategyPresets.RecommendForCapital(capital);
         var minTrades = BaseMinTradesPerDay;
@@ -46,12 +47,12 @@ public static class SmartAutoTuner
         }
 
         var recent = inputs.RecentResults;
-        var canLearn = recent is not null && recent.MatchedUnitsSold >= MinFlipsToLearn;
+        var learnable = recent is not null && recent.MatchedUnitsSold >= MinFlipsToLearn ? recent : null;
 
         // Where the gold sits.
         if (capital > 0)
         {
-            var sellShare = (double)Math.Max(0, inputs.ActiveSellsNetCopper) / capital;
+            var sellShare = (double)inListings / capital;
             var walletShare = (double)wallet / capital;
             if (sellShare >= 0.5)
             {
@@ -59,7 +60,7 @@ public static class SmartAutoTuner
                 minTrades *= 1.5;
                 notes.Add($"{Percent(sellShare)} of your gold is in unsold listings: buying cheaper, faster-selling items (Max Buy {preset.MaxBuyGold:0.#}g) until they sell.");
             }
-            else if (walletShare >= 0.7 && canLearn && recent!.MatchedProfitCopper > 0)
+            else if (walletShare >= 0.7 && learnable is not null && learnable.MatchedProfitCopper > 0)
             {
                 var quantity = Math.Min(20, (long)Math.Ceiling(preset.DefaultOrderQuantity * 1.5));
                 if (quantity > preset.DefaultOrderQuantity)
@@ -71,29 +72,29 @@ public static class SmartAutoTuner
         }
 
         // What recent flips say.
-        if (canLearn)
+        if (learnable is not null)
         {
-            var roi = recent!.MatchedRoiPercent;
+            var roi = learnable.MatchedRoiPercent;
             var minRoi = preset.MinRoiPercent;
             if (roi < 5m)
             {
                 minRoi += 3m;
                 notes.Add($"Recent flips earned only {roi:0.#}% after fees: asking for a wider margin.");
             }
-            else if (roi >= 15m && recent.WinRatePercent >= 70)
+            else if (roi >= 15m && learnable.WinRatePercent >= 70)
             {
                 minRoi -= 2m;
-                notes.Add($"Recent flips are strong ({roi:0.#}% ROI, {recent.WinRatePercent:0}% winners): Min ROI eased for more volume.");
+                notes.Add($"Recent flips are strong ({roi:0.#}% ROI, {learnable.WinRatePercent:0}% winners): Min ROI eased for more volume.");
             }
 
-            if (recent.WinRatePercent < 50)
+            if (learnable.WinRatePercent < 50)
             {
                 minRoi += 2m;
                 minTrades *= 1.5;
-                notes.Add($"Only {recent.WinRatePercent:0}% of recent flips made money: favouring busier items with a bigger cushion.");
+                notes.Add($"Only {learnable.WinRatePercent:0}% of recent flips made money: favouring busier items with a bigger cushion.");
             }
 
-            var holdHours = AverageHoldHours(recent);
+            var holdHours = AverageHoldHours(learnable);
             if (holdHours > 48)
             {
                 minTrades *= 2;
