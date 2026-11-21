@@ -78,6 +78,7 @@ public sealed class Gw2ClientPreparer : IGw2ClientPreparer
 
         var isUriLaunch = Win32ProcessController.IsUriLaunch(targetPath);
         var platformLabel = settings.IsSteamPlatform || isUriLaunch ? "via Steam" : "standalone";
+        var launchArguments = isUriLaunch ? null : EffectiveLaunchArguments(settings);
         var attemptsUsed = 0;
         var launchedAny = false;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
@@ -88,13 +89,7 @@ public sealed class Gw2ClientPreparer : IGw2ClientPreparer
             bool started;
             try
             {
-                var effectiveArgs = isUriLaunch
-                    ? null
-                    : string.IsNullOrWhiteSpace(settings.LaunchArguments)
-                        ? "-autologin -windowed"
-                        : settings.LaunchArguments.Trim();
-
-                started = await _processes.LaunchAsync(targetPath, effectiveArgs, cancellationToken).ConfigureAwait(false);
+                started = await _processes.LaunchAsync(targetPath, launchArguments, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -162,15 +157,7 @@ public sealed class Gw2ClientPreparer : IGw2ClientPreparer
         ArgumentNullException.ThrowIfNull(settings);
         if (_processes.IsRunning(Gw2ClientSettings.DefaultExecutableName))
         {
-            await _processes.StopAsync(Gw2ClientSettings.DefaultExecutableName, cancellationToken).ConfigureAwait(false);
-            var stopWait = _hasExplicitTimeout ? _pollInterval : TimeSpan.FromSeconds(5);
-            var deadline = DateTimeOffset.UtcNow + stopWait;
-            while (_processes.IsRunning(Gw2ClientSettings.DefaultExecutableName) && DateTimeOffset.UtcNow < deadline)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
-            }
-
+            await StopAndWaitForExitAsync(cancellationToken).ConfigureAwait(false);
             if (!_hasExplicitTimeout)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
@@ -194,14 +181,7 @@ public sealed class Gw2ClientPreparer : IGw2ClientPreparer
                 Message: "Guild Wars 2 is already closed.");
         }
 
-        await _processes.StopAsync(Gw2ClientSettings.DefaultExecutableName, cancellationToken).ConfigureAwait(false);
-        var deadline = DateTimeOffset.UtcNow + (_hasExplicitTimeout ? _pollInterval : TimeSpan.FromSeconds(5));
-        while (_processes.IsRunning(Gw2ClientSettings.DefaultExecutableName) && DateTimeOffset.UtcNow < deadline)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
-        }
-
+        await StopAndWaitForExitAsync(cancellationToken).ConfigureAwait(false);
         var stillRunning = _processes.IsRunning(Gw2ClientSettings.DefaultExecutableName);
         return new Gw2ClientPrepareResult(
             WindowReady: stillRunning,
@@ -210,6 +190,23 @@ public sealed class Gw2ClientPreparer : IGw2ClientPreparer
             Message: stillRunning
                 ? "Attempted to close Guild Wars 2, but process is still shutting down."
                 : "Closed Guild Wars 2 cleanly.");
+    }
+
+    private static string EffectiveLaunchArguments(Gw2ClientSettings settings) =>
+        string.IsNullOrWhiteSpace(settings.LaunchArguments)
+            ? "-autologin -windowed"
+            : settings.LaunchArguments.Trim();
+
+    /// <summary>Stops the game and polls until it has exited, for up to 5 s (one poll interval in tests).</summary>
+    private async Task StopAndWaitForExitAsync(CancellationToken cancellationToken)
+    {
+        await _processes.StopAsync(Gw2ClientSettings.DefaultExecutableName, cancellationToken).ConfigureAwait(false);
+        var deadline = DateTimeOffset.UtcNow + (_hasExplicitTimeout ? _pollInterval : TimeSpan.FromSeconds(5));
+        while (_processes.IsRunning(Gw2ClientSettings.DefaultExecutableName) && DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<bool> WaitForWindowAsync(
@@ -222,12 +219,7 @@ public sealed class Gw2ClientPreparer : IGw2ClientPreparer
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var positioned = await _windows.EnsureWindowAsync(
-                Gw2ClientSettings.DefaultWindowName,
-                width,
-                height,
-                cancellationToken).ConfigureAwait(false);
-            if (positioned)
+            if (await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }

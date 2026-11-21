@@ -64,9 +64,7 @@ public static partial class Gw2InstallationLocator
                 var full = Path.GetFullPath(cleaned!);
                 if (File.Exists(full) && seen.Add(full))
                 {
-                    var inferredKind = kind == Gw2InstallKind.Unknown && full.Contains("steamapps", StringComparison.OrdinalIgnoreCase)
-                        ? Gw2InstallKind.Steam
-                        : kind;
+                    var inferredKind = kind == Gw2InstallKind.Unknown ? KindFromPath(full, Gw2InstallKind.Unknown) : kind;
                     results.Add(new Gw2InstallCandidate(full, inferredKind, source, launchTarget));
                 }
             }
@@ -89,10 +87,7 @@ public static partial class Gw2InstallationLocator
                         var fileName = process.MainModule?.FileName;
                         if (!string.IsNullOrWhiteSpace(fileName))
                         {
-                            var kind = fileName.Contains("steamapps", StringComparison.OrdinalIgnoreCase)
-                                ? Gw2InstallKind.Steam
-                                : Gw2InstallKind.Standalone;
-                            TryAddFile(fileName, kind, "Running process");
+                            TryAddFile(fileName, KindFromPath(fileName, Gw2InstallKind.Standalone), "Running process");
                         }
                     }
                     catch
@@ -132,14 +127,15 @@ public static partial class Gw2InstallationLocator
         // 5. Common fixed-drive paths
         foreach (var path in FindInstalledPaths())
         {
-            var kind = path.Contains("steamapps", StringComparison.OrdinalIgnoreCase)
-                ? Gw2InstallKind.Steam
-                : Gw2InstallKind.Standalone;
-            TryAddFile(path, kind, "Common drive scan");
+            TryAddFile(path, KindFromPath(path, Gw2InstallKind.Standalone), "Common drive scan");
         }
 
         return results;
     }
+
+    /// <summary>Steam when the path is inside a Steam library ("steamapps"), otherwise <paramref name="otherwise"/>.</summary>
+    private static Gw2InstallKind KindFromPath(string path, Gw2InstallKind otherwise) =>
+        path.Contains("steamapps", StringComparison.OrdinalIgnoreCase) ? Gw2InstallKind.Steam : otherwise;
 
     public static IReadOnlyList<string> FindInstalledPaths(
         IEnumerable<string>? driveRoots = null,
@@ -405,14 +401,12 @@ public static partial class Gw2InstallationLocator
         var steamManifestFound = false;
         foreach (var lib in libraryFolders)
         {
-            var exePath = Path.Combine(lib, "steamapps", "common", "Guild Wars 2", "Gw2-64.exe");
-            var manifestPath = Path.Combine(lib, "steamapps", SteamAppManifest);
-            var hasManifest = File.Exists(manifestPath);
-            if (hasManifest)
+            if (File.Exists(Path.Combine(lib, "steamapps", SteamAppManifest)))
             {
                 steamManifestFound = true;
             }
 
+            var exePath = Path.Combine(lib, "steamapps", "common", "Guild Wars 2", "Gw2-64.exe");
             addFile(exePath, Gw2InstallKind.Steam, "Steam Library", SteamLaunchUri);
         }
 

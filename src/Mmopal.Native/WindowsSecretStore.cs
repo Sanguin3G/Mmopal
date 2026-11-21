@@ -43,9 +43,7 @@ public sealed class WindowsSecretStore
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows DPAPI could not protect the secret.");
             }
 
-            var result = new byte[outputBlob.Count];
-            Marshal.Copy(outputBlob.Data, result, 0, result.Length);
-            return result;
+            return CopyBlob(outputBlob);
         }
         finally
         {
@@ -85,9 +83,7 @@ public sealed class WindowsSecretStore
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows DPAPI could not unprotect the secret.");
             }
 
-            var result = new byte[outputBlob.Count];
-            Marshal.Copy(outputBlob.Data, result, 0, result.Length);
-            return result;
+            return CopyBlob(outputBlob);
         }
         finally
         {
@@ -186,23 +182,22 @@ public sealed class WindowsSecretStore
         return new DataBlob { Count = bytes.Length, Data = pointer };
     }
 
-    private static void FreeInputBlob(ref DataBlob blob, bool zeroMemory)
+    private static byte[] CopyBlob(DataBlob blob)
     {
-        if (blob.Data == IntPtr.Zero)
-        {
-            return;
-        }
-
-        if (zeroMemory && blob.Count > 0)
-        {
-            ZeroUnmanaged(blob.Data, blob.Count);
-        }
-
-        Marshal.FreeHGlobal(blob.Data);
-        blob = default;
+        var result = new byte[blob.Count];
+        Marshal.Copy(blob.Data, result, 0, result.Length);
+        return result;
     }
 
-    private static void FreeOutputBlob(ref DataBlob blob, bool zeroMemory)
+    /// <summary>Frees a blob this class allocated with <see cref="CreateBlob"/>.</summary>
+    private static void FreeInputBlob(ref DataBlob blob, bool zeroMemory) =>
+        FreeBlob(ref blob, zeroMemory, Marshal.FreeHGlobal);
+
+    /// <summary>Frees a blob DPAPI allocated (LocalAlloc).</summary>
+    private static void FreeOutputBlob(ref DataBlob blob, bool zeroMemory) =>
+        FreeBlob(ref blob, zeroMemory, pointer => _ = LocalFree(pointer));
+
+    private static void FreeBlob(ref DataBlob blob, bool zeroMemory, Action<IntPtr> free)
     {
         if (blob.Data == IntPtr.Zero)
         {
@@ -214,7 +209,7 @@ public sealed class WindowsSecretStore
             ZeroUnmanaged(blob.Data, blob.Count);
         }
 
-        _ = LocalFree(blob.Data);
+        free(blob.Data);
         blob = default;
     }
 

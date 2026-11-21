@@ -165,8 +165,8 @@ public sealed class TradingLedgerStore
             pItemName.Value = row.ItemName ?? string.Empty;
             pPrice.Value = row.UnitPriceCopper;
             pQty.Value = row.Quantity;
-            pCreated.Value = row.CreatedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
-            pPurchased.Value = row.PurchasedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+            pCreated.Value = ToDbTime(row.CreatedAt);
+            pPurchased.Value = ToDbTime(row.PurchasedAt);
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -213,8 +213,8 @@ public sealed class TradingLedgerStore
             var itemName = reader.GetString(3);
             var price = reader.GetInt64(4);
             var qty = reader.GetInt64(5);
-            var createdAt = DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
-            var purchasedAt = DateTimeOffset.Parse(reader.GetString(7), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+            var createdAt = ParseDbTime(reader.GetString(6));
+            var purchasedAt = ParseDbTime(reader.GetString(7));
             results.Add(new Gw2LedgerTransaction(id, kind, itemId, itemName, price, qty, createdAt, purchasedAt));
         }
 
@@ -245,7 +245,7 @@ public sealed class TradingLedgerStore
             );
             """;
         command.Parameters.AddWithValue("$acct", accountName?.Trim() ?? string.Empty);
-        command.Parameters.AddWithValue("$capturedAt", snapshot.CapturedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$capturedAt", ToDbTime(snapshot.CapturedAt));
         command.Parameters.AddWithValue("$wallet", snapshot.WalletCopper);
         command.Parameters.AddWithValue("$delivery", snapshot.DeliveryCopper);
         command.Parameters.AddWithValue("$deliveryItems", snapshot.DeliveryItemsCopper);
@@ -273,7 +273,7 @@ public sealed class TradingLedgerStore
         if (sinceUtc.HasValue)
         {
             filters.Add("captured_at >= $since");
-            command.Parameters.AddWithValue("$since", sinceUtc.Value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$since", ToDbTime(sinceUtc.Value));
         }
 
         if (!string.IsNullOrWhiteSpace(accountName))
@@ -297,7 +297,7 @@ public sealed class TradingLedgerStore
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             results.Add(new Gw2EquitySnapshot(
-                CapturedAt: DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                CapturedAt: ParseDbTime(reader.GetString(0)),
                 WalletCopper: reader.GetInt64(1),
                 DeliveryCopper: reader.GetInt64(2),
                 DeliveryItemsCopper: reader.GetInt64(3),
@@ -350,7 +350,7 @@ public sealed class TradingLedgerStore
             pRarity.Value = item.Rarity ?? "Basic";
             pType.Value = item.ItemType ?? string.Empty;
             pVendor.Value = item.VendorValueCopper;
-            pUpdated.Value = item.UpdatedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+            pUpdated.Value = ToDbTime(item.UpdatedAt);
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -381,18 +381,11 @@ public sealed class TradingLedgerStore
         foreach (var chunk in distinctIds.Chunk(500))
         {
             await using var cmd = connection.CreateCommand();
-            var paramNames = new string[chunk.Length];
-            for (var i = 0; i < chunk.Length; i++)
-            {
-                var name = $"$p{i}";
-                paramNames[i] = name;
-                cmd.Parameters.AddWithValue(name, chunk[i]);
-            }
-
+            var idList = AddInListParameters(cmd, "p", chunk);
             cmd.CommandText = $"""
                 SELECT item_id, name, rarity, item_type, vendor_value, updated_at
                 FROM gw2_item_cache
-                WHERE item_id IN ({string.Join(',', paramNames)});
+                WHERE item_id IN ({idList});
                 """;
             await ReadItemsIntoAsync(cmd, result, cancellationToken).ConfigureAwait(false);
         }
@@ -419,18 +412,11 @@ public sealed class TradingLedgerStore
         foreach (var chunk in distinctNames.Chunk(400))
         {
             await using var cmd = connection.CreateCommand();
-            var paramNames = new string[chunk.Length];
-            for (var i = 0; i < chunk.Length; i++)
-            {
-                var paramName = $"$n{i}";
-                paramNames[i] = paramName;
-                cmd.Parameters.AddWithValue(paramName, chunk[i]);
-            }
-
+            var nameList = AddInListParameters(cmd, "n", chunk);
             cmd.CommandText = $"""
                 SELECT name, item_id
                 FROM gw2_item_cache
-                WHERE name IN ({string.Join(',', paramNames)}) COLLATE NOCASE;
+                WHERE name IN ({nameList}) COLLATE NOCASE;
                 """;
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -513,7 +499,27 @@ public sealed class TradingLedgerStore
                 Rarity: reader.GetString(2),
                 ItemType: reader.GetString(3),
                 VendorValueCopper: reader.GetInt64(4),
-                UpdatedAt: DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+                UpdatedAt: ParseDbTime(reader.GetString(5)));
         }
+    }
+
+    /// <summary>Timestamps are stored as UTC round-trip ("O") text, which also sorts chronologically.</summary>
+    private static string ToDbTime(DateTimeOffset value) =>
+        value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static DateTimeOffset ParseDbTime(string text) =>
+        DateTimeOffset.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
+    /// <summary>Adds one parameter per value ($prefix0, $prefix1 …) and returns their names joined for an IN (…) list.</summary>
+    private static string AddInListParameters<T>(SqliteCommand command, string prefix, IReadOnlyList<T> values)
+    {
+        var names = new string[values.Count];
+        for (var i = 0; i < values.Count; i++)
+        {
+            names[i] = $"${prefix}{i}";
+            command.Parameters.AddWithValue(names[i], values[i]);
+        }
+
+        return string.Join(',', names);
     }
 }

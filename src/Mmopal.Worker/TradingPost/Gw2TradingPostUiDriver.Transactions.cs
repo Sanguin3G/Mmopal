@@ -104,22 +104,9 @@ public sealed partial class Gw2TradingPostUiDriver
             return 0;
         }
 
-        var txTab = await WaitForTemplateAsync("transactions.png", TransactionsTabRegion, 0.72m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
-                    ?? await TryFindOnceAsync("transactions.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
-        if (txTab is null)
+        if (!await OpenCurrentTransactionsAsync(cancellationToken).ConfigureAwait(false))
         {
             return 0;
-        }
-
-        await ClickCenterAsync(txTab, cancellationToken).ConfigureAwait(false);
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
-        await ResetFiltersAsync(cancellationToken).ConfigureAwait(false);
-
-        var currentBtn = await WaitForTemplateAsync("transactions_current.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
-        if (currentBtn is not null)
-        {
-            await ClickCenterAsync(currentBtn, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if (await TryFindOnceAsync("at_transactions_buying.png", CaptureRegion.FullScreen1024x768, 0.75m, cancellationToken).ConfigureAwait(false) is null)
@@ -127,12 +114,10 @@ public sealed partial class Gw2TradingPostUiDriver
             var buyingBtn = await WaitForTemplateAsync("transactions_buying.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
             if (buyingBtn is not null)
             {
-                await ClickCenterAsync(buyingBtn, cancellationToken).ConfigureAwait(false);
-                await SettleAsync(cancellationToken).ConfigureAwait(false);
+                await ClickCenterAndSettleAsync(buyingBtn, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        var canceled = 0;
         var canceledNames = new List<string>();
         foreach (var order in outbidBuys)
         {
@@ -146,8 +131,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
             if (IsPaused) break;
             await SettleAsync(cancellationToken).ConfigureAwait(false);
-            var cancelBtn = await WaitForTemplateAsync("transactions_cancel.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
-                            ?? await TryFindOnceAsync("cancel.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+            var cancelBtn = await FindTransactionCancelButtonAsync(cancellationToken).ConfigureAwait(false);
             if (cancelBtn is null)
             {
                 continue;
@@ -157,13 +141,10 @@ public sealed partial class Gw2TradingPostUiDriver
             await ClickCenterAsync(cancelBtn, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
 
-            var confirmBtn = await WaitForTemplateAsync("transactions_confirm.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
-                             ?? await TryFindOnceAsync("confirm.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+            var confirmBtn = await FindTransactionConfirmButtonAsync(cancellationToken).ConfigureAwait(false);
             if (confirmBtn is not null && !IsPaused)
             {
-                await ClickCenterAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
-                await SettleAsync(cancellationToken).ConfigureAwait(false);
-                canceled++;
+                await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
                 canceledNames.Add(order.ItemName);
                 _logger.LogInformation(
                     "Outbid Refresh canceled buy order for {Item}: our bid {OurBid}c, API top bid {TopBid}c.",
@@ -174,7 +155,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         LastCanceledOutbidItems = canceledNames;
-        return canceled;
+        return canceledNames.Count;
     }
 
     /// <summary>
@@ -192,21 +173,9 @@ public sealed partial class Gw2TradingPostUiDriver
             return canceledNames;
         }
 
-        var txTab = await WaitForTemplateAsync("transactions.png", TransactionsTabRegion, 0.72m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
-                    ?? await TryFindOnceAsync("transactions.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
-        if (txTab is null)
+        if (!await OpenCurrentTransactionsAsync(cancellationToken).ConfigureAwait(false))
         {
             return canceledNames;
-        }
-
-        await ClickCenterAsync(txTab, cancellationToken).ConfigureAwait(false);
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
-        await ResetFiltersAsync(cancellationToken).ConfigureAwait(false);
-        var currentBtn = await WaitForTemplateAsync("transactions_current.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
-        if (currentBtn is not null)
-        {
-            await ClickCenterAsync(currentBtn, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var sellingBtn = await WaitForTemplateAsync("transactions_selling.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
@@ -216,8 +185,7 @@ public sealed partial class Gw2TradingPostUiDriver
             return canceledNames;
         }
 
-        await ClickCenterAsync(sellingBtn, cancellationToken).ConfigureAwait(false);
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
+        await ClickCenterAndSettleAsync(sellingBtn, cancellationToken).ConfigureAwait(false);
 
         foreach (var relist in relists)
         {
@@ -230,8 +198,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
 
             await SettleAsync(cancellationToken).ConfigureAwait(false);
-            var cancelBtn = await WaitForTemplateAsync("transactions_cancel.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
-                            ?? await TryFindOnceAsync("cancel.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+            var cancelBtn = await FindTransactionCancelButtonAsync(cancellationToken).ConfigureAwait(false);
             if (cancelBtn is null || IsPaused)
             {
                 continue;
@@ -239,19 +206,50 @@ public sealed partial class Gw2TradingPostUiDriver
 
             await ClickCenterAsync(cancelBtn, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-            var confirmBtn = await WaitForTemplateAsync("transactions_confirm.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
-                             ?? await TryFindOnceAsync("confirm.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+            var confirmBtn = await FindTransactionConfirmButtonAsync(cancellationToken).ConfigureAwait(false);
             if (confirmBtn is null || IsPaused)
             {
                 continue;
             }
 
-            await ClickCenterAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
             canceledNames.Add(relist.Listing.ItemName);
             _logger.LogInformation("Relist: cancelled the undercut listing for {Item} ({Reason}).", relist.Listing.ItemName, relist.Reason);
         }
 
         return canceledNames;
     }
+
+    /// <summary>
+    /// Opens My Transactions (clears its filters) and its Current list when that button is found. False when the
+    /// Transactions tab itself was not found.
+    /// </summary>
+    private async Task<bool> OpenCurrentTransactionsAsync(CancellationToken cancellationToken)
+    {
+        var txTab = await WaitForTemplateAsync("transactions.png", TransactionsTabRegion, 0.72m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
+                    ?? await TryFindOnceAsync("transactions.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+        if (txTab is null)
+        {
+            return false;
+        }
+
+        await ClickCenterAndSettleAsync(txTab, cancellationToken).ConfigureAwait(false);
+        await ResetFiltersAsync(cancellationToken).ConfigureAwait(false);
+
+        var currentBtn = await WaitForTemplateAsync("transactions_current.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        if (currentBtn is not null)
+        {
+            await ClickCenterAndSettleAsync(currentBtn, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    private async Task<TemplateMatch?> FindTransactionCancelButtonAsync(CancellationToken cancellationToken) =>
+        await WaitForTemplateAsync("transactions_cancel.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
+        ?? await TryFindOnceAsync("cancel.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+
+    private async Task<TemplateMatch?> FindTransactionConfirmButtonAsync(CancellationToken cancellationToken) =>
+        await WaitForTemplateAsync("transactions_confirm.png", TopHeaderRegion, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false)
+        ?? await TryFindOnceAsync("confirm.png", TopHeaderRegion, 0.75m, cancellationToken).ConfigureAwait(false);
 }

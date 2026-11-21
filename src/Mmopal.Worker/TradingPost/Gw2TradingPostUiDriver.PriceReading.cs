@@ -89,11 +89,9 @@ public sealed partial class Gw2TradingPostUiDriver
             return null;
         }
 
-        var values = new List<long>();
-        foreach (var group in groups)
+        if (ParseGroupValues(groups) is not { } values)
         {
-            if (!long.TryParse(group, out var value)) return null;
-            values.Add(value);
+            return null;
         }
 
         var candidates = new List<long>();
@@ -200,7 +198,7 @@ public sealed partial class Gw2TradingPostUiDriver
             // together they must show every digit group that is not zero-ish (and always the gold).
             if (TotalMatchesAcrossReads(texts, unitCopper))
             {
-                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{string.Join(" | ", texts.Select(text => text.Trim()))}').");
+                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{JoinReads(texts)}').");
             }
 
             lastSeen = totals[0];
@@ -210,11 +208,13 @@ public sealed partial class Gw2TradingPostUiDriver
                     "Dialog shows {Seen} after typing {Typed} (read: '{Raw}'); re-typing once.",
                     MarketScanItem.FormatCoins(lastSeen.Value),
                     MarketScanItem.FormatCoins(unitCopper),
-                    string.Join(" | ", texts.Select(text => text.Trim())));
+                    JoinReads(texts));
             }
         }
 
         return (false, $"typed {MarketScanItem.FormatCoins(unitCopper)} twice but the dialog total shows {MarketScanItem.FormatCoins(lastSeen ?? 0)}; the price boxes did not take the typed value.");
+
+        static string JoinReads(IReadOnlyList<string> reads) => string.Join(" | ", reads.Select(read => read.Trim()));
     }
 
     private async Task<(CoinReading? Reading, AutomationFrame? Frame)> ReadTotalByGlyphsAsync(CancellationToken cancellationToken)
@@ -231,6 +231,11 @@ public sealed partial class Gw2TradingPostUiDriver
         }
     }
 
+    /// <summary>
+    /// True when the Total line's digit groups equal unit × q (q = 1..250) with only "zero-ish" groups missing: a
+    /// silver or copper value whose two-digit form contains a 0 (00, 06, 50 …), which OCR tends to drop. Gold is never
+    /// allowed to be missing, and no group may be extra or different.
+    /// </summary>
     internal static bool TotalMatchesWithUnreadZeroGroups(string? text, long unitCopper) =>
         TotalMatchesAcrossReads([text ?? string.Empty], unitCopper);
 
@@ -250,15 +255,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var reads = new List<List<long>>();
         foreach (var text in texts)
         {
-            var groups = new List<long>();
-            var parsed = true;
-            foreach (var group in PriceDigitGroups(text))
-            {
-                if (!long.TryParse(group, out var value)) { parsed = false; break; }
-                groups.Add(value);
-            }
-
-            if (parsed && groups.Count > 0) reads.Add(groups);
+            if (ParseGroupValues(PriceDigitGroups(text)) is { Count: > 0 } groups) reads.Add(groups);
         }
 
         if (reads.Count == 0)
@@ -413,9 +410,30 @@ public sealed partial class Gw2TradingPostUiDriver
     /// </summary>
     private async Task<IReadOnlyList<string>> ReadJoinedTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
     {
+        var variants = await ReadOcrLineVariantsAsync(region, cancellationToken).ConfigureAwait(false);
+        return variants
+            .Select(lines => string.Join(" ", lines.OrderBy(line => line.X).Select(line => line.Text)))
+            .ToArray();
+    }
+
+    /// <summary>OCR lines of a region, first from the raw frame and then from a contrast-enhanced 2x copy.</summary>
+    private async Task<IReadOnlyList<string>> ReadTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
+    {
+        var variants = await ReadOcrLineVariantsAsync(region, cancellationToken).ConfigureAwait(false);
+        return variants
+            .SelectMany(lines => lines.OrderBy(line => line.Y).Select(line => line.Text))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The region's OCR lines from the raw frame, then from the contrast-enhanced copy when one can be built. The
+    /// enhanced lines keep the enhanced frame's coordinates; callers only use them for ordering.
+    /// </summary>
+    private async Task<IReadOnlyList<IReadOnlyList<OcrTextBox>>> ReadOcrLineVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
+    {
         if (_textLocator is null)
         {
-            return Array.Empty<string>();
+            return [];
         }
 
         try
@@ -423,16 +441,16 @@ public sealed partial class Gw2TradingPostUiDriver
             var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
             if (frame.Pixels.Length == 0)
             {
-                return Array.Empty<string>();
+                return [];
             }
 
-            var variants = new List<string>(2);
-            var raw = await _textLocator.LocateLinesAsync(frame, region, cancellationToken).ConfigureAwait(false);
-            variants.Add(string.Join(" ", raw.OrderBy(line => line.X).Select(line => line.Text)));
+            var variants = new List<IReadOnlyList<OcrTextBox>>(2)
+            {
+                await _textLocator.LocateLinesAsync(frame, region, cancellationToken).ConfigureAwait(false)
+            };
             if (FrameVision.EnhanceTextContrast(frame, region) is { } enhanced)
             {
-                var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
-                variants.Add(string.Join(" ", lines.OrderBy(line => line.X).Select(line => line.Text)));
+                variants.Add(await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false));
             }
 
             return variants;
@@ -440,49 +458,14 @@ public sealed partial class Gw2TradingPostUiDriver
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogDebug(exception, "OCR of region {Region} failed.", region);
-            return Array.Empty<string>();
+            return [];
         }
     }
 
-    /// <summary>OCR lines of a region, first from the raw frame and then from a contrast-enhanced 2x copy.</summary>
-    private async Task<IReadOnlyList<string>> ReadTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
-    {
-        if (_textLocator is null)
-        {
-            return Array.Empty<string>();
-        }
-
-        try
-        {
-            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
-            if (frame.Pixels.Length == 0)
-            {
-                return Array.Empty<string>();
-            }
-
-            var texts = new List<string>();
-            var raw = await _textLocator.LocateLinesAsync(frame, region, cancellationToken).ConfigureAwait(false);
-            texts.AddRange(raw.OrderBy(line => line.Y).Select(line => line.Text));
-            if (FrameVision.EnhanceTextContrast(frame, region) is { } enhanced)
-            {
-                var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
-                texts.AddRange(lines.OrderBy(line => line.Y).Select(line => line.Text));
-            }
-
-            return texts;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            _logger.LogDebug(exception, "OCR of region {Region} failed.", region);
-            return Array.Empty<string>();
-        }
-    }
-
-    /// <summary>Parses the dialog's "gold : silver : copper" boxes, e.g. "3469: 69: • 67:" → 34,696,967c.</summary>
     /// <summary>
-    /// Parses the Max. Price gold/silver/copper boxes. Live OCR reads gold 0 as "o", 1 as "I", and often reads the
-    /// ▴▾ spinner after a box as an extra "2" ("o: 582 e 99:" for 0 · 58 · 99): a 3-digit silver or copper value
-    /// loses its last digit. Gold cannot be corrected that way, so callers treat this reading as unconfirmed.
+    /// Parses the Max. Price gold/silver/copper boxes, e.g. "3469: 69: • 67:" → 34,696,967c. Live OCR reads gold 0
+    /// as "o", 1 as "I", and often reads the ▴▾ spinner after a box as an extra "2" ("o: 582 e 99:" for 0 · 58 · 99):
+    /// a 3-digit silver or copper value loses its last digit. Gold cannot be corrected that way, so callers treat this reading as unconfirmed.
     /// </summary>
     internal static long? ParseDialogPrice(string? text)
     {
@@ -529,7 +512,26 @@ public sealed partial class Gw2TradingPostUiDriver
             return null;
         }
 
-        return value <= 99 ? value : value <= 999 ? value / 10 : null;
+        if (value <= 99)
+        {
+            return value;
+        }
+
+        // A 3-digit reading is the value plus the spinner read as a trailing digit.
+        return value <= 999 ? value / 10 : null;
+    }
+
+    /// <summary>The digit groups as numbers, or null when any group does not parse.</summary>
+    private static List<long>? ParseGroupValues(List<string> groups)
+    {
+        var values = new List<long>(groups.Count);
+        foreach (var group in groups)
+        {
+            if (!long.TryParse(group, out var value)) return null;
+            values.Add(value);
+        }
+
+        return values;
     }
 
     /// <summary>Digit groups after the "Price" label, with OCR letter look-alikes mapped (o/O → 0, I/l/| → 1).</summary>

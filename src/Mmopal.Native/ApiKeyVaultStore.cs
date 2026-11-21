@@ -26,10 +26,7 @@ public static class ApiKeyVaultStore
                 var parsed = JsonSerializer.Deserialize<Gw2ApiKeyVaultData>(rawJson, JsonOptions);
                 if (parsed is not null)
                 {
-                    var validEntries = (parsed.Entries ?? [])
-                        .Where(e => !string.IsNullOrWhiteSpace(e.ApiKey))
-                        .ToArray();
-                    return new Gw2ApiKeyVaultData(parsed.ActiveKeyId, validEntries);
+                    return new Gw2ApiKeyVaultData(parsed.ActiveKeyId, EntriesWithKey(parsed.Entries));
                 }
             }
             catch (JsonException)
@@ -63,9 +60,7 @@ public static class ApiKeyVaultStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(vaultPath);
         ArgumentNullException.ThrowIfNull(data);
-        var cleanEntries = (data.Entries ?? [])
-            .Where(e => !string.IsNullOrWhiteSpace(e.ApiKey))
-            .ToArray();
+        var cleanEntries = EntriesWithKey(data.Entries);
         if (cleanEntries.Length == 0)
         {
             WindowsSecretStore.Delete(vaultPath);
@@ -82,13 +77,12 @@ public static class ApiKeyVaultStore
 
     public static string? LoadActiveApiKey(string vaultPath, string? legacySingleKeyPath = null)
     {
-        var vault = Load(vaultPath, legacySingleKeyPath);
-        var key = vault.ActiveEntry?.ApiKey?.Trim();
-        if (!string.IsNullOrWhiteSpace(key))
-        {
-            return key;
-        }
-
-        return Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey");
+        var key = Load(vaultPath, legacySingleKeyPath).ActiveEntry?.ApiKey?.Trim();
+        return string.IsNullOrWhiteSpace(key)
+            ? Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey")
+            : key;
     }
+
+    private static Gw2ApiKeyEntry[] EntriesWithKey(IEnumerable<Gw2ApiKeyEntry>? entries) =>
+        (entries ?? []).Where(e => !string.IsNullOrWhiteSpace(e.ApiKey)).ToArray();
 }

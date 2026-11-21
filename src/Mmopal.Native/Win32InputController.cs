@@ -40,12 +40,13 @@ public sealed partial class Win32InputController : IInputController
 
         var absoluteX = (int)Math.Clamp((long)(x - originX) * 65535L / (width - 1), 0, 65535);
         var absoluteY = (int)Math.Clamp((long)(y - originY) * 65535L / (height - 1), 0, 65535);
+        const uint moveTo = MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk;
         // Move -> wait -> LeftDown -> wait -> LeftUp so DirectX/Coherent UI registers hover and click cleanly.
-        SendOrThrow([Mouse(absoluteX, absoluteY, MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk)]);
+        SendOrThrow([Mouse(absoluteX, absoluteY, moveTo)]);
         await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        SendOrThrow([Mouse(absoluteX, absoluteY, MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk | MouseEventLeftDown)]);
+        SendOrThrow([Mouse(absoluteX, absoluteY, moveTo | MouseEventLeftDown)]);
         await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        SendOrThrow([Mouse(absoluteX, absoluteY, MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk | MouseEventLeftUp)]);
+        SendOrThrow([Mouse(absoluteX, absoluteY, moveTo | MouseEventLeftUp)]);
     }
 
     public async Task KeyPressAsync(string key, CancellationToken cancellationToken = default)
@@ -68,34 +69,27 @@ public sealed partial class Win32InputController : IInputController
             }
         }
 
-        if (downEvents.Count > 1)
-        {
-            foreach (var down in downEvents)
-            {
-                SendOrThrow([down]);
-                await Task.Delay(25, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        else if (downEvents.Count > 0)
-        {
-            SendOrThrow(downEvents.ToArray());
-        }
-
+        await SendSpacedAsync(downEvents, 25, cancellationToken).ConfigureAwait(false);
         if (upEvents.Count > 0)
         {
             await Task.Delay(45, cancellationToken).ConfigureAwait(false);
-            if (upEvents.Count > 1)
-            {
-                foreach (var up in upEvents)
-                {
-                    SendOrThrow([up]);
-                    await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            else
-            {
-                SendOrThrow(upEvents.ToArray());
-            }
+            await SendSpacedAsync(upEvents, 20, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>A single event is sent as is; a chord's events go one at a time, each followed by <paramref name="gapMs"/>.</summary>
+    private static async Task SendSpacedAsync(List<Input> events, int gapMs, CancellationToken cancellationToken)
+    {
+        if (events.Count == 1)
+        {
+            SendOrThrow([events[0]]);
+            return;
+        }
+
+        foreach (var keyEvent in events)
+        {
+            SendOrThrow([keyEvent]);
+            await Task.Delay(gapMs, cancellationToken).ConfigureAwait(false);
         }
     }
 

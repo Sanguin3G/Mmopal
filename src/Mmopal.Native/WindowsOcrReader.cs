@@ -31,12 +31,7 @@ public sealed class WindowsOcrReader : IOcrReader, IUiTextLocator
             throw new InvalidOperationException("Windows OCR has no language installed for the current user.");
         }
 
-        using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(
-            CopyToBuffer(pixels),
-            BitmapPixelFormat.Bgra8,
-            width,
-            height,
-            BitmapAlphaMode.Ignore);
+        using var bitmap = CreateBitmap(pixels, width, height);
         cancellationToken.ThrowIfCancellationRequested();
         var recognized = await engine.RecognizeAsync(bitmap);
         var text = recognized.Text.Trim();
@@ -77,12 +72,7 @@ public sealed class WindowsOcrReader : IOcrReader, IUiTextLocator
                 return Array.Empty<OcrTextBox>();
             }
 
-            using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(
-                CopyToBuffer(pixels),
-                BitmapPixelFormat.Bgra8,
-                width,
-                height,
-                BitmapAlphaMode.Ignore);
+            using var bitmap = CreateBitmap(pixels, width, height);
             cancellationToken.ThrowIfCancellationRequested();
             var recognized = await engine.RecognizeAsync(bitmap);
             if (recognized.Lines.Count == 0)
@@ -142,6 +132,9 @@ public sealed class WindowsOcrReader : IOcrReader, IUiTextLocator
             return Array.Empty<OcrTextBox>();
         }
     }
+
+    private static SoftwareBitmap CreateBitmap(byte[] pixels, int width, int height) =>
+        SoftwareBitmap.CreateCopyFromBuffer(CopyToBuffer(pixels), BitmapPixelFormat.Bgra8, width, height, BitmapAlphaMode.Ignore);
 
     private static IBuffer CopyToBuffer(byte[] pixels)
     {
