@@ -28,7 +28,7 @@ public partial class GuidePage : UserControl
 
     private void RefreshChecklist_Click(object sender, RoutedEventArgs e) => Host.RefreshReadinessChecklist();
 
-    private async void DetectGw2_Click(object sender, RoutedEventArgs e) => await Host.DetectGw2Async();
+    private async void DetectGw2_Click(object sender, RoutedEventArgs e) => await Host.SettingsPage.DetectGw2Async();
 
     /// <summary>Updates the four checks and returns how many pass.</summary>
     internal int RefreshChecklist()
@@ -54,8 +54,8 @@ public partial class GuidePage : UserControl
             CheckApiKeyText.Text = "GW2 API Key missing — add a key with account, tradingpost, wallet scopes in Settings.";
         }
 
-        var isSteamMode = string.Equals(Host.GetSelectedLaunchPlatform(), Gw2ClientSettings.PlatformSteam, StringComparison.OrdinalIgnoreCase);
-        var gw2Path = Host.Gw2ExecutablePathBox.Text?.Trim();
+        var isSteamMode = string.Equals(Host.SettingsPage.GetSelectedLaunchPlatform(), Gw2ClientSettings.PlatformSteam, StringComparison.OrdinalIgnoreCase);
+        var gw2Path = Host.SettingsPage.Gw2ExecutablePathBox.Text?.Trim();
         var hasGw2 = isSteamMode ||
                      (!string.IsNullOrWhiteSpace(gw2Path) &&
                       (Win32ProcessController.IsUriLaunch(gw2Path) || File.Exists(gw2Path)));
@@ -93,7 +93,7 @@ public partial class GuidePage : UserControl
         CheckDpiText.Text = $"Windows Display Scaling: {dpi.Summary}";
 
         var customItemCount = Host.ListsPage.CustomShoppingList.Count;
-        var candidatesPath = Host.CandidatesPathBox.Text;
+        var candidatesPath = Host.SettingsPage.CandidatesPathBox.Text;
         var hasCandidates = customItemCount > 0 || !string.IsNullOrWhiteSpace(candidatesPath);
         if (hasCandidates)
         {

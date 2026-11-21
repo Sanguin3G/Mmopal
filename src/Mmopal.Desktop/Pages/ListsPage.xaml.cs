@@ -117,8 +117,8 @@ public partial class ListsPage : UserControl
     private void UseCustomListForSession_Click(object sender, RoutedEventArgs e)
     {
         OperatorListsStore.SaveShoppingList(MainWindow.CustomShoppingListPath, _customShoppingList);
-        Host.UseCustomListOnStartCheckBox.IsChecked = true;
-        Host.SaveOperatorSettingsIfValid();
+        Host.SettingsPage.UseCustomListOnStartCheckBox.IsChecked = true;
+        Host.SettingsPage.SaveOperatorSettingsIfValid();
         Host.RefreshReadinessChecklist();
         Host.StatusText.Text = $"Custom Shopping List ({_customShoppingList.Count} items) ready for next session.";
         Host.AddLog($"Custom Shopping List ({_customShoppingList.Count} items) enabled for Start session.");

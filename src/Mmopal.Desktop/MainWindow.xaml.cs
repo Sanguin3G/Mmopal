@@ -22,22 +22,22 @@ namespace Mmopal.Desktop;
 public partial class MainWindow : Window
 {
     private static readonly JsonSerializerOptions PayloadJson = new(JsonSerializerDefaults.Web);
-    private readonly IDesktopWorkerSupervisor _supervisor;
-    private readonly Func<TradingLimits> _loadLimits;
-    private readonly Action<TradingLimits> _saveLimits;
-    private readonly Func<Gw2ClientSettings> _loadClientSettings;
-    private readonly Action<Gw2ClientSettings> _saveClientSettings;
-    private readonly Func<OperatorSettings> _loadOperatorSettings;
-    private readonly Action<OperatorSettings> _saveOperatorSettings;
-    private readonly IGw2ClientPreparer _clientPreparer;
-    private readonly Func<string?> _detectGw2Path;
-    private readonly Func<IReadOnlyList<Gw2InstallCandidate>> _discoverGw2Installs;
+    internal IDesktopWorkerSupervisor Supervisor { get; }
+    internal Func<TradingLimits> ReadSavedLimits { get; }
+    internal Action<TradingLimits> SaveLimits { get; }
+    internal Func<Gw2ClientSettings> ReadSavedClientSettings { get; }
+    internal Action<Gw2ClientSettings> SaveClientSettings { get; }
+    internal Func<OperatorSettings> ReadSavedOperatorSettings { get; }
+    internal Action<OperatorSettings> SaveOperatorSettings { get; }
+    internal IGw2ClientPreparer ClientPreparer { get; }
+    internal Func<string?> DetectGw2Path { get; }
+    internal Func<IReadOnlyList<Gw2InstallCandidate>> DiscoverGw2Installs { get; }
     internal Func<DisplayScaleInfo> DetectDisplayScale { get; }
     internal TradingLedgerStore? LedgerStore { get; }
     internal SessionReportStore? SessionReportStore { get; }
     internal IGw2MarketScanner MarketScanner { get; }
     private readonly Func<Gw2ApiKeyVaultData> _loadApiKeyVault;
-    private readonly Action<Gw2ApiKeyVaultData> _saveApiKeyVault;
+    internal Action<Gw2ApiKeyVaultData> SaveApiKeyVault { get; }
     private readonly Action _requestAppClose;
     private readonly Action<int> _executeSystemShutdown;
     private readonly GlobalHotkeyService _hotkeys = new();
@@ -45,7 +45,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _cycleTimer;
     private readonly DispatcherTimer _sessionClockTimer;
 
-    private readonly ObservableCollection<ApiKeyRowViewModel> _apiKeyRows = new();
     private readonly List<(DateTime Timestamp, string Human, string Raw)> _logEntries = new();
 
     internal Gw2ApiKeyVaultData ApiKeyVault { get; set; } = new(null, Array.Empty<Gw2ApiKeyEntry>());
@@ -58,26 +57,12 @@ public partial class MainWindow : Window
     private DateTimeOffset? _sessionExpiresAtUtc;
     private string? _lastHandledCapReportId;
 
-    private WorkerState _lastWorkerState = WorkerState.Idle;
+    internal WorkerState LastWorkerState { get; private set; } = WorkerState.Idle;
     internal bool IsLoadingUi { get; set; }
     // Launch automation (account sync, first-time Auto-Tune, market scan) runs only in the real app, not in tests.
     private static bool s_operatorSettingsExistedAtLaunch = true;
     private bool _runLaunchAutomation;
     private bool _isFirstRun;
-    private string? _lastAutoTunedPreset;
-    // Auto-Tune fields the operator set by hand; Auto-Tune keeps them (the 25g gold floor was reset to 80g before).
-    private readonly HashSet<string> _autoTuneKeeps = new(StringComparer.OrdinalIgnoreCase);
-    private bool _applyingAutoTune;
-
-    private static readonly IReadOnlyDictionary<string, string> AutoTuneFieldLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["MinProfit"] = "Minimum profit %",
-        ["MaxBuy"] = "Max buy price",
-        ["Quantity"] = "Default quantity",
-        ["GoldFloor"] = "Gold floor",
-        ["Overbid"] = "Overbid",
-        ["Undercut"] = "Undercut"
-    };
 
     public MainWindow()
         : this(
@@ -138,22 +123,22 @@ public partial class MainWindow : Window
         Action? requestAppClose = null,
         Action<int>? executeSystemShutdown = null)
     {
-        _supervisor = supervisor;
-        _loadLimits = loadLimits;
-        _saveLimits = saveLimits;
-        _loadClientSettings = loadClientSettings ?? (() => new Gw2ClientSettings());
-        _saveClientSettings = saveClientSettings ?? (_ => { });
-        _loadOperatorSettings = loadOperatorSettings ?? (() => new OperatorSettings());
-        _saveOperatorSettings = saveOperatorSettings ?? (_ => { });
-        _clientPreparer = clientPreparer ?? new Gw2ClientPreparer();
-        _detectGw2Path = detectGw2Path ?? (() => null);
-        _discoverGw2Installs = discoverGw2Installs ?? (() => []);
+        Supervisor = supervisor;
+        ReadSavedLimits = loadLimits;
+        SaveLimits = saveLimits;
+        ReadSavedClientSettings = loadClientSettings ?? (() => new Gw2ClientSettings());
+        SaveClientSettings = saveClientSettings ?? (_ => { });
+        ReadSavedOperatorSettings = loadOperatorSettings ?? (() => new OperatorSettings());
+        SaveOperatorSettings = saveOperatorSettings ?? (_ => { });
+        ClientPreparer = clientPreparer ?? new Gw2ClientPreparer();
+        DetectGw2Path = detectGw2Path ?? (() => null);
+        DiscoverGw2Installs = discoverGw2Installs ?? (() => []);
         DetectDisplayScale = detectDisplayScale ?? (() => new DisplayScaleInfo(96, 100, true, "100% (96 DPI)"));
         LedgerStore = ledgerStore;
         SessionReportStore = sessionReportStore;
         MarketScanner = marketScanner ?? new Gw2MarketScanner(Gw2HttpClient, LedgerStore);
         _loadApiKeyVault = loadApiKeyVault ?? (() => new Gw2ApiKeyVaultData(null, Array.Empty<Gw2ApiKeyEntry>()));
-        _saveApiKeyVault = saveApiKeyVault ?? (_ => { });
+        SaveApiKeyVault = saveApiKeyVault ?? (_ => { });
         _requestAppClose = requestAppClose ?? Close;
         _executeSystemShutdown = executeSystemShutdown ?? TriggerWindowsSystemShutdown;
 
@@ -168,14 +153,14 @@ public partial class MainWindow : Window
         ListsPage.Attach(this);
         ReportsPage.Attach(this);
         ScannerPage.Attach(this);
+        SettingsPage.Attach(this);
         IncomePage.Attach(this);
-        ApiKeysGrid.ItemsSource = _apiKeyRows;
         ShowRawLogCheckBox.Checked += (_, _) => RebuildLogList();
         ShowRawLogCheckBox.Unchecked += (_, _) => RebuildLogList();
 
-        LoadLimits();
-        LoadClientSettings();
-        LoadOperatorSettings();
+        SettingsPage.LoadLimits();
+        SettingsPage.LoadClientSettings();
+        SettingsPage.LoadOperatorSettings();
         ListsPage.LoadLists(
             loadCustomList ?? (() => Array.Empty<ItemCandidate>()),
             loadBlacklist ?? (() => Array.Empty<string>()));
@@ -190,7 +175,7 @@ public partial class MainWindow : Window
 
         _cycleTimer.Start();
 
-        _supervisor.EventReceived += Supervisor_EventReceived;
+        Supervisor.EventReceived += Supervisor_EventReceived;
         SourceInitialized += (_, _) =>
         {
             if (Application.Current is App app)
@@ -213,9 +198,9 @@ public partial class MainWindow : Window
             _sessionClockTimer.Stop();
             ScannerPage.CancelRunningScan();
             _hotkeys.Dispose();
-            SaveAllSettingsSilently();
+            SettingsPage.SaveAllSettingsSilently();
             Gw2HttpClient.Dispose();
-            var disposeTask = Task.Run(async () => await _supervisor.DisposeAsync().ConfigureAwait(false));
+            var disposeTask = Task.Run(async () => await Supervisor.DisposeAsync().ConfigureAwait(false));
             disposeTask.Wait(TimeSpan.FromSeconds(2));
         };
     }
@@ -225,7 +210,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------------
 
     /// <summary>The pages in the content area. Each page's XAML has its own namescope.</summary>
-    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage, ScannerPage, IncomePage];
+    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage, ScannerPage, IncomePage, SettingsPage];
 
     /// <summary>Finds a named element in the shell or in any page.</summary>
     internal object? FindElement(string name) =>
@@ -234,7 +219,7 @@ public partial class MainWindow : Window
     private void Nav_Checked(object sender, RoutedEventArgs e)
     {
         if (SessionView is null || IncomePage.IncomeView is null || ReportsPage.ReportsView is null || ScannerPage.ScannerView is null ||
-            ListsPage.ListsView is null || SettingsView is null || GuidePage.GuideView is null)
+            ListsPage.ListsView is null || SettingsPage.SettingsView is null || GuidePage.GuideView is null)
         {
             return;
         }
@@ -244,7 +229,7 @@ public partial class MainWindow : Window
         ReportsPage.ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ScannerPage.ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ListsPage.ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPage.SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         GuidePage.GuideView.Visibility = NavGuide.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
         if (NavReports.IsChecked == true)
@@ -276,7 +261,7 @@ public partial class MainWindow : Window
         ReportsPage.RefreshAfterThemeChange();
 
         RefreshReadinessChecklist();
-        SaveOperatorSettingsIfValid();
+        SettingsPage.SaveOperatorSettingsIfValid();
     }
 
     // ---------------------------------------------------------------------
@@ -320,30 +305,7 @@ public partial class MainWindow : Window
         UpdateSessionPaceSummary();
     }
 
-    private void LaunchPlatformSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (IsLoadingUi) return;
-        var platformTag = GetSelectedLaunchPlatform();
-        if (ApiKeyVault.ActiveEntry is { } active &&
-            !string.Equals(active.LaunchPlatform, platformTag, StringComparison.OrdinalIgnoreCase))
-        {
-            UpdateVaultEntry(active.Id, entry => entry with { LaunchPlatform = platformTag });
-            RebuildApiKeyViews();
-        }
-
-        UpdateSessionPaceSummary();
-        RefreshReadinessChecklist();
-        SaveAllSettingsSilently();
-    }
-
-    internal string GetSelectedLaunchPlatform() =>
-        (LaunchPlatformSelector?.SelectedItem as ComboBoxItem)?.Tag?.ToString() switch
-        {
-            var tag when string.Equals(tag, Gw2ClientSettings.PlatformSteam, StringComparison.OrdinalIgnoreCase) => Gw2ClientSettings.PlatformSteam,
-            _ => Gw2ClientSettings.PlatformArenaNet
-        };
-
-    private void UpdateSessionPaceSummary()
+    internal void UpdateSessionPaceSummary()
     {
         if (SessionPaceSummaryText is null || ProfileSelector is null)
         {
@@ -352,7 +314,7 @@ public partial class MainWindow : Window
 
         var profileTag = (ProfileSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "balanced";
         var paceText = TradingPaceDescriptions.Describe(profileTag);
-        var platform = GetSelectedLaunchPlatform();
+        var platform = SettingsPage.GetSelectedLaunchPlatform();
         var acct = ApiKeyVault.ActiveEntry?.DisplayLabel;
         SessionPaceSummaryText.Text = string.IsNullOrWhiteSpace(acct)
             ? $"{paceText}  •  Platform: {platform}"
@@ -370,7 +332,7 @@ public partial class MainWindow : Window
     private void AutoSellInventory_Changed(object sender, RoutedEventArgs e)
     {
         if (IsLoadingUi) return;
-        SaveAllSettingsSilently(); // remembered across restarts; it used to reset to off on every launch
+        SettingsPage.SaveAllSettingsSilently(); // remembered across restarts; it used to reset to off on every launch
     }
 
     private void ArmLiveInput_Changed(object sender, RoutedEventArgs e)
@@ -451,7 +413,7 @@ public partial class MainWindow : Window
         ArmLiveInputCheckBox.IsEnabled = selectorsUnlocked;
         AutoSellInventoryCheckBox.IsEnabled = selectorsUnlocked;
 
-        if (isActive && AutoDockBesideGw2CheckBox.IsChecked == true)
+        if (isActive && SettingsPage.AutoDockBesideGw2CheckBox.IsChecked == true)
         {
             ApplySideDockBesideGw2();
         }
@@ -465,7 +427,7 @@ public partial class MainWindow : Window
             if (_sessionStartedAtUtc is null)
             {
                 _sessionStartedAtUtc = DateTimeOffset.UtcNow;
-                if (Gw2ClientSettings.TryParseMaxSessionHours(MaxSessionHoursBox.Text, out var maxMins, out _) && maxMins is > 0)
+                if (Gw2ClientSettings.TryParseMaxSessionHours(SettingsPage.MaxSessionHoursBox.Text, out var maxMins, out _) && maxMins is > 0)
                 {
                     _sessionExpiresAtUtc = _sessionStartedAtUtc.Value.AddMinutes(maxMins.Value);
                 }
@@ -713,7 +675,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var gw2Width = int.TryParse(Gw2WidthBox.Text.Trim(), out var parsedW) && parsedW >= 640 ? parsedW : 1024;
+        var gw2Width = int.TryParse(SettingsPage.Gw2WidthBox.Text.Trim(), out var parsedW) && parsedW >= 640 ? parsedW : 1024;
         var workArea = SystemParameters.WorkArea;
         var desiredLeft = workArea.Left + gw2Width + 6;
         var availableWidth = workArea.Right - desiredLeft;
@@ -771,8 +733,8 @@ public partial class MainWindow : Window
 
     private async void LaunchSnapGw2_Click(object sender, RoutedEventArgs e)
     {
-        if (!TryReadClientSettings(out var clientSettings)) return;
-        _saveClientSettings(clientSettings);
+        if (!SettingsPage.TryReadClientSettings(out var clientSettings)) return;
+        SaveClientSettings(clientSettings);
         StatusText.Text = $"Preparing Guild Wars 2 window ({clientSettings.WindowWidth}x{clientSettings.WindowHeight} at top-left)...";
         var originalContent = LaunchSnapButton.Content;
         LaunchSnapButton.IsEnabled = false;
@@ -780,11 +742,11 @@ public partial class MainWindow : Window
         var succeeded = false;
         try
         {
-            var result = await Task.Run(() => _clientPreparer.PrepareAsync(clientSettings, allowLaunch: true)).ConfigureAwait(false);
+            var result = await Task.Run(() => ClientPreparer.PrepareAsync(clientSettings, allowLaunch: true)).ConfigureAwait(false);
             var statusMessage = result.Message;
             succeeded = result.WindowReady;
 
-            if (result.WindowReady && _clientPreparer is Gw2ClientPreparer)
+            if (result.WindowReady && ClientPreparer is Gw2ClientPreparer)
             {
                 var templateRoot = ResolveTemplateRootDirectory();
                 var uiDriver = new Gw2TradingPostUiDriver(
@@ -798,7 +760,7 @@ public partial class MainWindow : Window
                 var advanced = await Task.Run(() => uiDriver.TryAdvanceLauncherOrCharacterSelectAsync()).ConfigureAwait(false);
                 if (advanced)
                 {
-                    var resnap = await Task.Run(() => _clientPreparer.PrepareAsync(clientSettings, allowLaunch: false)).ConfigureAwait(false);
+                    var resnap = await Task.Run(() => ClientPreparer.PrepareAsync(clientSettings, allowLaunch: false)).ConfigureAwait(false);
                     statusMessage = resnap.WindowReady
                         ? $"Advanced Launcher/Character Select and snapped Guild Wars 2 to (0, 0) ({clientSettings.WindowWidth}x{clientSettings.WindowHeight})."
                         : resnap.Message;
@@ -856,14 +818,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!TryReadClientSettings(out var clientSettings)) return;
+        if (!SettingsPage.TryReadClientSettings(out var clientSettings)) return;
         if (clientSettings.ParkedCharacterCount <= 1)
         {
             StatusText.Text = "Set Parked Characters > 1 in Settings before swapping characters.";
             return;
         }
 
-        _saveClientSettings(clientSettings);
+        SaveClientSettings(clientSettings);
         StatusText.Text = "Swapping parked GW2 character (Esc -> Log Out -> target portrait)...";
         var originalContent = SwapCharacterNowButton.Content;
         SwapCharacterNowButton.IsEnabled = false;
@@ -872,7 +834,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var prepared = await Task.Run(() => _clientPreparer.PrepareAsync(clientSettings, allowLaunch: false)).ConfigureAwait(false);
+            var prepared = await Task.Run(() => ClientPreparer.PrepareAsync(clientSettings, allowLaunch: false)).ConfigureAwait(false);
             string statusMessage;
             if (!prepared.WindowReady)
             {
@@ -942,14 +904,14 @@ public partial class MainWindow : Window
         var mode = Enum.Parse<RunMode>(((ComboBoxItem)ModeSelector.SelectedItem).Tag.ToString()!);
         var profile = ((ComboBoxItem)ProfileSelector.SelectedItem).Tag.ToString()!;
         var source = ((ComboBoxItem)SourceSelector.SelectedItem).Tag.ToString()!;
-        TuneBeforeSession();
-        if (!TryReadLimits(out var limits)) return;
-        if (!TryReadClientSettings(out var clientSettings)) return;
-        if (!TryReadOperatorSettings(out var opSettings)) return;
+        SettingsPage.TuneBeforeSession();
+        if (!SettingsPage.TryReadLimits(out var limits)) return;
+        if (!SettingsPage.TryReadClientSettings(out var clientSettings)) return;
+        if (!SettingsPage.TryReadOperatorSettings(out var opSettings)) return;
 
-        _saveLimits(limits);
-        _saveClientSettings(clientSettings);
-        _saveOperatorSettings(opSettings);
+        SaveLimits(limits);
+        SaveClientSettings(clientSettings);
+        SaveOperatorSettings(opSettings);
 
         IReadOnlyList<ItemCandidate>? inlineCandidates = opSettings.UseCustomShoppingList && ListsPage.CustomShoppingList.Count > 0
             ? ListsPage.CustomShoppingList.ToArray()
@@ -972,7 +934,7 @@ public partial class MainWindow : Window
         // Re-scan during the session only when it runs on the scanner's own list, so a hand-made list is never replaced.
         MarketScanFilter? autoRescanFilter = null;
         if (ScannerPage.ReadAutoRescanHours() > 0 &&
-            string.Equals(Path.GetFullPath(NullIfBlank(CandidatesPathBox.Text) ?? "."), Path.GetFullPath(ScannedCandidatesPath), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Path.GetFullPath(NullIfBlank(SettingsPage.CandidatesPathBox.Text) ?? "."), Path.GetFullPath(ScannedCandidatesPath), StringComparison.OrdinalIgnoreCase) &&
             ScannerPage.TryReadScanFilter(out var currentScanFilter, out _))
         {
             autoRescanFilter = currentScanFilter;
@@ -982,12 +944,12 @@ public partial class MainWindow : Window
             Candidates: inlineCandidates,
             Blacklist: inlineBlacklist,
             Source: source,
-            FixturePath: NullIfBlank(FixturePathBox.Text),
-            RecordPath: NullIfBlank(RecordPathBox.Text),
-            CaptureFrames: CaptureFramesCheckBox.IsChecked == true,
+            FixturePath: NullIfBlank(SettingsPage.FixturePathBox.Text),
+            RecordPath: NullIfBlank(SettingsPage.RecordPathBox.Text),
+            CaptureFrames: SettingsPage.CaptureFramesCheckBox.IsChecked == true,
             Policy: limits.ToPolicy(),
-            CandidatesPath: NullIfBlank(CandidatesPathBox.Text),
-            BlacklistPath: NullIfBlank(BlacklistPathBox.Text),
+            CandidatesPath: NullIfBlank(SettingsPage.CandidatesPathBox.Text),
+            BlacklistPath: NullIfBlank(SettingsPage.BlacklistPathBox.Text),
             ClientSettings: clientSettings,
             MinimumBalanceCopper: minBalanceCopper,
             DefaultOrderQuantity: opSettings.DefaultOrderQuantity,
@@ -1085,8 +1047,8 @@ public partial class MainWindow : Window
 
     private async Task RunLaunchAutomationCoreAsync()
     {
-        var automate = AutomateOnLaunchCheckBox.IsChecked == true;
-        var tuneEachSession = AutoTuneEachSessionCheckBox.IsChecked == true;
+        var automate = SettingsPage.AutomateOnLaunchCheckBox.IsChecked == true;
+        var tuneEachSession = SettingsPage.AutoTuneEachSessionCheckBox.IsChecked == true;
         if (!_runLaunchAutomation || (!automate && !tuneEachSession && !_isFirstRun))
         {
             return;
@@ -1123,7 +1085,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_lastWorkerState is not (WorkerState.Idle or WorkerState.Stopped))
+        if (LastWorkerState is not (WorkerState.Idle or WorkerState.Stopped))
         {
             SetLaunchStep(LaunchScanText, LaunchStep.Skipped, "Session already running");
             return; // a session was started meanwhile; leave its list alone
@@ -1165,16 +1127,16 @@ public partial class MainWindow : Window
         }
 
         var preset = TradingStrategyPresets.RecommendForCapital(wallet);
-        if (AutoTuneEachSessionCheckBox.IsChecked == true || (_isFirstRun && _lastAutoTunedPreset is null))
+        if (SettingsPage.AutoTuneEachSessionCheckBox.IsChecked == true || (_isFirstRun && SettingsPage.LastAutoTunedPreset is null))
         {
-            var tune = await RunAutoTuneAsync(feedbackButton: null);
+            var tune = await SettingsPage.RunAutoTuneAsync(feedbackButton: null);
             return (LaunchStep.Done, $"Auto-Tuned: {ShortPresetName(tune.Preset.Name)}, Max Buy {tune.Preset.MaxBuyGold:0.#}g");
         }
 
-        if (_lastAutoTunedPreset is not null && !string.Equals(_lastAutoTunedPreset, preset.Name, StringComparison.OrdinalIgnoreCase))
+        if (SettingsPage.LastAutoTunedPreset is not null && !string.Equals(SettingsPage.LastAutoTunedPreset, preset.Name, StringComparison.OrdinalIgnoreCase))
         {
             // With Auto-Tune each session off, the operator tunes by hand: only suggest.
-            var hint = $"Your wallet ({MarketScanItem.FormatCoins(wallet)}) now fits the '{preset.Name}' preset (last tuned: '{_lastAutoTunedPreset}'). Click Auto-Tune to switch.";
+            var hint = $"Your wallet ({MarketScanItem.FormatCoins(wallet)}) now fits the '{preset.Name}' preset (last tuned: '{SettingsPage.LastAutoTunedPreset}'). Click Auto-Tune to switch.";
             ScannerPage.ScanStatusText.Text = hint;
             AddLog("Launch: " + hint);
             return (LaunchStep.Skipped, $"Auto-Tune off: '{ShortPresetName(preset.Name)}' fits now");
@@ -1197,11 +1159,11 @@ public partial class MainWindow : Window
             return string.Empty;
         }
 
-        var listPath = NullIfBlank(CandidatesPathBox.Text);
+        var listPath = NullIfBlank(SettingsPage.CandidatesPathBox.Text);
         if (listPath is null)
         {
             // No list at all: trade the fresh scan, unless a Custom Shopping List is the operator's whole plan.
-            if (UseCustomListOnStartCheckBox.IsChecked == true && ListsPage.CustomShoppingList.Count > 0)
+            if (SettingsPage.UseCustomListOnStartCheckBox.IsChecked == true && ListsPage.CustomShoppingList.Count > 0)
             {
                 return string.Empty;
             }
@@ -1237,195 +1199,12 @@ public partial class MainWindow : Window
     // Auto-Tune (trading values from the wallet and recent results)
     // ---------------------------------------------------------------------
 
-    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e) => await AutoTuneForWalletAsync(sender as Button);
-
-    internal async Task AutoTuneForWalletAsync(Button? sender)
-    {
-        // Clicking Auto-Tune is an explicit "decide for me": hand-set values go back to Auto-Tune. The automatic runs
-        // (launch, Start session) keep them.
-        if (_autoTuneKeeps.Count > 0)
-        {
-            AddLog($"Auto-Tune button: your hand-set values ({DescribeAutoTuneKeeps()}) are handed back to Auto-Tune.");
-            _autoTuneKeeps.Clear();
-            UpdateAutoTuneKeepsHint();
-        }
-
-        await RunAutoTuneAsync(sender ?? AutoTuneSettingsButton);
-    }
-
-    private async Task<AutoTuneResult> RunAutoTuneAsync(Button? feedbackButton)
-    {
-        long capitalCopper = IncomePage.LatestEquitySnapshot?.WalletCopper ?? 0;
-        var sourceLabel = "cached snapshot";
-
-        var key = ResolveConfiguredApiKey();
-        if (!string.IsNullOrWhiteSpace(key))
-        {
-            try
-            {
-                using var cts = CreateApiCancellationTokenSource();
-                var provider = new Gw2OfficialDataProvider(Gw2HttpClient, key);
-                var balance = await provider.GetBalanceAsync(cts.Token);
-                if (balance is not null)
-                {
-                    capitalCopper = balance.Copper;
-                    sourceLabel = "live GW2 wallet";
-                    HasVerifiedApiKey = true;
-                }
-            }
-            catch (Exception ex)
-            {
-                AddLog($"Auto-tune wallet fetch note: {ex.Message}");
-            }
-        }
-
-        if (capitalCopper <= 0)
-        {
-            capitalCopper = 5_000_000; // 500g balanced default when offline
-            sourceLabel = "default 500g balanced baseline (no API wallet yet)";
-        }
-
-        var tune = ApplySmartAutoTune(capitalCopper);
-        var message = $"Auto-tuned from {sourceLabel}: {tune.Summary}";
-        StatusText.Text = message;
-        ScannerPage.ScanStatusText.Text = message;
-        AddLog($"Auto-Tune ({sourceLabel}): {tune.Summary}");
-        if (feedbackButton is not null)
-        {
-            await FlashButtonFeedbackAsync(feedbackButton, "✓ Tuned");
-        }
-
-        return tune;
-    }
-
-    /// <summary>Smart Auto-Tune: capital (wallet + gold in orders) plus the last 14 days of your own flips.</summary>
-    private AutoTuneResult ApplySmartAutoTune(long walletCopper)
-    {
-        var snapshot = IncomePage.LatestEquitySnapshot;
-        var recent = IncomePage.ArchivedTransactions.Count == 0
-            ? null
-            : TradingIncomeAnalytics.Analyze(IncomePage.ArchivedTransactions, DateTimeOffset.UtcNow.AddDays(-SmartAutoTuner.ResultsWindowDays));
-        var tune = SmartAutoTuner.Tune(new AutoTuneInputs(
-            walletCopper,
-            snapshot?.ActiveBuysCopper ?? 0,
-            snapshot?.ActiveSellsNetCopper ?? 0,
-            recent));
-        ScannerPage.ApplyStrategyPresetToScanner(tune.Preset);
-        ApplyStrategyPresetToSettings(tune.Preset);
-        ScannerPage.ScanMinTradesPerDayBox.Text = tune.MinTradesPerDay.ToString(CultureInfo.CurrentCulture);
-        _lastAutoTunedPreset = tune.Preset.Name;
-        SaveAllSettingsSilently();
-        RefreshReadinessChecklist();
-        if (_autoTuneKeeps.Count > 0)
-        {
-            tune = tune with { Summary = $"{tune.Summary} Kept your own: {DescribeAutoTuneKeeps()}." };
-        }
-
-        var tip = $"Last Auto-Tune ({DateTime.Now:g}): {tune.Summary}";
-        ScannerPage.AutoTuneScannerButton.ToolTip = tip;
-        AutoTuneSettingsButton.ToolTip = tip;
-        return tune;
-    }
-
-    /// <summary>Re-tune right before a session from the last synced wallet and orders (no network call).</summary>
-    private void TuneBeforeSession()
-    {
-        if (AutoTuneEachSessionCheckBox.IsChecked != true || IncomePage.LatestEquitySnapshot is not { WalletCopper: > 0 } snapshot)
-        {
-            return;
-        }
-
-        var tune = ApplySmartAutoTune(snapshot.WalletCopper);
-        AddLog($"Auto-Tune before session (gold as of the last account sync): {tune.Summary}");
-    }
-
-    private void TunedField_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (IsLoadingUi || _applyingAutoTune || sender is not TextBox { Tag: string key } || !_autoTuneKeeps.Add(key))
-        {
-            return;
-        }
-
-        UpdateAutoTuneKeepsHint();
-    }
-
-    private void ClearAutoTuneKeeps_Click(object sender, RoutedEventArgs e)
-    {
-        _autoTuneKeeps.Clear();
-        UpdateAutoTuneKeepsHint();
-        SaveOperatorSettingsIfValid();
-        AddLog("Auto-Tune will set every trading value again from the next launch or Start session.");
-    }
-
-    private void UpdateAutoTuneKeepsHint()
-    {
-        if (AutoTuneKeepsPanel is null)
-        {
-            return;
-        }
-
-        AutoTuneKeepsPanel.Visibility = _autoTuneKeeps.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        AutoTuneKeepsText.Text = $"Auto-Tune keeps what you set: {DescribeAutoTuneKeeps()}. It tunes the rest at launch and Start session; clicking Auto-Tune hands everything back.";
-    }
-
-    private string DescribeAutoTuneKeeps() =>
-        string.Join(", ", _autoTuneKeeps.Select(key => AutoTuneFieldLabels.GetValueOrDefault(key, key)).OrderBy(label => label, StringComparer.Ordinal));
-
-    internal void ApplyStrategyPresetToSettings(TradingStrategyPreset preset)
-    {
-        _applyingAutoTune = true;
-        try
-        {
-            ApplyStrategyPresetToSettingsCore(preset);
-        }
-        finally
-        {
-            _applyingAutoTune = false;
-        }
-    }
-
-    private void ApplyStrategyPresetToSettingsCore(TradingStrategyPreset preset)
-    {
-        bool Tunes(string key) => !_autoTuneKeeps.Contains(key);
-        if (Tunes("MinProfit")) MinimumProfitBox.Text = preset.MinRoiPercent.ToString(CultureInfo.CurrentCulture);
-        if (Tunes("MaxBuy")) MaximumBuyGoldBox.Text = preset.MaxBuyGold.ToString(CultureInfo.CurrentCulture);
-        if (Tunes("Quantity")) DefaultQuantityBox.Text = preset.DefaultOrderQuantity.ToString(CultureInfo.InvariantCulture);
-        if (Tunes("GoldFloor")) GoldThresholdNoBuyBox.Text = preset.RecommendedGoldFloor.ToString(CultureInfo.CurrentCulture);
-        if (Tunes("Overbid"))
-        {
-            OverbidMinBox.Text = preset.OverbidMinCopper.ToString(CultureInfo.InvariantCulture);
-            OverbidMaxBox.Text = preset.OverbidMaxCopper.ToString(CultureInfo.InvariantCulture);
-        }
-
-        if (Tunes("Undercut"))
-        {
-            UndercutMinBox.Text = preset.UndercutMinCopper.ToString(CultureInfo.InvariantCulture);
-            UndercutMaxBox.Text = preset.UndercutMaxCopper.ToString(CultureInfo.InvariantCulture);
-        }
-
-        // Session cap and character-swap interval are the operator's own schedule, not a function of wallet size,
-        // so Auto-Tune leaves them as configured.
-    }
+    // The smoke test drives Auto-Tune through the window.
+    internal void ApplyStrategyPresetToSettings(TradingStrategyPreset preset) => SettingsPage.ApplyStrategyPresetToSettings(preset);
 
     // ---------------------------------------------------------------------
-    // Settings: Multi-Account DPAPI API Vault, GW2 Client, Latency, Hotkeys
+    // Account switching (sidebar)
     // ---------------------------------------------------------------------
-
-    private void OpenArenaNetApiKeys_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "https://account.arena.net/applications",
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            AddLog($"Could not open browser: {ex.Message}");
-        }
-    }
 
     private async void SidebarAccountSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -1437,439 +1216,6 @@ public partial class MainWindow : Window
         await SwitchActiveAccountAsync(keyId);
     }
 
-    private async void UseApiKey_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as Button)?.CommandParameter is not string keyId) return;
-        await SwitchActiveAccountAsync(keyId);
-    }
-
-    private void MoveApiKeyUp_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as Button)?.CommandParameter is string keyId)
-        {
-            MoveApiKeyEntry(keyId, -1);
-        }
-    }
-
-    private void MoveApiKeyDown_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as Button)?.CommandParameter is string keyId)
-        {
-            MoveApiKeyEntry(keyId, 1);
-        }
-    }
-
-    private async void CopyApiKey_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.CommandParameter is not string keyId) return;
-        var entry = ApiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase));
-        if (entry is null) return;
-
-        try
-        {
-            Clipboard.SetText(entry.ApiKey);
-            ApiKeyStatusText.Text = $"Copied API key for {entry.DisplayLabel} to clipboard.";
-            await FlashButtonFeedbackAsync(btn, "✓ Copied");
-        }
-        catch (Exception ex)
-        {
-            ApiKeyStatusText.Text = $"Could not copy API key: {ex.Message}";
-        }
-    }
-
-    private async void DeleteApiKey_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as Button)?.CommandParameter is not string keyId) return;
-        await RemoveVaultEntryAsync(keyId);
-    }
-
-    // Names save themselves (Enter or leaving the box). A separate "Save Names" click was easy to miss, and the launch
-    // account sync rebuilds this table, which wiped names typed but not yet saved.
-    private void ApiKeyName_LostFocus(object sender, RoutedEventArgs e) => CommitApiKeyName(sender as TextBox);
-
-    private void ApiKeyName_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter)
-        {
-            return;
-        }
-
-        CommitApiKeyName(sender as TextBox);
-        Keyboard.ClearFocus();
-        e.Handled = true;
-    }
-
-    internal void CommitApiKeyName(TextBox? box)
-    {
-        if (box?.DataContext is not ApiKeyRowViewModel row)
-        {
-            return;
-        }
-
-        var name = box.Text?.Trim() ?? string.Empty;
-        var entry = ApiKeyVault.Entries.FirstOrDefault(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase));
-        if (entry is null || string.Equals(entry.CustomName ?? string.Empty, name, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        row.CustomName = name;
-        ApiKeyVault = ApiKeyVault with
-        {
-            Entries = ApiKeyVault.Entries
-                .Select(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase) ? e with { CustomName = name } : e)
-                .ToArray()
-        };
-        _saveApiKeyVault(ApiKeyVault);
-        ApiKeyStatusText.Text = string.IsNullOrEmpty(name)
-            ? $"Removed the name of {entry.AccountName}."
-            : $"Saved the name '{name}' for {entry.AccountName}.";
-        // Refresh the account picker and labels after the edit, not during it.
-        Dispatcher.BeginInvoke(RebuildApiKeyViews, System.Windows.Threading.DispatcherPriority.Background);
-    }
-
-    private async void ReverifyApiKeys_Click(object sender, RoutedEventArgs e)
-    {
-        if (ApiKeyVault.Entries.Count == 0)
-        {
-            ApiKeyStatusText.Text = "No API keys to verify yet.";
-            return;
-        }
-
-        var originalContent = ReverifyApiKeysButton.Content;
-        ReverifyApiKeysButton.IsEnabled = false;
-        ReverifyApiKeysButton.Content = "Verifying...";
-        var verifiedCount = 0;
-        try
-        {
-            var refreshed = new List<Gw2ApiKeyEntry>(ApiKeyVault.Entries.Count);
-            foreach (var entry in ApiKeyVault.Entries)
-            {
-                try
-                {
-                    using var cts = CreateApiCancellationTokenSource();
-                    var provider = new Gw2OfficialDataProvider(Gw2HttpClient, entry.ApiKey);
-                    var validation = await provider.ValidateApiKeyAsync(cts.Token);
-                    var accountName = !string.IsNullOrWhiteSpace(validation.AccountName)
-                        ? validation.AccountName!
-                        : entry.AccountName;
-                    var status = validation.IsValid ? "VALID" : "INVALID";
-                    if (validation.IsValid) verifiedCount++;
-
-                    refreshed.Add(entry with
-                    {
-                        AccountName = accountName,
-                        Status = status,
-                        Permissions = validation.Permissions,
-                        LastWalletCopper = validation.CoinCopper ?? entry.LastWalletCopper,
-                        LastVerifiedAt = DateTimeOffset.UtcNow
-                    });
-                }
-                catch
-                {
-                    refreshed.Add(entry with { Status = "UNVERIFIED" });
-                }
-            }
-
-            ApiKeyVault = ApiKeyVault with { Entries = refreshed.ToArray() };
-            _saveApiKeyVault(ApiKeyVault);
-            HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
-            RebuildApiKeyViews();
-            RefreshReadinessChecklist();
-            ApiKeyStatusText.Text = $"Re-verified {ApiKeyVault.Entries.Count} key(s): {verifiedCount} valid.";
-            AddLog($"Re-verified API vault ({verifiedCount}/{ApiKeyVault.Entries.Count} valid).");
-        }
-        finally
-        {
-            ReverifyApiKeysButton.IsEnabled = true;
-            ReverifyApiKeysButton.Content = originalContent;
-            await FlashButtonFeedbackAsync(ReverifyApiKeysButton, "✓ Verified");
-        }
-    }
-
-    private async void SaveApiKey_Click(object sender, RoutedEventArgs e)
-    {
-        var raw = ApiKeyPasswordBox.Password?.Trim();
-        var customName = ApiKeyCustomNameBox.Text?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            ApiKeyStatusText.Text = "Enter a GW2 API key before clicking Save.";
-            return;
-        }
-
-        var originalContent = SaveApiKeyButton.Content;
-        SaveApiKeyButton.IsEnabled = false;
-        SaveApiKeyButton.Content = "Verifying...";
-        var saved = false;
-        try
-        {
-            var existing = ApiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.ApiKey, raw, StringComparison.OrdinalIgnoreCase));
-            var entryId = existing?.Id ?? Guid.NewGuid().ToString("N");
-            var accountName = existing?.AccountName ?? "Default Account";
-            var status = "UNVERIFIED";
-            IReadOnlyList<string> permissions = existing?.Permissions ?? Array.Empty<string>();
-            long? walletCopper = existing?.LastWalletCopper;
-            DateTimeOffset? verifiedAt = existing?.LastVerifiedAt;
-            var statusDetail = "Encrypted with Windows DPAPI (CurrentUser) and stored in multi-account vault.";
-
-            try
-            {
-                using var cts = CreateApiCancellationTokenSource();
-                var provider = new Gw2OfficialDataProvider(Gw2HttpClient, raw);
-                var result = await provider.ValidateApiKeyAsync(cts.Token);
-                if (!string.IsNullOrWhiteSpace(result.AccountName))
-                {
-                    accountName = result.AccountName!;
-                }
-
-                permissions = result.Permissions;
-                if (result.IsValid)
-                {
-                    status = "VALID";
-                    walletCopper = result.CoinCopper;
-                    verifiedAt = DateTimeOffset.UtcNow;
-                    HasVerifiedApiKey = true;
-                    statusDetail = $"{accountName}" +
-                                   (result.CoinCopper.HasValue ? $" • Wallet {MarketScanItem.FormatCoins(result.CoinCopper.Value)}" : string.Empty) +
-                                   " — Verified & saved securely.";
-                }
-                else
-                {
-                    status = result.Message.Contains("Invalid", StringComparison.OrdinalIgnoreCase) ||
-                             result.Message.Contains("permission", StringComparison.OrdinalIgnoreCase)
-                        ? "INVALID"
-                        : "UNVERIFIED";
-                    statusDetail = $"Saved encrypted key ({status}): {result.Message}";
-                }
-            }
-            catch (Exception ex)
-            {
-                statusDetail = $"Saved encrypted key (offline/timeout during check: {ex.Message}).";
-            }
-
-            var newEntry = new Gw2ApiKeyEntry(
-                Id: entryId,
-                ApiKey: raw,
-                AccountName: accountName,
-                CustomName: !string.IsNullOrWhiteSpace(customName) ? customName : (existing?.CustomName ?? string.Empty),
-                Status: status,
-                Permissions: permissions,
-                LastWalletCopper: walletCopper,
-                LastVerifiedAt: verifiedAt);
-
-            var updatedEntries = ApiKeyVault.Entries
-                .Select(item => string.Equals(item.Id, entryId, StringComparison.OrdinalIgnoreCase) ? newEntry : item)
-                .ToList();
-            if (existing is null)
-            {
-                updatedEntries.Add(newEntry);
-            }
-
-            ApiKeyVault = new Gw2ApiKeyVaultData(entryId, updatedEntries.ToArray());
-            _saveApiKeyVault(ApiKeyVault);
-
-            ApiKeyPasswordBox.Clear();
-            ApiKeyCustomNameBox.Clear();
-            RebuildApiKeyViews();
-            RefreshReadinessChecklist();
-            ApiKeyStatusText.Text = statusDetail;
-            AddLog($"Saved DPAPI API key for {newEntry.DisplayLabel} ({status}).");
-            saved = true;
-
-            await IncomePage.ReloadLedgerForActiveAccountAsync();
-            await ReportsPage.LoadSessionReportsAsync();
-            if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
-            {
-                await concreteSupervisor.RestartWorkerAsync();
-            }
-        }
-        catch (Exception exception)
-        {
-            ApiKeyStatusText.Text = $"Could not save API key: {exception.Message}";
-        }
-        finally
-        {
-            SaveApiKeyButton.IsEnabled = true;
-            SaveApiKeyButton.Content = originalContent;
-            if (saved)
-            {
-                await FlashButtonFeedbackAsync(SaveApiKeyButton, "✓ Saved");
-            }
-        }
-    }
-
-    private async void TestApiKey_Click(object sender, RoutedEventArgs e)
-    {
-        var typedKey = !string.IsNullOrWhiteSpace(ApiKeyPasswordBox.Password)
-            ? ApiKeyPasswordBox.Password.Trim()
-            : null;
-        var activeEntry = ApiKeyVault.ActiveEntry;
-        var key = typedKey ?? ResolveConfiguredApiKey();
-
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            ApiKeyStatusText.Text = "No API key entered or saved yet.";
-            return;
-        }
-
-        var originalContent = TestApiKeyButton.Content;
-        TestApiKeyButton.IsEnabled = false;
-        TestApiKeyButton.Content = "Testing...";
-        ApiKeyStatusText.Text = "Testing API key against api.guildwars2.com...";
-        var isValid = false;
-        try
-        {
-            using var cts = CreateApiCancellationTokenSource();
-            var provider = new Gw2OfficialDataProvider(Gw2HttpClient, key);
-            var result = await provider.ValidateApiKeyAsync(cts.Token);
-            isValid = result.IsValid;
-
-            if (typedKey is null && activeEntry is not null)
-            {
-                UpdateVaultEntry(activeEntry.Id, item => item with
-                {
-                    AccountName = !string.IsNullOrWhiteSpace(result.AccountName) ? result.AccountName! : item.AccountName,
-                    Status = result.IsValid ? "VALID" : "INVALID",
-                    Permissions = result.Permissions,
-                    LastWalletCopper = result.CoinCopper ?? item.LastWalletCopper,
-                    LastVerifiedAt = DateTimeOffset.UtcNow
-                });
-                RebuildApiKeyViews();
-            }
-
-            if (result.IsValid)
-            {
-                HasVerifiedApiKey = true;
-                var coinText = result.CoinCopper.HasValue ? $" • Wallet: {MarketScanItem.FormatCoins(result.CoinCopper.Value)}" : string.Empty;
-                var accountText = !string.IsNullOrWhiteSpace(result.AccountName) ? $"{result.AccountName}" : "Account";
-                ApiKeyStatusText.Text = $"{accountText}{coinText} — {result.Message}";
-                AddLog($"API key verified: {accountText}{coinText}");
-            }
-            else
-            {
-                HasVerifiedApiKey = false;
-                ApiKeyStatusText.Text = $"API key test failed: {result.Message}";
-            }
-
-            RefreshReadinessChecklist();
-        }
-        finally
-        {
-            TestApiKeyButton.IsEnabled = true;
-            TestApiKeyButton.Content = originalContent;
-            await FlashButtonFeedbackAsync(TestApiKeyButton, isValid ? "✓ Valid" : "Check Failed");
-        }
-    }
-
-    private async void ClearApiKey_Click(object sender, RoutedEventArgs e)
-    {
-        ApiKeyPasswordBox.Clear();
-        ApiKeyCustomNameBox.Clear();
-        if (ApiKeyVault.ActiveEntry is { } active)
-        {
-            await RemoveVaultEntryAsync(active.Id);
-            return;
-        }
-
-        HasVerifiedApiKey = false;
-        RebuildApiKeyViews();
-        RefreshReadinessChecklist();
-        AddLog("Cleared stored DPAPI GW2 API key.");
-    }
-
-    private void LatencyProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (IsLoadingUi || LatencyProfileSelector.SelectedItem is not ComboBoxItem { Tag: string profileId })
-        {
-            return;
-        }
-
-        var preset = Gw2LatencyPresets.FindById(profileId);
-        if (preset is null) return;
-
-        LatencyDescriptionText.Text = preset.Description;
-        if (!string.Equals(preset.Id, "Custom", StringComparison.OrdinalIgnoreCase))
-        {
-            UiLoadWaitMsBox.Text = preset.UiLoadWaitMs.ToString(CultureInfo.InvariantCulture);
-            ActionSettleDelayMsBox.Text = preset.ActionSettleDelayMs.ToString(CultureInfo.InvariantCulture);
-            ApiTimeoutSecondsBox.Text = preset.ApiTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
-        }
-    }
-
-    private async void DetectGw2_Click(object sender, RoutedEventArgs e) => await DetectGw2Async();
-
-    internal async Task DetectGw2Async()
-    {
-        var candidates = _discoverGw2Installs();
-        var detected = candidates.FirstOrDefault()?.ExecutablePath ?? _detectGw2Path();
-        var dpi = DetectDisplayScale();
-
-        var found = !string.IsNullOrWhiteSpace(detected);
-        if (found)
-        {
-            Gw2ExecutablePathBox.Text = detected;
-            var kindText = candidates.FirstOrDefault() is { } first
-                ? $"{first.Kind} install via {first.Source}"
-                : "Detected GW2 executable";
-            Gw2DetectHealthText.Text = $"{kindText}  •  Display Scale: {dpi.Summary}";
-            StatusText.Text = $"Detected Guild Wars 2 at {detected}";
-            AddLog($"Detected GW2 ({kindText}): {detected}");
-        }
-        else
-        {
-            Gw2DetectHealthText.Text = $"Could not auto-detect Gw2-64.exe  •  Display Scale: {dpi.Summary}";
-            StatusText.Text = "Could not auto-detect Gw2-64.exe; click Browse or enter steam://rungameid/1284210.";
-        }
-
-        RefreshReadinessChecklist();
-        await FlashButtonFeedbackAsync(DetectGw2Button, found ? "✓ Detected" : "Not found");
-    }
-
-    private void BrowseGw2_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Select Gw2-64.exe",
-            Filter = "Guild Wars 2 (Gw2-64.exe)|Gw2-64.exe|Executables (*.exe)|*.exe"
-        };
-        if (dialog.ShowDialog(this) == true)
-        {
-            Gw2ExecutablePathBox.Text = dialog.FileName;
-            RefreshReadinessChecklist();
-        }
-    }
-
-    private async void ApplyHotkeys_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryReadOperatorSettings(out var opSettings)) return;
-        _saveOperatorSettings(opSettings);
-        RegisterConfiguredHotkeys(logWarnings: true);
-        await FlashButtonFeedbackAsync(ApplyHotkeysButton, "✓ Applied");
-    }
-
-    private async void SaveAllSettings_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryReadLimits(out var limits)) return;
-        if (!TryReadClientSettings(out var clientSettings)) return;
-        if (!TryReadOperatorSettings(out var opSettings)) return;
-
-        _saveLimits(limits);
-        _saveClientSettings(clientSettings);
-        _saveOperatorSettings(opSettings);
-        RegisterConfiguredHotkeys(logWarnings: true);
-        RefreshReadinessChecklist();
-        StatusText.Text = "All settings saved to local profiles folder.";
-        AddLog("Saved trading limits, GW2 client/latency settings, session cap, AFK policy, and hotkeys.");
-        await FlashButtonFeedbackAsync(SaveAllSettingsButton, "✓ Saved");
-    }
-
-    private void OpenDataFolder_Click(object sender, RoutedEventArgs e)
-    {
-        var paths = RuntimePaths.Create();
-        paths.EnsureDirectories();
-        Process.Start(new ProcessStartInfo { FileName = paths.Root, UseShellExecute = true });
-    }
-
     // ---------------------------------------------------------------------
     // Worker Communication & Event Handling
     // ---------------------------------------------------------------------
@@ -1878,7 +1224,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var response = await _supervisor.SendAsync(command);
+            var response = await Supervisor.SendAsync(command);
             ApplyEvent(response);
         }
         catch (Exception exception)
@@ -1902,7 +1248,7 @@ public partial class MainWindow : Window
             var status = JsonSerializer.Deserialize<WorkerStatus>(workerEvent.Payload);
             if (status is not null)
             {
-                _lastWorkerState = status.State;
+                LastWorkerState = status.State;
                 StatusText.Text = status.Message ?? status.LastAction ?? string.Empty;
                 var stateLabel = UpdateStatusCard(status.State, status.Message ?? status.LastAction);
                 UpdateSidebarStatus(status.State, stateLabel);
@@ -2203,7 +1549,7 @@ public partial class MainWindow : Window
     }
 
     private int GetConfiguredApiTimeoutSeconds() =>
-        int.TryParse(ApiTimeoutSecondsBox.Text.Trim(), out var parsed)
+        int.TryParse(SettingsPage.ApiTimeoutSecondsBox.Text.Trim(), out var parsed)
             ? Math.Clamp(parsed, 15, 120)
             : 60;
 
@@ -2234,7 +1580,7 @@ public partial class MainWindow : Window
         {
             var wasLoading = IsLoadingUi;
             IsLoadingUi = true;
-            SelectComboByTag(LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
+            SelectComboByTag(SettingsPage.LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
             IsLoadingUi = wasLoading;
         }
 
@@ -2243,37 +1589,8 @@ public partial class MainWindow : Window
 
     internal void RebuildApiKeyViews()
     {
-        var passBrush = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
-        var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
-        var dangerBrush = ResolveBrush("DangerBrush", Brushes.IndianRed);
-
+        SettingsPage.RebuildApiKeyRows();
         var activeId = ApiKeyVault.ActiveEntry?.Id;
-        _apiKeyRows.Clear();
-        for (var i = 0; i < ApiKeyVault.Entries.Count; i++)
-        {
-            var entry = ApiKeyVault.Entries[i];
-            var isActive = string.Equals(entry.Id, activeId, StringComparison.OrdinalIgnoreCase);
-            var statusUpper = string.IsNullOrWhiteSpace(entry.Status) ? "UNVERIFIED" : entry.Status.ToUpperInvariant();
-            var statusBrush = statusUpper switch
-            {
-                "VALID" => passBrush,
-                "INVALID" => dangerBrush,
-                _ => warnBrush
-            };
-
-            _apiKeyRows.Add(new ApiKeyRowViewModel(
-                entry.Id,
-                isActive,
-                canMoveUp: i > 0,
-                canMoveDown: i < ApiKeyVault.Entries.Count - 1,
-                statusUpper,
-                statusBrush,
-                string.IsNullOrWhiteSpace(entry.AccountName) ? "Default Account" : entry.AccountName,
-                string.IsNullOrWhiteSpace(entry.LaunchPlatform) ? "ArenaNet" : entry.LaunchPlatform,
-                entry.MaskedKey,
-                entry.CustomName));
-        }
-
         var wasLoading = IsLoadingUi;
         IsLoadingUi = true;
         try
@@ -2315,12 +1632,12 @@ public partial class MainWindow : Window
             ? $"Account: {active.DisplayLabel}"
             : "No active account";
 
-        RefreshApiKeyIndicator();
+        SettingsPage.RefreshApiKeyIndicator();
         UpdateSessionPaceSummary();
         UpdateSidebarStatusTooltip();
     }
 
-    private async Task SwitchActiveAccountAsync(string keyId)
+    internal async Task SwitchActiveAccountAsync(string keyId)
     {
         if (string.Equals(ApiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase))
         {
@@ -2333,43 +1650,29 @@ public partial class MainWindow : Window
         }
 
         ApiKeyVault = ApiKeyVault with { ActiveKeyId = keyId };
-        _saveApiKeyVault(ApiKeyVault);
+        SaveApiKeyVault(ApiKeyVault);
         HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
         if (!string.IsNullOrWhiteSpace(ApiKeyVault.ActiveEntry?.LaunchPlatform))
         {
             var wasLoading = IsLoadingUi;
             IsLoadingUi = true;
-            SelectComboByTag(LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
+            SelectComboByTag(SettingsPage.LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
             IsLoadingUi = wasLoading;
         }
 
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
-        SaveAllSettingsSilently();
+        SettingsPage.SaveAllSettingsSilently();
 
         var activeLabel = ApiKeyVault.ActiveEntry?.DisplayLabel ?? "Account";
         AddLog($"Switched active account to {activeLabel}.");
         await IncomePage.ReloadLedgerForActiveAccountAsync();
         await ReportsPage.LoadSessionReportsAsync();
 
-        if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
+        if (Supervisor is DesktopWorkerSupervisor concreteSupervisor && LastWorkerState is WorkerState.Idle or WorkerState.Stopped)
         {
             await concreteSupervisor.RestartWorkerAsync();
         }
-    }
-
-    private void MoveApiKeyEntry(string keyId, int delta)
-    {
-        var list = ApiKeyVault.Entries.ToList();
-        var index = list.FindIndex(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase));
-        if (index < 0) return;
-        var targetIndex = index + delta;
-        if (targetIndex < 0 || targetIndex >= list.Count) return;
-
-        (list[index], list[targetIndex]) = (list[targetIndex], list[index]);
-        ApiKeyVault = ApiKeyVault with { Entries = list.ToArray() };
-        _saveApiKeyVault(ApiKeyVault);
-        RebuildApiKeyViews();
     }
 
     internal void UpdateVaultEntry(string keyId, Func<Gw2ApiKeyEntry, Gw2ApiKeyEntry> transform)
@@ -2378,10 +1681,10 @@ public partial class MainWindow : Window
             .Select(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase) ? transform(item) : item)
             .ToArray();
         ApiKeyVault = ApiKeyVault with { Entries = updated };
-        _saveApiKeyVault(ApiKeyVault);
+        SaveApiKeyVault(ApiKeyVault);
     }
 
-    private async Task RemoveVaultEntryAsync(string keyId)
+    internal async Task RemoveVaultEntryAsync(string keyId)
     {
         var remaining = ApiKeyVault.Entries
             .Where(item => !string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase))
@@ -2391,7 +1694,7 @@ public partial class MainWindow : Window
             : ApiKeyVault.ActiveKeyId;
 
         ApiKeyVault = new Gw2ApiKeyVaultData(nextActiveId, remaining);
-        _saveApiKeyVault(ApiKeyVault);
+        SaveApiKeyVault(ApiKeyVault);
         HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
@@ -2399,22 +1702,22 @@ public partial class MainWindow : Window
 
         await IncomePage.ReloadLedgerForActiveAccountAsync();
         await ReportsPage.LoadSessionReportsAsync();
-        if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
+        if (Supervisor is DesktopWorkerSupervisor concreteSupervisor && LastWorkerState is WorkerState.Idle or WorkerState.Stopped)
         {
             await concreteSupervisor.RestartWorkerAsync();
         }
     }
 
-    private void RegisterConfiguredHotkeys(bool logWarnings)
+    internal void RegisterConfiguredHotkeys(bool logWarnings)
     {
-        var pauseKey = NullIfBlank(PauseHotkeyBox.Text);
-        var stopKey = NullIfBlank(StopHotkeyBox.Text);
-        var emergencyKey = NullIfBlank(EmergencyStopHotkeyBox.Text);
+        var pauseKey = NullIfBlank(SettingsPage.PauseHotkeyBox.Text);
+        var stopKey = NullIfBlank(SettingsPage.StopHotkeyBox.Text);
+        var emergencyKey = NullIfBlank(SettingsPage.EmergencyStopHotkeyBox.Text);
         var warnings = _hotkeys.RegisterSet(
             pauseKey,
             () => _ = Dispatcher.InvokeAsync(async () =>
             {
-                var cmd = _lastWorkerState == WorkerState.Paused ? WorkerCommandTypes.Resume : WorkerCommandTypes.Pause;
+                var cmd = LastWorkerState == WorkerState.Paused ? WorkerCommandTypes.Resume : WorkerCommandTypes.Pause;
                 await SendAsync(new WorkerCommand(cmd));
             }),
             stopKey,
@@ -2425,11 +1728,11 @@ public partial class MainWindow : Window
         SidebarHotkeyHint.Text = $"Pause: {pauseKey ?? "off"}  •  Stop: {stopKey ?? "off"}";
         if (warnings.Count == 0)
         {
-            HotkeyStatusText.Text = $"Active hotkeys — Pause/Resume: {pauseKey ?? "off"}, Stop: {stopKey ?? "off"}, Emergency: {emergencyKey ?? "off"}.";
+            SettingsPage.HotkeyStatusText.Text = $"Active hotkeys — Pause/Resume: {pauseKey ?? "off"}, Stop: {stopKey ?? "off"}, Emergency: {emergencyKey ?? "off"}.";
         }
         else
         {
-            HotkeyStatusText.Text = string.Join(" ", warnings);
+            SettingsPage.HotkeyStatusText.Text = string.Join(" ", warnings);
             if (logWarnings)
             {
                 foreach (var warning in warnings) AddLog($"Hotkey warning: {warning}");
@@ -2570,23 +1873,6 @@ public partial class MainWindow : Window
 
     private void UpdateLogCount() => LogCountText.Text = $"{LogList.Items.Count} events";
 
-    private void RefreshApiKeyIndicator()
-    {
-        if (ApiKeyVault.ActiveEntry is { } active)
-        {
-            var countNote = ApiKeyVault.Entries.Count > 1 ? $" ({ApiKeyVault.Entries.Count} accounts saved)" : string.Empty;
-            ApiKeyStatusText.Text = $"Active account: {active.DisplayLabel} [{active.Status}]{countNote}. Stored securely via Windows DPAPI.";
-        }
-        else if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey")))
-        {
-            ApiKeyStatusText.Text = "Using GW2 API key from MMOPAL_Native__Gw2ApiKey environment variable.";
-        }
-        else
-        {
-            ApiKeyStatusText.Text = "No API key stored yet. Required scopes: account, tradingpost, wallet, inventories.";
-        }
-    }
-
     private static string LimitsPath => Path.Combine(RuntimePaths.Create().Profiles, "trading-limits.json");
     private static string ClientSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "client-settings.json");
     private static string OperatorSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "operator-settings.json");
@@ -2612,318 +1898,6 @@ public partial class MainWindow : Window
         }
 
         return Path.GetFullPath(relative, AppContext.BaseDirectory);
-    }
-
-    private void LoadLimits()
-    {
-        var limits = _loadLimits();
-        MinimumProfitBox.Text = limits.MinimumProfitPercentage == 0
-            ? string.Empty
-            : limits.MinimumProfitPercentage.ToString(CultureInfo.CurrentCulture);
-        MaximumBuyGoldBox.Text = limits.MaximumBuyPriceGold?.ToString(CultureInfo.CurrentCulture) ?? string.Empty;
-    }
-
-    private void LoadClientSettings()
-    {
-        var settings = _loadClientSettings();
-        var installs = _discoverGw2Installs();
-        var detectedPath = installs.FirstOrDefault()?.ExecutablePath ?? _detectGw2Path();
-        var inferredPlatform = !string.IsNullOrWhiteSpace(settings.LaunchPlatform)
-            ? settings.LaunchPlatform
-            : settings.IsSteamPlatform ? Gw2ClientSettings.PlatformSteam : Gw2ClientSettings.PlatformArenaNet;
-        SelectComboByTag(LaunchPlatformSelector, inferredPlatform);
-
-        Gw2ExecutablePathBox.Text = string.IsNullOrWhiteSpace(settings.ExecutablePath)
-            ? detectedPath ?? string.Empty
-            : settings.ExecutablePath;
-        Gw2LaunchArgsBox.Text = string.IsNullOrWhiteSpace(settings.LaunchArguments) ||
-                                string.Equals(settings.LaunchArguments.Trim(), "-windowed", StringComparison.OrdinalIgnoreCase)
-            ? "-autologin -windowed"
-            : settings.LaunchArguments;
-        Gw2WidthBox.Text = settings.WindowWidth > 0 ? settings.WindowWidth.ToString(CultureInfo.InvariantCulture) : "1024";
-        Gw2HeightBox.Text = settings.WindowHeight > 0 ? settings.WindowHeight.ToString(CultureInfo.InvariantCulture) : "768";
-        MaxLaunchAttemptsBox.Text = Math.Clamp(settings.MaxLaunchAttempts, 1, 5).ToString(CultureInfo.InvariantCulture);
-        WindowWaitSecondsBox.Text = Math.Clamp(settings.WindowWaitTimeoutSeconds, 5, 180).ToString(CultureInfo.InvariantCulture);
-        MaxRecoveryRetriesBox.Text = Math.Clamp(settings.MaxRecoveryRetries, 0, 10).ToString(CultureInfo.InvariantCulture);
-        MaxGameRestartsBox.Text = Math.Clamp(settings.MaxGameRestartsPerSession, 0, 5).ToString(CultureInfo.InvariantCulture);
-        AutoRestartOnFailureCheckBox.IsChecked = settings.AutoRestartGameOnFailure;
-        MaxSessionHoursBox.Text = settings.FormatMaxSessionHours();
-        AutoCloseGameOnCapCheckBox.IsChecked = settings.AutoCloseGameOnSessionCap;
-        AutoCloseAppOnCapCheckBox.IsChecked = settings.AutoCloseAppOnSessionCap;
-        ShutdownPcOnCapCheckBox.IsChecked = settings.ShutdownPcOnSessionCap;
-        PcShutdownCountdownBox.Text = Math.Clamp(settings.PcShutdownCountdownSeconds, 10, 600).ToString(CultureInfo.InvariantCulture);
-        ParkedCharactersBox.Text = Math.Max(1, settings.ParkedCharacterCount).ToString(CultureInfo.InvariantCulture);
-        InteractKeyBox.Text = string.IsNullOrWhiteSpace(settings.InteractKeybind) ? "F" : settings.InteractKeybind;
-        TpKeyBox.Text = string.IsNullOrWhiteSpace(settings.TradingPostKeybind) ? "O" : settings.TradingPostKeybind;
-        RelistStaleSellsCheckBox.IsChecked = settings.RelistStaleUndercutSells;
-        MaxBuyOrderShareBox.Text = Math.Clamp(settings.MaxBuyOrderSharePercent, 0, 100).ToString(CultureInfo.InvariantCulture);
-        SwapCharacterHoursBox.Text = settings.FormatSwapHours();
-        SwapJitterMinutesBox.Text = settings.SwapCharacterJitterMinutes.ToString(CultureInfo.InvariantCulture);
-        SnapWindowOnStartCheckBox.IsChecked = settings.AutoPrepareOnScreenStart;
-        AutoLaunchGw2CheckBox.IsChecked = settings.AutoLaunchIfNotRunning;
-        RandomCharacterSwapCheckBox.IsChecked = settings.RandomizeCharacterSelection;
-
-        var latencyId = string.IsNullOrWhiteSpace(settings.LatencyProfile) ? "HighPing" : settings.LatencyProfile;
-        SelectComboByTag(LatencyProfileSelector, latencyId);
-        SelectComboByTag(PriceEntryModeSelector, settings.TypesExactPrice ? Gw2ClientSettings.PriceEntryTypeExact : Gw2ClientSettings.PriceEntryClickRow);
-        UiLoadWaitMsBox.Text = Math.Clamp(settings.UiLoadWaitMs, 500, 30_000).ToString(CultureInfo.InvariantCulture);
-        ActionSettleDelayMsBox.Text = Math.Clamp(settings.ActionSettleDelayMs, 100, 5_000).ToString(CultureInfo.InvariantCulture);
-        ApiTimeoutSecondsBox.Text = Math.Clamp(settings.ApiTimeoutSeconds, 15, 120).ToString(CultureInfo.InvariantCulture);
-        if (Gw2LatencyPresets.FindById(latencyId) is { } latencyPreset)
-        {
-            LatencyDescriptionText.Text = latencyPreset.Description;
-        }
-
-        var dpi = DetectDisplayScale();
-        var installInfo = installs.FirstOrDefault() is { } first
-            ? $"{first.Kind} ({first.Source})"
-            : !string.IsNullOrWhiteSpace(Gw2ExecutablePathBox.Text) ? "Configured path" : "Not detected yet";
-        Gw2DetectHealthText.Text = $"Client: {installInfo}  •  Display Scale: {dpi.Summary}";
-        SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
-            ? $"Session cap: {settings.FormatMaxSessionHours()}h"
-            : "Session cap: disabled";
-    }
-
-    private void LoadOperatorSettings()
-    {
-        var settings = _loadOperatorSettings();
-        SelectComboByContent(ThemeSelector, settings.ThemeMode);
-        if (Application.Current is App app)
-        {
-            app.ApplyTheme(settings.ThemeMode);
-        }
-
-        PauseHotkeyBox.Text = settings.PauseHotkey;
-        StopHotkeyBox.Text = settings.StopHotkey;
-        EmergencyStopHotkeyBox.Text = settings.EmergencyStopHotkey;
-        OverbidMinBox.Text = settings.OverbidBufferMinCopper.ToString(CultureInfo.InvariantCulture);
-        OverbidMaxBox.Text = settings.OverbidBufferMaxCopper.ToString(CultureInfo.InvariantCulture);
-        UndercutMinBox.Text = settings.UndercutBufferMinCopper.ToString(CultureInfo.InvariantCulture);
-        UndercutMaxBox.Text = settings.UndercutBufferMaxCopper.ToString(CultureInfo.InvariantCulture);
-        DefaultQuantityBox.Text = Math.Max(1, settings.DefaultOrderQuantity).ToString(CultureInfo.InvariantCulture);
-        GoldThresholdNoBuyBox.Text = settings.GoldThresholdNoBuy?.ToString(CultureInfo.CurrentCulture) ?? string.Empty;
-        UseCustomListOnStartCheckBox.IsChecked = settings.UseCustomShoppingList;
-        CandidatesPathBox.Text = settings.CandidatesPath ?? string.Empty;
-        BlacklistPathBox.Text = settings.BlacklistPath ?? string.Empty;
-        FixturePathBox.Text = settings.FixturePath ?? string.Empty;
-        RecordPathBox.Text = settings.RecordPath ?? string.Empty;
-        CaptureFramesCheckBox.IsChecked = settings.CaptureFrames;
-        ScannerPage.ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
-        AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
-        ScannerPage.AutoRescanHoursBox.Text = settings.AutoRescanHours.ToString(CultureInfo.CurrentCulture);
-        ScannerPage.ApplyScannerUiState(settings.Scanner);
-        AutomateOnLaunchCheckBox.IsChecked = settings.AutomateOnLaunch;
-        AutoTuneEachSessionCheckBox.IsChecked = settings.AutoTuneEachSession;
-        _autoTuneKeeps.Clear();
-        foreach (var key in settings.AutoTuneKeeps ?? Array.Empty<string>()) _autoTuneKeeps.Add(key);
-        UpdateAutoTuneKeepsHint();
-        _lastAutoTunedPreset = settings.LastAutoTunedPreset;
-        AutoDockBesideGw2CheckBox.IsChecked = settings.AutoDockSideBySideWhenRunning;
-        UsePortfolioIntelligenceCheckBox.IsChecked = settings.UsePortfolioIntelligence;
-        SaveSessionReportsCheckBox.IsChecked = settings.SaveSessionReports;
-        ReportIncludeDryRunCheckBox.IsChecked = settings.ReportIncludeDryRunAndObserve;
-        ReportSaveOnTradesCheckBox.IsChecked = settings.ReportAlwaysSaveIfTradesOccurred;
-        ReportSaveOnErrorsCheckBox.IsChecked = settings.ReportAlwaysSaveOnErrors;
-        ReportMinDurationBox.Text = Math.Clamp(settings.ReportMinDurationMinutes, 0, 1440).ToString(CultureInfo.InvariantCulture);
-        MaxSavedReportsBox.Text = Math.Clamp(settings.MaxSavedSessionReports, 10, 1000).ToString(CultureInfo.InvariantCulture);
-        ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
-    }
-
-    private bool TryReadLimits(out TradingLimits limits)
-    {
-        if (TradingLimits.TryParse(MinimumProfitBox.Text, MaximumBuyGoldBox.Text, out limits, out var error))
-        {
-            return true;
-        }
-
-        StatusText.Text = error ?? "Trading limits are invalid.";
-        return false;
-    }
-
-    private bool TryReadClientSettings(out Gw2ClientSettings settings)
-    {
-        settings = new Gw2ClientSettings();
-        if (!Gw2ClientSettings.TryParseSwapHours(SwapCharacterHoursBox.Text, out var swapMinutes, out var error))
-        {
-            StatusText.Text = error ?? "Character swap interval is invalid.";
-            return false;
-        }
-
-        if (!Gw2ClientSettings.TryParseMaxSessionHours(MaxSessionHoursBox.Text, out var maxSessionMinutes, out var capError))
-        {
-            StatusText.Text = capError ?? "Max session duration is invalid.";
-            return false;
-        }
-
-        var width = int.TryParse(Gw2WidthBox.Text.Trim(), out var parsedW) && parsedW >= 640 ? parsedW : 1024;
-        var height = int.TryParse(Gw2HeightBox.Text.Trim(), out var parsedH) && parsedH >= 480 ? parsedH : 768;
-        var jitter = int.TryParse(SwapJitterMinutesBox.Text.Trim(), out var parsedJ) && parsedJ >= 0 ? parsedJ : 15;
-        var maxAttempts = int.TryParse(MaxLaunchAttemptsBox.Text.Trim(), out var parsedAtt) ? Math.Clamp(parsedAtt, 1, 5) : 2;
-        var waitSeconds = int.TryParse(WindowWaitSecondsBox.Text.Trim(), out var parsedWait) ? Math.Clamp(parsedWait, 5, 180) : 45;
-        var parkedChars = int.TryParse(ParkedCharactersBox.Text.Trim(), out var parsedChars) ? Math.Clamp(parsedChars, 1, 64) : 4;
-        var interactKey = NullIfBlank(InteractKeyBox.Text) ?? "F";
-        var tpKey = NullIfBlank(TpKeyBox.Text) ?? "O";
-        var latencyProfile = (LatencyProfileSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "HighPing";
-        var uiLoadWaitMs = int.TryParse(UiLoadWaitMsBox.Text.Trim(), out var parsedUiWait)
-            ? Math.Clamp(parsedUiWait, 500, 30_000)
-            : 7500;
-        var actionSettleMs = int.TryParse(ActionSettleDelayMsBox.Text.Trim(), out var parsedSettle)
-            ? Math.Clamp(parsedSettle, 100, 5_000)
-            : 900;
-        var apiTimeoutSeconds = int.TryParse(ApiTimeoutSecondsBox.Text.Trim(), out var parsedTimeout)
-            ? Math.Clamp(parsedTimeout, 15, 120)
-            : 60;
-        var launchPlatform = GetSelectedLaunchPlatform();
-        var maxRecoveryRetries = int.TryParse(MaxRecoveryRetriesBox.Text.Trim(), out var parsedRec)
-            ? Math.Clamp(parsedRec, 0, 10)
-            : 3;
-        var maxGameRestarts = int.TryParse(MaxGameRestartsBox.Text.Trim(), out var parsedRestarts)
-            ? Math.Clamp(parsedRestarts, 0, 5)
-            : 2;
-        var autoRestartOnFailure = AutoRestartOnFailureCheckBox.IsChecked == true;
-        var shutdownCountdownSeconds = int.TryParse(PcShutdownCountdownBox.Text.Trim(), out var parsedCd)
-            ? Math.Clamp(parsedCd, 10, 600)
-            : 60;
-
-        settings = new Gw2ClientSettings(
-            ExecutablePath: NullIfBlank(Gw2ExecutablePathBox.Text),
-            LaunchArguments: NullIfBlank(Gw2LaunchArgsBox.Text) ?? "-autologin -windowed",
-            WindowWidth: width,
-            WindowHeight: height,
-            AutoPrepareOnScreenStart: SnapWindowOnStartCheckBox.IsChecked == true,
-            AutoLaunchIfNotRunning: AutoLaunchGw2CheckBox.IsChecked == true,
-            SwapCharacterIntervalMinutes: swapMinutes,
-            SwapCharacterJitterMinutes: jitter,
-            RandomizeCharacterSelection: RandomCharacterSwapCheckBox.IsChecked == true,
-            MaxLaunchAttempts: maxAttempts,
-            WindowWaitTimeoutSeconds: waitSeconds,
-            MaxSessionDurationMinutes: maxSessionMinutes,
-            ParkedCharacterCount: parkedChars,
-            InteractKeybind: interactKey,
-            TradingPostKeybind: tpKey,
-            RelistStaleUndercutSells: RelistStaleSellsCheckBox.IsChecked == true,
-            MaxBuyOrderSharePercent: int.TryParse(MaxBuyOrderShareBox.Text.Trim(), out var buyShare) ? Math.Clamp(buyShare, 0, 100) : 50,
-            LatencyProfile: latencyProfile,
-            UiLoadWaitMs: uiLoadWaitMs,
-            ActionSettleDelayMs: actionSettleMs,
-            ApiTimeoutSeconds: apiTimeoutSeconds,
-            LaunchPlatform: launchPlatform,
-            MaxRecoveryRetries: maxRecoveryRetries,
-            AutoRestartGameOnFailure: autoRestartOnFailure,
-            MaxGameRestartsPerSession: maxGameRestarts,
-            AutoCloseGameOnSessionCap: AutoCloseGameOnCapCheckBox.IsChecked == true,
-            AutoCloseAppOnSessionCap: AutoCloseAppOnCapCheckBox.IsChecked == true,
-            ShutdownPcOnSessionCap: ShutdownPcOnCapCheckBox.IsChecked == true,
-            PcShutdownCountdownSeconds: shutdownCountdownSeconds,
-            PriceEntryMode: (PriceEntryModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? Gw2ClientSettings.PriceEntryTypeExact);
-        SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
-            ? $"Session cap: {settings.FormatMaxSessionHours()}h"
-            : "Session cap: disabled";
-        return true;
-    }
-
-    private bool TryReadOperatorSettings(out OperatorSettings settings)
-    {
-        var theme = (ThemeSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "System";
-        var overbidMin = int.TryParse(OverbidMinBox.Text.Trim(), out var obMin) && obMin >= 0 ? obMin : 1;
-        var overbidMax = int.TryParse(OverbidMaxBox.Text.Trim(), out var obMax) && obMax >= overbidMin ? obMax : overbidMin;
-        var undercutMin = int.TryParse(UndercutMinBox.Text.Trim(), out var ucMin) && ucMin >= 0 ? ucMin : 1;
-        var undercutMax = int.TryParse(UndercutMaxBox.Text.Trim(), out var ucMax) && ucMax >= undercutMin ? ucMax : undercutMin;
-        var defaultQty = long.TryParse(DefaultQuantityBox.Text.Trim(), out var qty) && qty > 0 ? qty : 1;
-        decimal? goldFloor = decimal.TryParse(GoldThresholdNoBuyBox.Text.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out var parsedFloor) && parsedFloor >= 0
-            ? parsedFloor
-            : null;
-        var reportMinDuration = int.TryParse(ReportMinDurationBox.Text.Trim(), out var parsedMinDur)
-            ? Math.Clamp(parsedMinDur, 0, 1440)
-            : 5;
-        var maxSavedReports = int.TryParse(MaxSavedReportsBox.Text.Trim(), out var parsedMaxRpts)
-            ? Math.Clamp(parsedMaxRpts, 10, 1000)
-            : 100;
-
-        settings = new OperatorSettings(
-            ThemeMode: theme,
-            PauseHotkey: NullIfBlank(PauseHotkeyBox.Text) ?? string.Empty,
-            StopHotkey: NullIfBlank(StopHotkeyBox.Text) ?? string.Empty,
-            EmergencyStopHotkey: NullIfBlank(EmergencyStopHotkeyBox.Text) ?? string.Empty,
-            OverbidBufferMinCopper: overbidMin,
-            OverbidBufferMaxCopper: overbidMax,
-            UndercutBufferMinCopper: undercutMin,
-            UndercutBufferMaxCopper: undercutMax,
-            DefaultOrderQuantity: defaultQty,
-            GoldThresholdNoBuy: goldFloor,
-            UseCustomShoppingList: UseCustomListOnStartCheckBox.IsChecked == true,
-            CandidatesPath: NullIfBlank(CandidatesPathBox.Text),
-            BlacklistPath: NullIfBlank(BlacklistPathBox.Text),
-            FixturePath: NullIfBlank(FixturePathBox.Text),
-            RecordPath: NullIfBlank(RecordPathBox.Text),
-            CaptureFrames: CaptureFramesCheckBox.IsChecked == true,
-            EnableDataWarsVelocity: ScannerPage.ScanVelocityCheckBox.IsChecked == true,
-            AutoListBoughtFlipItems: AutoSellInventoryCheckBox.IsChecked == true,
-            AutoRescanHours: ScannerPage.ReadAutoRescanHours(),
-            AutoDockSideBySideWhenRunning: AutoDockBesideGw2CheckBox.IsChecked == true,
-            UsePortfolioIntelligence: UsePortfolioIntelligenceCheckBox.IsChecked == true,
-            SaveSessionReports: SaveSessionReportsCheckBox.IsChecked == true,
-            ReportIncludeDryRunAndObserve: ReportIncludeDryRunCheckBox.IsChecked == true,
-            ReportMinDurationMinutes: reportMinDuration,
-            ReportAlwaysSaveIfTradesOccurred: ReportSaveOnTradesCheckBox.IsChecked == true,
-            ReportAlwaysSaveOnErrors: ReportSaveOnErrorsCheckBox.IsChecked == true,
-            MaxSavedSessionReports: maxSavedReports,
-            Scanner: ScannerPage.CaptureScannerUiState(),
-            AutomateOnLaunch: AutomateOnLaunchCheckBox.IsChecked == true,
-            LastAutoTunedPreset: _lastAutoTunedPreset,
-            AutoTuneEachSession: AutoTuneEachSessionCheckBox.IsChecked == true,
-            AutoTuneKeeps: _autoTuneKeeps.Count == 0 ? null : _autoTuneKeeps.OrderBy(key => key, StringComparer.Ordinal).ToArray());
-        ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
-        return true;
-    }
-
-    internal void SaveOperatorSettingsIfValid()
-    {
-        if (TryReadOperatorSettings(out var opSettings))
-        {
-            _saveOperatorSettings(opSettings);
-        }
-    }
-
-    private void SaveAllSettingsSilently()
-    {
-        if (TradingLimits.TryParse(MinimumProfitBox.Text, MaximumBuyGoldBox.Text, out var limits, out _))
-        {
-            _saveLimits(limits);
-        }
-
-        if (TryReadClientSettings(out var clientSettings))
-        {
-            _saveClientSettings(clientSettings);
-        }
-
-        SaveOperatorSettingsIfValid();
-    }
-
-    private sealed class ApiKeyRowViewModel(
-        string id,
-        bool isActive,
-        bool canMoveUp,
-        bool canMoveDown,
-        string statusText,
-        Brush statusBrush,
-        string accountName,
-        string platformLabel,
-        string maskedKey,
-        string customName)
-    {
-        public string Id { get; } = id;
-        public bool IsActive { get; } = isActive;
-        public string UseLabel => IsActive ? "Active" : "Use";
-        public bool CanUse => !IsActive;
-        public bool CanMoveUp { get; } = canMoveUp;
-        public bool CanMoveDown { get; } = canMoveDown;
-        public string StatusText { get; } = statusText;
-        public Brush StatusBrush { get; } = statusBrush;
-        public string AccountName { get; } = accountName;
-        public string PlatformLabel { get; } = platformLabel;
-        public string MaskedKey { get; } = maskedKey;
-        public string CustomName { get; set; } = customName;
     }
 
     // ---------------------------------------------------------------------

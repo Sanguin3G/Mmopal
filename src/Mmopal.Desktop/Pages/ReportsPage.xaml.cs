@@ -274,9 +274,9 @@ public partial class ReportsPage : UserControl
     private void CustomizeReportSettings_Click(object sender, RoutedEventArgs e)
     {
         Host.NavSettings.IsChecked = true;
-        if (Host.SettingsTabControl is not null && Host.SettingsTabControl.Items.Count >= 4)
+        if (Host.SettingsPage.SettingsTabControl is not null && Host.SettingsPage.SettingsTabControl.Items.Count >= 4)
         {
-            Host.SettingsTabControl.SelectedIndex = 3;
+            Host.SettingsPage.SettingsTabControl.SelectedIndex = 3;
         }
     }
 

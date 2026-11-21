@@ -38,7 +38,7 @@ public partial class ScannerPage : UserControl
         _scanCancellation?.Dispose();
     }
 
-    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e) => await Host.AutoTuneForWalletAsync(sender as Button);
+    private async void AutoTuneForWallet_Click(object sender, RoutedEventArgs e) => await Host.SettingsPage.AutoTuneForWalletAsync(sender as Button);
 
     /// <summary>Labels each scan row with what your own last 30 days of trades say about it.</summary>
     private IReadOnlyList<MarketScanItem> AnnotateWithHistory(IReadOnlyList<MarketScanItem> items)
@@ -138,7 +138,7 @@ public partial class ScannerPage : UserControl
                 : string.Empty;
             ScanStatusText.Text = $"Found {items.Count} profitable items matching your filters.{spikeNote}";
             Host.AddLog($"Market Scanner: Found {items.Count} profitable items.{spikeNote}");
-            Host.SaveOperatorSettingsIfValid();
+            Host.SettingsPage.SaveOperatorSettingsIfValid();
             return true;
         }
         catch (OperationCanceledException)
@@ -206,8 +206,8 @@ public partial class ScannerPage : UserControl
     {
         var path = MainWindow.ScannedCandidatesPath;
         OperatorListsStore.SaveShoppingList(path, _scanResults.Select(item => item.ToCandidate()));
-        Host.CandidatesPathBox.Text = path;
-        Host.SaveOperatorSettingsIfValid();
+        Host.SettingsPage.CandidatesPathBox.Text = path;
+        Host.SettingsPage.SaveOperatorSettingsIfValid();
         Host.RefreshReadinessChecklist();
         ScanStatusText.Text = $"Saved {_scanResults.Count} items to session candidates ({Path.GetFileName(path)}).";
     }
@@ -305,9 +305,9 @@ public partial class ScannerPage : UserControl
         var sortMode = (ScanSortSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? MarketScanSortModes.GoldPerDay;
         var scopeText = (ScanScopeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "2000";
         var maxScan = int.TryParse(scopeText, out var parsedScope) ? parsedScope : 2000;
-        var defaultQty = long.TryParse(Host.DefaultQuantityBox.Text.Trim(), out var parsedQty) && parsedQty > 0 ? parsedQty : 1;
-        var overbid = int.TryParse(Host.OverbidMinBox.Text.Trim(), out var parsedOb) && parsedOb >= 0 ? parsedOb : 0;
-        var undercut = int.TryParse(Host.UndercutMinBox.Text.Trim(), out var parsedUc) && parsedUc >= 0 ? parsedUc : 0;
+        var defaultQty = long.TryParse(Host.SettingsPage.DefaultQuantityBox.Text.Trim(), out var parsedQty) && parsedQty > 0 ? parsedQty : 1;
+        var overbid = int.TryParse(Host.SettingsPage.OverbidMinBox.Text.Trim(), out var parsedOb) && parsedOb >= 0 ? parsedOb : 0;
+        var undercut = int.TryParse(Host.SettingsPage.UndercutMinBox.Text.Trim(), out var parsedUc) && parsedUc >= 0 ? parsedUc : 0;
 
         filter = new MarketScanFilter(
             MinimumProfitPercentage: minRoi,
