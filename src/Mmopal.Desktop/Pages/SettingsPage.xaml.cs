@@ -58,7 +58,7 @@ public partial class SettingsPage : UserControl
             Host.RebuildApiKeyViews();
         }
 
-        Host.UpdateSessionPaceSummary();
+        Host.SessionPage.UpdateSessionPaceSummary();
         Host.RefreshReadinessChecklist();
         SaveAllSettingsSilently();
     }
@@ -120,7 +120,7 @@ public partial class SettingsPage : UserControl
 
         var tune = ApplySmartAutoTune(capitalCopper);
         var message = $"Auto-tuned from {sourceLabel}: {tune.Summary}";
-        Host.StatusText.Text = message;
+        Host.SessionPage.StatusText.Text = message;
         Host.ScannerPage.ScanStatusText.Text = message;
         Host.AddLog($"Auto-Tune ({sourceLabel}): {tune.Summary}");
         if (feedbackButton is not null)
@@ -631,13 +631,13 @@ public partial class SettingsPage : UserControl
                 ? $"{first.Kind} install via {first.Source}"
                 : "Detected GW2 executable";
             Gw2DetectHealthText.Text = $"{kindText}  •  Display Scale: {dpi.Summary}";
-            Host.StatusText.Text = $"Detected Guild Wars 2 at {detected}";
+            Host.SessionPage.StatusText.Text = $"Detected Guild Wars 2 at {detected}";
             Host.AddLog($"Detected GW2 ({kindText}): {detected}");
         }
         else
         {
             Gw2DetectHealthText.Text = $"Could not auto-detect Gw2-64.exe  •  Display Scale: {dpi.Summary}";
-            Host.StatusText.Text = "Could not auto-detect Gw2-64.exe; click Browse or enter steam://rungameid/1284210.";
+            Host.SessionPage.StatusText.Text = "Could not auto-detect Gw2-64.exe; click Browse or enter steam://rungameid/1284210.";
         }
 
         Host.RefreshReadinessChecklist();
@@ -677,7 +677,7 @@ public partial class SettingsPage : UserControl
         Host.SaveOperatorSettings(opSettings);
         Host.RegisterConfiguredHotkeys(logWarnings: true);
         Host.RefreshReadinessChecklist();
-        Host.StatusText.Text = "All settings saved to local profiles folder.";
+        Host.SessionPage.StatusText.Text = "All settings saved to local profiles folder.";
         Host.AddLog("Saved trading limits, GW2 client/latency settings, session cap, AFK policy, and hotkeys.");
         await FlashButtonFeedbackAsync(SaveAllSettingsButton, "✓ Saved");
     }
@@ -819,7 +819,7 @@ public partial class SettingsPage : UserControl
             ? $"{first.Kind} ({first.Source})"
             : !string.IsNullOrWhiteSpace(Gw2ExecutablePathBox.Text) ? "Configured path" : "Not detected yet";
         Gw2DetectHealthText.Text = $"Client: {installInfo}  •  Display Scale: {dpi.Summary}";
-        Host.SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
+        Host.SessionPage.SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
             ? $"Session cap: {settings.FormatMaxSessionHours()}h"
             : "Session cap: disabled";
     }
@@ -849,7 +849,7 @@ public partial class SettingsPage : UserControl
         RecordPathBox.Text = settings.RecordPath ?? string.Empty;
         CaptureFramesCheckBox.IsChecked = settings.CaptureFrames;
         Host.ScannerPage.ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
-        Host.AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
+        Host.SessionPage.AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
         Host.ScannerPage.AutoRescanHoursBox.Text = settings.AutoRescanHours.ToString(CultureInfo.CurrentCulture);
         Host.ScannerPage.ApplyScannerUiState(settings.Scanner);
         AutomateOnLaunchCheckBox.IsChecked = settings.AutomateOnLaunch;
@@ -876,7 +876,7 @@ public partial class SettingsPage : UserControl
             return true;
         }
 
-        Host.StatusText.Text = error ?? "Trading limits are invalid.";
+        Host.SessionPage.StatusText.Text = error ?? "Trading limits are invalid.";
         return false;
     }
 
@@ -885,13 +885,13 @@ public partial class SettingsPage : UserControl
         settings = new Gw2ClientSettings();
         if (!Gw2ClientSettings.TryParseSwapHours(SwapCharacterHoursBox.Text, out var swapMinutes, out var error))
         {
-            Host.StatusText.Text = error ?? "Character swap interval is invalid.";
+            Host.SessionPage.StatusText.Text = error ?? "Character swap interval is invalid.";
             return false;
         }
 
         if (!Gw2ClientSettings.TryParseMaxSessionHours(MaxSessionHoursBox.Text, out var maxSessionMinutes, out var capError))
         {
-            Host.StatusText.Text = capError ?? "Max session duration is invalid.";
+            Host.SessionPage.StatusText.Text = capError ?? "Max session duration is invalid.";
             return false;
         }
 
@@ -956,7 +956,7 @@ public partial class SettingsPage : UserControl
             ShutdownPcOnSessionCap: ShutdownPcOnCapCheckBox.IsChecked == true,
             PcShutdownCountdownSeconds: shutdownCountdownSeconds,
             PriceEntryMode: (PriceEntryModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? Gw2ClientSettings.PriceEntryTypeExact);
-        Host.SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
+        Host.SessionPage.SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
             ? $"Session cap: {settings.FormatMaxSessionHours()}h"
             : "Session cap: disabled";
         return true;
@@ -998,7 +998,7 @@ public partial class SettingsPage : UserControl
             RecordPath: NullIfBlank(RecordPathBox.Text),
             CaptureFrames: CaptureFramesCheckBox.IsChecked == true,
             EnableDataWarsVelocity: Host.ScannerPage.ScanVelocityCheckBox.IsChecked == true,
-            AutoListBoughtFlipItems: Host.AutoSellInventoryCheckBox.IsChecked == true,
+            AutoListBoughtFlipItems: Host.SessionPage.AutoSellInventoryCheckBox.IsChecked == true,
             AutoRescanHours: Host.ScannerPage.ReadAutoRescanHours(),
             AutoDockSideBySideWhenRunning: AutoDockBesideGw2CheckBox.IsChecked == true,
             UsePortfolioIntelligence: UsePortfolioIntelligenceCheckBox.IsChecked == true,

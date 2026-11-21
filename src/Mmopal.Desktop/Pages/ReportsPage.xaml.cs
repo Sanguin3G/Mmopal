@@ -221,7 +221,7 @@ public partial class ReportsPage : UserControl
     {
         if (_selectedReport is null)
         {
-            Host.StatusText.Text = "Select a session report first.";
+            Host.SessionPage.StatusText.Text = "Select a session report first.";
             return;
         }
 
@@ -241,7 +241,7 @@ public partial class ReportsPage : UserControl
     {
         if (_selectedReport is null)
         {
-            Host.StatusText.Text = "Select a session report first.";
+            Host.SessionPage.StatusText.Text = "Select a session report first.";
             return;
         }
 

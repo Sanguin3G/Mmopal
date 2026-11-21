@@ -120,7 +120,7 @@ public partial class ListsPage : UserControl
         Host.SettingsPage.UseCustomListOnStartCheckBox.IsChecked = true;
         Host.SettingsPage.SaveOperatorSettingsIfValid();
         Host.RefreshReadinessChecklist();
-        Host.StatusText.Text = $"Custom Shopping List ({_customShoppingList.Count} items) ready for next session.";
+        Host.SessionPage.StatusText.Text = $"Custom Shopping List ({_customShoppingList.Count} items) ready for next session.";
         Host.AddLog($"Custom Shopping List ({_customShoppingList.Count} items) enabled for Start session.");
     }
 
