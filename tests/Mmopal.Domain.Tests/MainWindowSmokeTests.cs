@@ -202,6 +202,16 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal("DryRun", Assert.IsType<ComboBoxItem>(mode.SelectedItem).Tag);
                 Assert.False(armLiveBox.IsChecked == true); // leaving Live disarms
 
+                // A hand-set gold floor survives Auto-Tune (it used to be reset from 25g to 80g on Start session).
+                var goldFloorBox = Assert.IsType<TextBox>(window.FindName("GoldThresholdNoBuyBox"));
+                goldFloorBox.Text = "25";
+                PumpDispatcher();
+                Assert.Equal(Visibility.Visible, Assert.IsType<DockPanel>(window.FindName("AutoTuneKeepsPanel")).Visibility);
+                window.ApplyStrategyPresetToSettings(TradingStrategyPresets.All[1]);
+                Assert.Equal("25", goldFloorBox.Text);
+                Assert.Equal(TradingStrategyPresets.All[1].MaxBuyGold.ToString(System.Globalization.CultureInfo.CurrentCulture),
+                    Assert.IsType<TextBox>(window.FindName("MaximumBuyGoldBox")).Text);
+
                 armLiveBox.IsChecked = false;
                 mode.SelectedIndex = 0;
                 PumpDispatcher();

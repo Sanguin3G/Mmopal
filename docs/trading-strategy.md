@@ -48,7 +48,7 @@ On by default (Settings → Trading & Portfolio → "Auto-Tune at every launch a
    - Items taking over 2 days to sell: Min trades/day ×2 and Max ROI capped at 60% (very wide spreads rarely fill).
 3. **Where the gold sits:** half or more in unsold listings lowers Max Buy by 25% and asks for busier items until they sell; 70%+ idle in the wallet with profitable flips raises order size by 50%.
 
-Min ROI stays within 8–25% and Min trades/day within 5–50. The result and its reasons are in the Activity Log and the Auto-Tune button's tooltip.
+Min ROI stays within 8–25% and Min trades/day within 5–50. **Values you change by hand are kept** (for example a lower gold floor if you want to take more risk): the Settings page lists them, and **Let Auto-Tune decide** hands them back. The result and its reasons are in the Activity Log and the Auto-Tune button's tooltip.
 
 ## On launch
 

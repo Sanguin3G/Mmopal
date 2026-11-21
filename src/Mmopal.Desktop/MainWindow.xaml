@@ -1600,19 +1600,19 @@
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Margin="0,0,10,0">
                                                     <TextBlock Text="MINIMUM PROFIT %" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="MinimumProfitBox" />
+                                                    <TextBox x:Name="MinimumProfitBox" Tag="MinProfit" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="1" Margin="0,0,10,0">
                                                     <TextBlock Text="MAX BUY PRICE (GOLD)" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="MaximumBuyGoldBox" />
+                                                    <TextBox x:Name="MaximumBuyGoldBox" Tag="MaxBuy" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="2" Margin="0,0,10,0">
                                                     <TextBlock Text="DEFAULT QUANTITY" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="DefaultQuantityBox" Text="1" />
+                                                    <TextBox x:Name="DefaultQuantityBox" Text="1" Tag="Quantity" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="3">
                                                     <TextBlock Text="GOLD FLOOR (NO BUY)" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="GoldThresholdNoBuyBox" />
+                                                    <TextBox x:Name="GoldThresholdNoBuyBox" Tag="GoldFloor" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                             </Grid>
                                             <Grid Margin="0,0,0,10">
@@ -1624,24 +1624,28 @@
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Margin="0,0,10,0">
                                                     <TextBlock Text="OVERBID MIN (c)" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="OverbidMinBox" Text="1" />
+                                                    <TextBox x:Name="OverbidMinBox" Text="1" Tag="Overbid" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="1" Margin="0,0,10,0">
                                                     <TextBlock Text="OVERBID MAX (c)" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="OverbidMaxBox" Text="5" />
+                                                    <TextBox x:Name="OverbidMaxBox" Text="5" Tag="Overbid" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="2" Margin="0,0,10,0">
                                                     <TextBlock Text="UNDERCUT MIN (c)" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="UndercutMinBox" Text="1" />
+                                                    <TextBox x:Name="UndercutMinBox" Text="1" Tag="Undercut" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="3">
                                                     <TextBlock Text="UNDERCUT MAX (c)" Style="{StaticResource FieldLabel}" />
-                                                    <TextBox x:Name="UndercutMaxBox" Text="5" />
+                                                    <TextBox x:Name="UndercutMaxBox" Text="5" Tag="Undercut" TextChanged="TunedField_TextChanged" />
                                                 </StackPanel>
                                             </Grid>
                                             <CheckBox x:Name="UsePortfolioIntelligenceCheckBox" Content="Use Income &amp; Portfolio ledger history (boost fast winners, auto-skip chronic losers &amp; heavy sell stacks)" IsChecked="True" Margin="0,0,0,6" />
                                             <CheckBox x:Name="AutomateOnLaunchCheckBox" Content="On launch: sync my GW2 account and scan the market" IsChecked="True" Margin="0,0,0,6" ToolTip="Fills Income &amp; Portfolio and the Market Scanner when Mmopal opens. If the session uses the scanner's list and it is older than the Auto re-scan interval, the fresh scan replaces it." />
-                                            <CheckBox x:Name="AutoTuneEachSessionCheckBox" Content="Auto-Tune at every launch and Start session (recommended unless you tune by hand)" IsChecked="True" Margin="0,0,0,6" ToolTip="Sizes buy limits from your total gold (wallet + gold in orders) and adjusts them from your last 14 days of flips: thin margins raise Min ROI, slow sales demand busier items, gold stuck in listings slows buying, idle gold with profitable flips raises order size. Never changes settings mid-session. Overwrites Min ROI, Max Buy, gold reserve, order size, overbid/undercut and the scanner filters." />
+                                            <CheckBox x:Name="AutoTuneEachSessionCheckBox" Content="Auto-Tune at every launch and Start session (recommended unless you tune by hand)" IsChecked="True" Margin="0,0,0,6" ToolTip="Sizes buy limits from your total gold (wallet + gold in orders) and adjusts them from your last 14 days of flips: thin margins raise Min ROI, slow sales demand busier items, gold stuck in listings slows buying, idle gold with profitable flips raises order size. Never changes settings mid-session. Any of those you change by hand is kept: Auto-Tune then tunes only the rest." />
+                                            <DockPanel x:Name="AutoTuneKeepsPanel" Visibility="Collapsed" Margin="26,0,0,6">
+                                                <Button x:Name="ClearAutoTuneKeepsButton" DockPanel.Dock="Right" Content="Let Auto-Tune decide" Click="ClearAutoTuneKeeps_Click" Padding="10,3" FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center" ToolTip="Forget your hand-set values; Auto-Tune sets them again at the next launch or Start session." />
+                                                <TextBlock x:Name="AutoTuneKeepsText" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                            </DockPanel>
                                             <CheckBox x:Name="ProtectSellListingsCheckBox" Content="Keep sell listings active — avoid auto-canceling to save the 5% fee" IsChecked="True" Margin="0,0,0,6" />
                                             <CheckBox x:Name="UseCustomListOnStartCheckBox" Content="Include Custom Shopping List &amp; Blacklist automatically on Start session" IsChecked="True" />
                                         </StackPanel>

@@ -89,6 +89,19 @@ public partial class MainWindow : Window
     private bool _isFirstRun;
     private string? _lastAutoTunedPreset;
     private IReadOnlyList<string> _losingItems = Array.Empty<string>();
+    // Auto-Tune fields the operator set by hand; Auto-Tune keeps them (the 25g gold floor was reset to 80g before).
+    private readonly HashSet<string> _autoTuneKeeps = new(StringComparer.OrdinalIgnoreCase);
+    private bool _applyingAutoTune;
+
+    private static readonly IReadOnlyDictionary<string, string> AutoTuneFieldLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["MinProfit"] = "Minimum profit %",
+        ["MaxBuy"] = "Max buy price",
+        ["Quantity"] = "Default quantity",
+        ["GoldFloor"] = "Gold floor",
+        ["Overbid"] = "Overbid",
+        ["Undercut"] = "Undercut"
+    };
 
     public MainWindow()
         : this(
@@ -1747,6 +1760,11 @@ public partial class MainWindow : Window
         _lastAutoTunedPreset = tune.Preset.Name;
         SaveAllSettingsSilently();
         RefreshReadinessChecklist();
+        if (_autoTuneKeeps.Count > 0)
+        {
+            tune = tune with { Summary = $"{tune.Summary} Kept your own: {DescribeAutoTuneKeeps()}." };
+        }
+
         var tip = $"Last Auto-Tune ({DateTime.Now:g}): {tune.Summary}";
         AutoTuneScannerButton.ToolTip = tip;
         AutoTuneSettingsButton.ToolTip = tip;
@@ -1777,16 +1795,70 @@ public partial class MainWindow : Window
         SelectComboByTag(ScanCategorySelector, preset.PreferredCategory);
     }
 
-    private void ApplyStrategyPresetToSettings(TradingStrategyPreset preset)
+    private void TunedField_TextChanged(object sender, TextChangedEventArgs e)
     {
-        MinimumProfitBox.Text = preset.MinRoiPercent.ToString(CultureInfo.CurrentCulture);
-        MaximumBuyGoldBox.Text = preset.MaxBuyGold.ToString(CultureInfo.CurrentCulture);
-        DefaultQuantityBox.Text = preset.DefaultOrderQuantity.ToString(CultureInfo.InvariantCulture);
-        GoldThresholdNoBuyBox.Text = preset.RecommendedGoldFloor.ToString(CultureInfo.CurrentCulture);
-        OverbidMinBox.Text = preset.OverbidMinCopper.ToString(CultureInfo.InvariantCulture);
-        OverbidMaxBox.Text = preset.OverbidMaxCopper.ToString(CultureInfo.InvariantCulture);
-        UndercutMinBox.Text = preset.UndercutMinCopper.ToString(CultureInfo.InvariantCulture);
-        UndercutMaxBox.Text = preset.UndercutMaxCopper.ToString(CultureInfo.InvariantCulture);
+        if (_loadingUi || _applyingAutoTune || sender is not TextBox { Tag: string key } || !_autoTuneKeeps.Add(key))
+        {
+            return;
+        }
+
+        UpdateAutoTuneKeepsHint();
+    }
+
+    private void ClearAutoTuneKeeps_Click(object sender, RoutedEventArgs e)
+    {
+        _autoTuneKeeps.Clear();
+        UpdateAutoTuneKeepsHint();
+        SaveOperatorSettingsIfValid();
+        AddLog("Auto-Tune will set every trading value again from the next launch or Start session.");
+    }
+
+    private void UpdateAutoTuneKeepsHint()
+    {
+        if (AutoTuneKeepsPanel is null)
+        {
+            return;
+        }
+
+        AutoTuneKeepsPanel.Visibility = _autoTuneKeeps.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AutoTuneKeepsText.Text = $"Auto-Tune keeps what you set: {DescribeAutoTuneKeeps()}. It tunes the rest.";
+    }
+
+    private string DescribeAutoTuneKeeps() =>
+        string.Join(", ", _autoTuneKeeps.Select(key => AutoTuneFieldLabels.GetValueOrDefault(key, key)).OrderBy(label => label, StringComparer.Ordinal));
+
+    internal void ApplyStrategyPresetToSettings(TradingStrategyPreset preset)
+    {
+        _applyingAutoTune = true;
+        try
+        {
+            ApplyStrategyPresetToSettingsCore(preset);
+        }
+        finally
+        {
+            _applyingAutoTune = false;
+        }
+    }
+
+    private void ApplyStrategyPresetToSettingsCore(TradingStrategyPreset preset)
+    {
+        bool Tunes(string key) => !_autoTuneKeeps.Contains(key);
+        if (Tunes("MinProfit")) MinimumProfitBox.Text = preset.MinRoiPercent.ToString(CultureInfo.CurrentCulture);
+        if (Tunes("MaxBuy")) MaximumBuyGoldBox.Text = preset.MaxBuyGold.ToString(CultureInfo.CurrentCulture);
+        if (Tunes("Quantity")) DefaultQuantityBox.Text = preset.DefaultOrderQuantity.ToString(CultureInfo.InvariantCulture);
+        if (Tunes("GoldFloor")) GoldThresholdNoBuyBox.Text = preset.RecommendedGoldFloor.ToString(CultureInfo.CurrentCulture);
+        if (Tunes("Overbid"))
+        {
+            OverbidMinBox.Text = preset.OverbidMinCopper.ToString(CultureInfo.InvariantCulture);
+            OverbidMaxBox.Text = preset.OverbidMaxCopper.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (Tunes("Undercut"))
+        {
+            UndercutMinBox.Text = preset.UndercutMinCopper.ToString(CultureInfo.InvariantCulture);
+            UndercutMaxBox.Text = preset.UndercutMaxCopper.ToString(CultureInfo.InvariantCulture);
+        }
+
         // Session cap and character-swap interval are the operator's own schedule, not a function of wallet size,
         // so Auto-Tune leaves them as configured.
     }
@@ -3635,6 +3707,9 @@ public partial class MainWindow : Window
         ApplyScannerUiState(settings.Scanner);
         AutomateOnLaunchCheckBox.IsChecked = settings.AutomateOnLaunch;
         AutoTuneEachSessionCheckBox.IsChecked = settings.AutoTuneEachSession;
+        _autoTuneKeeps.Clear();
+        foreach (var key in settings.AutoTuneKeeps ?? Array.Empty<string>()) _autoTuneKeeps.Add(key);
+        UpdateAutoTuneKeepsHint();
         _lastAutoTunedPreset = settings.LastAutoTunedPreset;
         AutoDockBesideGw2CheckBox.IsChecked = settings.AutoDockSideBySideWhenRunning;
         UsePortfolioIntelligenceCheckBox.IsChecked = settings.UsePortfolioIntelligence;
@@ -3827,7 +3902,8 @@ public partial class MainWindow : Window
             Scanner: CaptureScannerUiState(),
             AutomateOnLaunch: AutomateOnLaunchCheckBox.IsChecked == true,
             LastAutoTunedPreset: _lastAutoTunedPreset,
-            AutoTuneEachSession: AutoTuneEachSessionCheckBox.IsChecked == true);
+            AutoTuneEachSession: AutoTuneEachSessionCheckBox.IsChecked == true,
+            AutoTuneKeeps: _autoTuneKeeps.Count == 0 ? null : _autoTuneKeeps.OrderBy(key => key, StringComparer.Ordinal).ToArray());
         UpdateReportRulesSummary(settings.ToSessionReportPolicy());
         return true;
     }

@@ -40,7 +40,9 @@ public sealed record OperatorSettings(
     // Preset name Auto-Tune last applied; null = never tuned, so the first launch with a wallet tunes once.
     string? LastAutoTunedPreset = null,
     // Smart Auto-Tune at every launch and every Start session (never mid-session). For operators who do not tune by hand.
-    bool AutoTuneEachSession = true)
+    bool AutoTuneEachSession = true,
+    // Settings the operator typed by hand ("GoldFloor", "MaxBuy", …): Auto-Tune leaves these alone.
+    IReadOnlyList<string>? AutoTuneKeeps = null)
 {
     public SessionReportPolicySettings ToSessionReportPolicy() => new(
         SaveSessionReports: SaveSessionReports,

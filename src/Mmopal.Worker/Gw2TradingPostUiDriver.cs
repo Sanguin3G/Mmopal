@@ -1361,7 +1361,8 @@ public sealed class Gw2TradingPostUiDriver
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             await TypeDialogPriceAsync(unitCopper, cancellationToken).ConfigureAwait(false);
-            var totals = (await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false))
+            var texts = await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false);
+            var totals = texts
                 .Select(ParseTotalPrice)
                 .Where(total => total is > 0)
                 .Select(total => total!.Value)
@@ -1378,17 +1379,82 @@ public sealed class Gw2TradingPostUiDriver
                     : $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)}).");
             }
 
+            // OCR often loses a "00"/"06" group on this line ("1g 00s 18c" read as "1 18"), which shifted the parse by
+            // one coin and aborted 43 good orders in one 7 h session. Accept a read that is the expected total with only
+            // zero-containing groups missing; a box that really missed its value still shows different digits.
+            if (texts.FirstOrDefault(text => TotalMatchesWithUnreadZeroGroups(text, unitCopper)) is { } zeroDropped)
+            {
+                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{zeroDropped.Trim()}', zero groups unread).");
+            }
+
             lastSeen = totals[0];
             if (attempt == 1)
             {
                 _logger.LogInformation(
-                    "Dialog shows {Seen} after typing {Typed}; re-typing once.",
+                    "Dialog shows {Seen} after typing {Typed} (read: '{Raw}'); re-typing once.",
                     MarketScanItem.FormatCoins(lastSeen.Value),
-                    MarketScanItem.FormatCoins(unitCopper));
+                    MarketScanItem.FormatCoins(unitCopper),
+                    string.Join(" | ", texts.Select(text => text.Trim())));
             }
         }
 
         return (false, $"typed {MarketScanItem.FormatCoins(unitCopper)} twice but the dialog total shows {MarketScanItem.FormatCoins(lastSeen ?? 0)}; the price boxes did not take the typed value.");
+    }
+
+    /// <summary>
+    /// True when the Total line's digit groups equal unit × q (q = 1..250) with only "zero-ish" groups missing: a
+    /// silver or copper value whose two-digit form contains a 0 (00, 06, 50 …), which OCR tends to drop. Gold is never
+    /// allowed to be missing, and no group may be extra or different.
+    /// </summary>
+    internal static bool TotalMatchesWithUnreadZeroGroups(string? text, long unitCopper)
+    {
+        var observed = new List<long>();
+        foreach (var group in PriceDigitGroups(text))
+        {
+            if (!long.TryParse(group, out var value)) return false;
+            observed.Add(value);
+        }
+
+        if (observed.Count == 0 || unitCopper <= 0)
+        {
+            return false;
+        }
+
+        for (var quantity = 1; quantity <= 250; quantity++)
+        {
+            var total = unitCopper * quantity;
+            var (gold, silver, copper) = (total / 10_000, total / 100 % 100, total % 100);
+            var expected = new List<(long Value, bool MayBeUnread)>();
+            if (gold > 0) expected.Add((gold, false));
+            if (gold > 0 || silver > 0) expected.Add((silver, IsZeroish(silver)));
+            expected.Add((copper, IsZeroish(copper)));
+            if (expected.Count > observed.Count && IsSubsequenceSkippingZeroish(observed, expected))
+            {
+                return true;
+            }
+        }
+
+        return false;
+
+        static bool IsZeroish(long twoDigit) => twoDigit < 10 || twoDigit % 10 == 0;
+    }
+
+    private static bool IsSubsequenceSkippingZeroish(List<long> observed, List<(long Value, bool MayBeUnread)> expected)
+    {
+        var o = 0;
+        foreach (var (value, mayBeUnread) in expected)
+        {
+            if (o < observed.Count && observed[o] == value)
+            {
+                o++;
+            }
+            else if (!mayBeUnread)
+            {
+                return false;
+            }
+        }
+
+        return o == observed.Count;
     }
 
     /// <summary>

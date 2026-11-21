@@ -623,6 +623,19 @@ public sealed class LiveTradingExecutorTests
         Assert.Equal(expected, Gw2TradingPostUiDriver.ParseTotalPrice(text));
     }
 
+    [Theory]
+    [InlineData("Total Price: 1 18 e", 10_018L, true)]        // 1g 00s 18c with "00" unread (15 Slot Rugged Leather Pack, 34 aborts)
+    [InlineData("Total Price: 6e 44e", 30_022L, true)]        // 2 x 3g 00s 22c = 6g 00s 44c
+    [InlineData("Total Price: 1 78", 8_903L, true)]           // 2 x 89s 03c = 1g 78s 06c, "06" unread
+    [InlineData("Total Price: 1", 5_000L, true)]              // 2 x 50s = 1g 00s 00c
+    [InlineData("Total Price: 56 74", 12_837L, false)]        // 2 x 1g 28s 37c: gold missing is never accepted
+    [InlineData("Total Price: 1 19", 10_018L, false)]         // different copper
+    [InlineData("Total Price: 1 00 18", 10_018L, false)]      // full read: handled by the normal parse, not here
+    public void TotalMatchesWithUnreadZeroGroups_accepts_only_missing_zero_groups(string text, long unit, bool expected)
+    {
+        Assert.Equal(expected, Gw2TradingPostUiDriver.TotalMatchesWithUnreadZeroGroups(text, unit));
+    }
+
     [Fact]
     public void ChooseTypedSellPrice_undercuts_the_lowest_ask_but_never_below_break_even()
     {
