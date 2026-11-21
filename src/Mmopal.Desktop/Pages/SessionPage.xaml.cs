@@ -1,5 +1,5 @@
 using System.IO;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -121,16 +121,16 @@ public partial class SessionPage : UserControl
             return;
         }
 
-        var selectedMode = (ModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        var isLiveMode = string.Equals(selectedMode, nameof(RunMode.Live), StringComparison.OrdinalIgnoreCase);
+        var isLiveMode = IsSelectedTag(ModeSelector, nameof(RunMode.Live));
         var isArmed = ArmLiveInputCheckBox.IsChecked == true;
+        var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
+        var neutralBorderBrush = ResolveBrush("BorderBrush", Brushes.Gray);
 
         if (isLiveMode && isArmed)
         {
             SafeModePillText.Text = "Live · Armed";
             SafeModePillBorder.ToolTip = "Live input is armed: the session sends real clicks and keystrokes to Guild Wars 2.";
-            SafeModePillIcon.Text = "\uE7BA";
-            var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
+            SafeModePillIcon.Text = WarningGlyph;
             SafeModePillIcon.Foreground = warnBrush;
             SafeModePillBorder.BorderBrush = warnBrush;
         }
@@ -138,20 +138,23 @@ public partial class SessionPage : UserControl
         {
             SafeModePillText.Text = "Live · Disarmed";
             SafeModePillBorder.ToolTip = "Live mode is selected but input is not armed. Tick 'Arm live input' to let the session click.";
-            SafeModePillIcon.Text = "\uE72E";
-            var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
+            SafeModePillIcon.Text = LockGlyph;
             SafeModePillIcon.Foreground = warnBrush;
-            SafeModePillBorder.BorderBrush = ResolveBrush("BorderBrush", Brushes.Gray);
+            SafeModePillBorder.BorderBrush = neutralBorderBrush;
         }
         else
         {
             SafeModePillText.Text = "Safe · No input";
             SafeModePillBorder.ToolTip = "Dry run / Observe: no clicks or keystrokes are sent to the game.";
-            SafeModePillIcon.Text = "\uE72E";
+            SafeModePillIcon.Text = LockGlyph;
             SafeModePillIcon.Foreground = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
-            SafeModePillBorder.BorderBrush = ResolveBrush("BorderBrush", Brushes.Gray);
+            SafeModePillBorder.BorderBrush = neutralBorderBrush;
         }
     }
+
+    // Segoe MDL2 glyphs for the safe-mode pill.
+    private const string WarningGlyph = "\uE7BA";
+    private const string LockGlyph = "\uE72E";
 
     private void ClearLog_Click(object sender, RoutedEventArgs e)
     {
@@ -190,15 +193,23 @@ public partial class SessionPage : UserControl
     internal void UpdateOrdersCard(string? orderBook, bool buysPaused)
     {
         var text = orderBook ?? string.Empty;
-        var counts = System.Text.RegularExpressions.Regex.Match(text, @"(\d+) buys? and (\d+) sells?");
-        var behindBuys = System.Text.RegularExpressions.Regex.Match(text, @"(\d+) buys? (?:is|are) behind");
-        var behindSells = System.Text.RegularExpressions.Regex.Match(text, @"(\d+) sells? (?:is|are) behind");
+        var counts = Regex.Match(text, @"(\d+) buys? and (\d+) sells?");
+        var behindBuys = Regex.Match(text, @"(\d+) buys? (?:is|are) behind");
+        var behindSells = Regex.Match(text, @"(\d+) sells? (?:is|are) behind");
         OrdersHeadlineText.Text = counts.Success ? $"{counts.Groups[1].Value} buys · {counts.Groups[2].Value} sells" : "—";
         var detail = new List<string>();
         if (buysPaused) detail.Add("buys paused (gold floor)");
         if (behindBuys.Success) detail.Add($"{behindBuys.Groups[1].Value} outbid");
         if (behindSells.Success) detail.Add($"{behindSells.Groups[1].Value} undercut");
-        OrdersDetailText.Text = detail.Count > 0 ? string.Join(" · ", detail) : counts.Success ? "all at the top of the book" : "No orders reported";
+        if (detail.Count > 0)
+        {
+            OrdersDetailText.Text = string.Join(" · ", detail);
+        }
+        else
+        {
+            OrdersDetailText.Text = counts.Success ? "all at the top of the book" : "No orders reported";
+        }
+
         OrdersCard.ToolTip = string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
@@ -214,7 +225,7 @@ public partial class SessionPage : UserControl
     {
         if (swapText.Contains("disabled", StringComparison.OrdinalIgnoreCase)) return "No AFK swap";
         if (swapText.Contains("due now", StringComparison.OrdinalIgnoreCase)) return "Swap due";
-        var minutes = System.Text.RegularExpressions.Regex.Match(swapText, @"in (\d+)m");
+        var minutes = Regex.Match(swapText, @"in (\d+)m");
         if (!minutes.Success || !int.TryParse(minutes.Groups[1].Value, out var total)) return "AFK swap on";
         return total >= 60 ? $"Swap in {total / 60}h {total % 60:00}m" : $"Swap in {total}m";
     }

@@ -185,13 +185,10 @@ public sealed class DesktopWorkerSupervisor : IDesktopWorkerSupervisor
             {
                 await _eventPump.ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
-            {
-                // Expected while tearing down a previous worker session.
-            }
             catch
             {
-                // Best-effort cleanup before restart or shutdown.
+                // Cancellation is expected while tearing down a previous worker session; anything else is
+                // best-effort cleanup before restart or shutdown.
             }
         }
 
@@ -199,7 +196,7 @@ public sealed class DesktopWorkerSupervisor : IDesktopWorkerSupervisor
         _eventPumpCancellation = null;
         _eventPump = null;
 
-        await DisposeTransportAsync().ConfigureAwait(false);
+        DisposeTransport();
         StopProcess();
     }
 
@@ -255,7 +252,7 @@ public sealed class DesktopWorkerSupervisor : IDesktopWorkerSupervisor
         }
     }
 
-    private async Task DisposeTransportAsync()
+    private void DisposeTransport()
     {
         _reader?.Dispose();
         _writer?.Dispose();
@@ -263,7 +260,6 @@ public sealed class DesktopWorkerSupervisor : IDesktopWorkerSupervisor
         _reader = null;
         _writer = null;
         _pipe = null;
-        await Task.CompletedTask;
     }
 
     private void StopProcess()

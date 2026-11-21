@@ -30,28 +30,26 @@ public partial class GuidePage : UserControl
 
     private async void DetectGw2_Click(object sender, RoutedEventArgs e) => await Host.SettingsPage.DetectGw2Async();
 
+    // Segoe MDL2 glyphs: CheckMark and Warning.
+    private const string PassGlyph = "\uE73E";
+    private const string WarnGlyph = "\uE7BA";
+
     /// <summary>Updates the four checks and returns how many pass.</summary>
     internal int RefreshChecklist()
     {
-        var passBrush = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
-        var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
-        var readyCount = 0;
-
         var hasKey = Host.HasVerifiedApiKey || !string.IsNullOrWhiteSpace(Host.ResolveConfiguredApiKey());
-        if (hasKey)
+        SetCheckIcon(CheckApiKeyIcon, hasKey);
+        if (!hasKey)
         {
-            readyCount++;
-            CheckApiKeyIcon.Text = "";
-            CheckApiKeyIcon.Foreground = passBrush;
-            CheckApiKeyText.Text = Host.HasVerifiedApiKey
-                ? "GW2 API Key verified and stored securely via Windows DPAPI."
-                : "GW2 API Key configured (click Test Key in Settings to verify scopes).";
+            CheckApiKeyText.Text = "GW2 API Key missing — add a key with account, tradingpost, wallet scopes in Settings.";
+        }
+        else if (Host.HasVerifiedApiKey)
+        {
+            CheckApiKeyText.Text = "GW2 API Key verified and stored securely via Windows DPAPI.";
         }
         else
         {
-            CheckApiKeyIcon.Text = "";
-            CheckApiKeyIcon.Foreground = warnBrush;
-            CheckApiKeyText.Text = "GW2 API Key missing — add a key with account, tradingpost, wallet scopes in Settings.";
+            CheckApiKeyText.Text = "GW2 API Key configured (click Test Key in Settings to verify scopes).";
         }
 
         var isSteamMode = string.Equals(Host.SettingsPage.GetSelectedLaunchPlatform(), Gw2ClientSettings.PlatformSteam, StringComparison.OrdinalIgnoreCase);
@@ -59,59 +57,52 @@ public partial class GuidePage : UserControl
         var hasGw2 = isSteamMode ||
                      (!string.IsNullOrWhiteSpace(gw2Path) &&
                       (Win32ProcessController.IsUriLaunch(gw2Path) || File.Exists(gw2Path)));
-        if (hasGw2)
+        SetCheckIcon(CheckGw2Icon, hasGw2);
+        if (isSteamMode)
         {
-            readyCount++;
-            CheckGw2Icon.Text = "";
-            CheckGw2Icon.Foreground = passBrush;
-            CheckGw2Text.Text = isSteamMode
-                ? $"GW2 client configured: Steam Auto-Login ({Gw2ClientSettings.SteamLaunchUri})"
-                : $"GW2 client configured: {gw2Path}";
+            CheckGw2Text.Text = $"GW2 client configured: Steam Auto-Login ({Gw2ClientSettings.SteamLaunchUri})";
+        }
+        else if (hasGw2)
+        {
+            CheckGw2Text.Text = $"GW2 client configured: {gw2Path}";
         }
         else
         {
-            CheckGw2Icon.Text = "";
-            CheckGw2Icon.Foreground = warnBrush;
             CheckGw2Text.Text = string.IsNullOrWhiteSpace(gw2Path)
                 ? "GW2 client path not set — click Auto-Detect GW2 or Browse in Settings."
                 : $"Configured GW2 path not found on disk: {gw2Path}";
         }
 
         var dpi = Host.DetectDisplayScale();
-        if (dpi.IsRecommendedScale)
-        {
-            readyCount++;
-            CheckDpiIcon.Text = "";
-            CheckDpiIcon.Foreground = passBrush;
-        }
-        else
-        {
-            CheckDpiIcon.Text = "";
-            CheckDpiIcon.Foreground = warnBrush;
-        }
-
+        SetCheckIcon(CheckDpiIcon, dpi.IsRecommendedScale);
         CheckDpiText.Text = $"Windows Display Scaling: {dpi.Summary}";
 
         var customItemCount = Host.ListsPage.CustomShoppingList.Count;
         var candidatesPath = Host.SettingsPage.CandidatesPathBox.Text;
         var hasCandidates = customItemCount > 0 || !string.IsNullOrWhiteSpace(candidatesPath);
-        if (hasCandidates)
+        SetCheckIcon(CheckCandidatesIcon, hasCandidates);
+        if (customItemCount > 0)
         {
-            readyCount++;
-            CheckCandidatesIcon.Text = "";
-            CheckCandidatesIcon.Foreground = passBrush;
-            CheckCandidatesText.Text = customItemCount > 0
-                ? $"Flip targets ready ({customItemCount} custom items + optional session file)."
-                : $"Flip targets ready ({Path.GetFileName(candidatesPath.Trim())}).";
+            CheckCandidatesText.Text = $"Flip targets ready ({customItemCount} custom items + optional session file).";
+        }
+        else if (hasCandidates)
+        {
+            CheckCandidatesText.Text = $"Flip targets ready ({Path.GetFileName(candidatesPath.Trim())}).";
         }
         else
         {
-            CheckCandidatesIcon.Text = "";
-            CheckCandidatesIcon.Foreground = warnBrush;
             CheckCandidatesText.Text = "No flip targets loaded yet — run Market Scanner and click 'Use All for Session'.";
         }
 
-        return readyCount;
+        return new[] { hasKey, hasGw2, dpi.IsRecommendedScale, hasCandidates }.Count(passed => passed);
+    }
+
+    private static void SetCheckIcon(TextBlock icon, bool passed)
+    {
+        icon.Text = passed ? PassGlyph : WarnGlyph;
+        icon.Foreground = passed
+            ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
+            : ResolveBrush("WarningBrush", Brushes.DarkOrange);
     }
 
     /// <summary>Shows today's market windows in local time and highlights the current one.</summary>
@@ -119,19 +110,19 @@ public partial class GuidePage : UserControl
     {
         var localTz = TimeZoneInfo.Local;
         var utcToday = new DateTimeOffset(nowUtc.UtcDateTime.Date, TimeSpan.Zero);
-        var euStart = TimeZoneInfo.ConvertTime(utcToday.AddHours(17), localTz);
-        var euEnd = TimeZoneInfo.ConvertTime(utcToday.AddHours(22), localTz);
-        var resetStart = TimeZoneInfo.ConvertTime(utcToday.AddDays(1), localTz);
-        var resetEnd = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddMinutes(90), localTz);
-        var naStart = TimeZoneInfo.ConvertTime(utcToday.AddHours(22), localTz);
-        var naEnd = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddHours(4), localTz);
-        var offStart = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddHours(4), localTz);
-        var offEnd = TimeZoneInfo.ConvertTime(utcToday.AddDays(1).AddHours(17), localTz);
 
-        EuPrimeTimeText.Text = $"{euStart:HH:mm}–{euEnd:HH:mm}";
-        ResetTimeText.Text = $"{resetStart:HH:mm}–{resetEnd:HH:mm}";
-        NaPrimeTimeText.Text = $"{naStart:HH:mm}–{naEnd:HH:mm}";
-        OffPeakTimeText.Text = $"{offStart:HH:mm}–{offEnd:HH:mm}";
+        // Window bounds are hours after today's 00:00 UTC.
+        string LocalRange(double startHour, double endHour)
+        {
+            var start = TimeZoneInfo.ConvertTime(utcToday.AddHours(startHour), localTz);
+            var end = TimeZoneInfo.ConvertTime(utcToday.AddHours(endHour), localTz);
+            return $"{start:HH:mm}–{end:HH:mm}";
+        }
+
+        EuPrimeTimeText.Text = LocalRange(17, 22);
+        ResetTimeText.Text = LocalRange(24, 25.5);
+        NaPrimeTimeText.Text = LocalRange(22, 28);
+        OffPeakTimeText.Text = LocalRange(28, 41);
 
         SetScheduleTileHighlight(EuPrimeTile, info.PhaseName == "EU Prime Time");
         SetScheduleTileHighlight(ResetTile, info.PhaseName == "Daily Reset Spike");
@@ -143,9 +134,8 @@ public partial class GuidePage : UserControl
 
     private static void SetScheduleTileHighlight(Border tile, bool isActive)
     {
-        tile.Background = isActive
-            ? ResolveBrush("AccentSoftBrush", ResolveBrush("SurfaceRaisedBrush", Brushes.DimGray))
-            : ResolveBrush("SurfaceRaisedBrush", Brushes.DimGray);
+        var surfaceBrush = ResolveBrush("SurfaceRaisedBrush", Brushes.DimGray);
+        tile.Background = isActive ? ResolveBrush("AccentSoftBrush", surfaceBrush) : surfaceBrush;
         tile.BorderBrush = isActive
             ? ResolveBrush("AccentBrush", Brushes.DodgerBlue)
             : ResolveBrush("BorderBrush", Brushes.Gray);

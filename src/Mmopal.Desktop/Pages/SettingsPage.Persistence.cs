@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using Mmopal.Contracts;
 using Mmopal.Gw2;
 using Mmopal.Infrastructure;
+using Mmopal.Native;
 using static Mmopal.Desktop.UiHelpers;
 
 namespace Mmopal.Desktop.Pages;
@@ -30,10 +31,7 @@ public partial class SettingsPage
         var settings = Host.ReadSavedClientSettings();
         var installs = Host.DiscoverGw2Installs();
         var detectedPath = installs.FirstOrDefault()?.ExecutablePath ?? Host.DetectGw2Path();
-        var inferredPlatform = !string.IsNullOrWhiteSpace(settings.LaunchPlatform)
-            ? settings.LaunchPlatform
-            : settings.IsSteamPlatform ? Gw2ClientSettings.PlatformSteam : Gw2ClientSettings.PlatformArenaNet;
-        SelectComboByTag(LaunchPlatformSelector, inferredPlatform);
+        SelectComboByTag(LaunchPlatformSelector, InferLaunchPlatform(settings));
 
         Gw2ExecutablePathBox.Text = string.IsNullOrWhiteSpace(settings.ExecutablePath)
             ? detectedPath ?? string.Empty
@@ -44,21 +42,21 @@ public partial class SettingsPage
             : settings.LaunchArguments;
         Gw2WidthBox.Text = settings.WindowWidth > 0 ? settings.WindowWidth.ToString(CultureInfo.InvariantCulture) : "1024";
         Gw2HeightBox.Text = settings.WindowHeight > 0 ? settings.WindowHeight.ToString(CultureInfo.InvariantCulture) : "768";
-        MaxLaunchAttemptsBox.Text = Math.Clamp(settings.MaxLaunchAttempts, 1, 5).ToString(CultureInfo.InvariantCulture);
-        WindowWaitSecondsBox.Text = Math.Clamp(settings.WindowWaitTimeoutSeconds, 5, 180).ToString(CultureInfo.InvariantCulture);
-        MaxRecoveryRetriesBox.Text = Math.Clamp(settings.MaxRecoveryRetries, 0, 10).ToString(CultureInfo.InvariantCulture);
-        MaxGameRestartsBox.Text = Math.Clamp(settings.MaxGameRestartsPerSession, 0, 5).ToString(CultureInfo.InvariantCulture);
+        MaxLaunchAttemptsBox.Text = ClampedText(settings.MaxLaunchAttempts, 1, 5);
+        WindowWaitSecondsBox.Text = ClampedText(settings.WindowWaitTimeoutSeconds, 5, 180);
+        MaxRecoveryRetriesBox.Text = ClampedText(settings.MaxRecoveryRetries, 0, 10);
+        MaxGameRestartsBox.Text = ClampedText(settings.MaxGameRestartsPerSession, 0, 5);
         AutoRestartOnFailureCheckBox.IsChecked = settings.AutoRestartGameOnFailure;
         MaxSessionHoursBox.Text = settings.FormatMaxSessionHours();
         AutoCloseGameOnCapCheckBox.IsChecked = settings.AutoCloseGameOnSessionCap;
         AutoCloseAppOnCapCheckBox.IsChecked = settings.AutoCloseAppOnSessionCap;
         ShutdownPcOnCapCheckBox.IsChecked = settings.ShutdownPcOnSessionCap;
-        PcShutdownCountdownBox.Text = Math.Clamp(settings.PcShutdownCountdownSeconds, 10, 600).ToString(CultureInfo.InvariantCulture);
+        PcShutdownCountdownBox.Text = ClampedText(settings.PcShutdownCountdownSeconds, 10, 600);
         ParkedCharactersBox.Text = Math.Max(1, settings.ParkedCharacterCount).ToString(CultureInfo.InvariantCulture);
         InteractKeyBox.Text = string.IsNullOrWhiteSpace(settings.InteractKeybind) ? "F" : settings.InteractKeybind;
         TpKeyBox.Text = string.IsNullOrWhiteSpace(settings.TradingPostKeybind) ? "O" : settings.TradingPostKeybind;
         RelistStaleSellsCheckBox.IsChecked = settings.RelistStaleUndercutSells;
-        MaxBuyOrderShareBox.Text = Math.Clamp(settings.MaxBuyOrderSharePercent, 0, 100).ToString(CultureInfo.InvariantCulture);
+        MaxBuyOrderShareBox.Text = ClampedText(settings.MaxBuyOrderSharePercent, 0, 100);
         SwapCharacterHoursBox.Text = settings.FormatSwapHours();
         SwapJitterMinutesBox.Text = settings.SwapCharacterJitterMinutes.ToString(CultureInfo.InvariantCulture);
         SnapWindowOnStartCheckBox.IsChecked = settings.AutoPrepareOnScreenStart;
@@ -68,23 +66,50 @@ public partial class SettingsPage
         var latencyId = string.IsNullOrWhiteSpace(settings.LatencyProfile) ? "HighPing" : settings.LatencyProfile;
         SelectComboByTag(LatencyProfileSelector, latencyId);
         SelectComboByTag(PriceEntryModeSelector, settings.TypesExactPrice ? Gw2ClientSettings.PriceEntryTypeExact : Gw2ClientSettings.PriceEntryClickRow);
-        UiLoadWaitMsBox.Text = Math.Clamp(settings.UiLoadWaitMs, 500, 30_000).ToString(CultureInfo.InvariantCulture);
-        ActionSettleDelayMsBox.Text = Math.Clamp(settings.ActionSettleDelayMs, 100, 5_000).ToString(CultureInfo.InvariantCulture);
-        ApiTimeoutSecondsBox.Text = Math.Clamp(settings.ApiTimeoutSeconds, 15, 120).ToString(CultureInfo.InvariantCulture);
+        UiLoadWaitMsBox.Text = ClampedText(settings.UiLoadWaitMs, 500, 30_000);
+        ActionSettleDelayMsBox.Text = ClampedText(settings.ActionSettleDelayMs, 100, 5_000);
+        ApiTimeoutSecondsBox.Text = ClampedText(settings.ApiTimeoutSeconds, 15, 120);
         if (Gw2LatencyPresets.FindById(latencyId) is { } latencyPreset)
         {
             LatencyDescriptionText.Text = latencyPreset.Description;
         }
 
         var dpi = Host.DetectDisplayScale();
-        var installInfo = installs.FirstOrDefault() is { } first
-            ? $"{first.Kind} ({first.Source})"
-            : !string.IsNullOrWhiteSpace(Gw2ExecutablePathBox.Text) ? "Configured path" : "Not detected yet";
-        Gw2DetectHealthText.Text = $"Client: {installInfo}  •  Display Scale: {dpi.Summary}";
+        Gw2DetectHealthText.Text = $"Client: {DescribeInstall(installs.FirstOrDefault())}  •  Display Scale: {dpi.Summary}";
+        ShowSessionCapStatus(settings);
+    }
+
+    private static string InferLaunchPlatform(Gw2ClientSettings settings)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.LaunchPlatform))
+        {
+            return settings.LaunchPlatform;
+        }
+
+        return settings.IsSteamPlatform ? Gw2ClientSettings.PlatformSteam : Gw2ClientSettings.PlatformArenaNet;
+    }
+
+    private string DescribeInstall(Gw2InstallCandidate? install)
+    {
+        if (install is not null)
+        {
+            return $"{install.Kind} ({install.Source})";
+        }
+
+        return string.IsNullOrWhiteSpace(Gw2ExecutablePathBox.Text) ? "Not detected yet" : "Configured path";
+    }
+
+    private void ShowSessionCapStatus(Gw2ClientSettings settings) =>
         Host.SessionPage.SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
             ? $"Session cap: {settings.FormatMaxSessionHours()}h"
             : "Session cap: disabled";
-    }
+
+    private static string ClampedText(int value, int min, int max) =>
+        Math.Clamp(value, min, max).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Reads a whole number, clamped to its allowed range; blank or unreadable text gives the default.</summary>
+    private static int ReadClampedInt(TextBox box, int min, int max, int fallback) =>
+        int.TryParse(box.Text.Trim(), out var value) ? Math.Clamp(value, min, max) : fallback;
 
     internal void LoadOperatorSettings()
     {
@@ -126,8 +151,8 @@ public partial class SettingsPage
         ReportIncludeDryRunCheckBox.IsChecked = settings.ReportIncludeDryRunAndObserve;
         ReportSaveOnTradesCheckBox.IsChecked = settings.ReportAlwaysSaveIfTradesOccurred;
         ReportSaveOnErrorsCheckBox.IsChecked = settings.ReportAlwaysSaveOnErrors;
-        ReportMinDurationBox.Text = Math.Clamp(settings.ReportMinDurationMinutes, 0, 1440).ToString(CultureInfo.InvariantCulture);
-        MaxSavedReportsBox.Text = Math.Clamp(settings.MaxSavedSessionReports, 10, 1000).ToString(CultureInfo.InvariantCulture);
+        ReportMinDurationBox.Text = ClampedText(settings.ReportMinDurationMinutes, 0, 1440);
+        MaxSavedReportsBox.Text = ClampedText(settings.MaxSavedSessionReports, 10, 1000);
         Host.ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
     }
 
@@ -160,32 +185,7 @@ public partial class SettingsPage
         var width = int.TryParse(Gw2WidthBox.Text.Trim(), out var parsedW) && parsedW >= 640 ? parsedW : 1024;
         var height = int.TryParse(Gw2HeightBox.Text.Trim(), out var parsedH) && parsedH >= 480 ? parsedH : 768;
         var jitter = int.TryParse(SwapJitterMinutesBox.Text.Trim(), out var parsedJ) && parsedJ >= 0 ? parsedJ : 15;
-        var maxAttempts = int.TryParse(MaxLaunchAttemptsBox.Text.Trim(), out var parsedAtt) ? Math.Clamp(parsedAtt, 1, 5) : 2;
-        var waitSeconds = int.TryParse(WindowWaitSecondsBox.Text.Trim(), out var parsedWait) ? Math.Clamp(parsedWait, 5, 180) : 45;
-        var parkedChars = int.TryParse(ParkedCharactersBox.Text.Trim(), out var parsedChars) ? Math.Clamp(parsedChars, 1, 64) : 4;
-        var interactKey = NullIfBlank(InteractKeyBox.Text) ?? "F";
-        var tpKey = NullIfBlank(TpKeyBox.Text) ?? "O";
         var latencyProfile = (LatencyProfileSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "HighPing";
-        var uiLoadWaitMs = int.TryParse(UiLoadWaitMsBox.Text.Trim(), out var parsedUiWait)
-            ? Math.Clamp(parsedUiWait, 500, 30_000)
-            : 7500;
-        var actionSettleMs = int.TryParse(ActionSettleDelayMsBox.Text.Trim(), out var parsedSettle)
-            ? Math.Clamp(parsedSettle, 100, 5_000)
-            : 900;
-        var apiTimeoutSeconds = int.TryParse(ApiTimeoutSecondsBox.Text.Trim(), out var parsedTimeout)
-            ? Math.Clamp(parsedTimeout, 15, 120)
-            : 60;
-        var launchPlatform = GetSelectedLaunchPlatform();
-        var maxRecoveryRetries = int.TryParse(MaxRecoveryRetriesBox.Text.Trim(), out var parsedRec)
-            ? Math.Clamp(parsedRec, 0, 10)
-            : 3;
-        var maxGameRestarts = int.TryParse(MaxGameRestartsBox.Text.Trim(), out var parsedRestarts)
-            ? Math.Clamp(parsedRestarts, 0, 5)
-            : 2;
-        var autoRestartOnFailure = AutoRestartOnFailureCheckBox.IsChecked == true;
-        var shutdownCountdownSeconds = int.TryParse(PcShutdownCountdownBox.Text.Trim(), out var parsedCd)
-            ? Math.Clamp(parsedCd, 10, 600)
-            : 60;
 
         settings = new Gw2ClientSettings(
             ExecutablePath: NullIfBlank(Gw2ExecutablePathBox.Text),
@@ -197,30 +197,28 @@ public partial class SettingsPage
             SwapCharacterIntervalMinutes: swapMinutes,
             SwapCharacterJitterMinutes: jitter,
             RandomizeCharacterSelection: RandomCharacterSwapCheckBox.IsChecked == true,
-            MaxLaunchAttempts: maxAttempts,
-            WindowWaitTimeoutSeconds: waitSeconds,
+            MaxLaunchAttempts: ReadClampedInt(MaxLaunchAttemptsBox, 1, 5, fallback: 2),
+            WindowWaitTimeoutSeconds: ReadClampedInt(WindowWaitSecondsBox, 5, 180, fallback: 45),
             MaxSessionDurationMinutes: maxSessionMinutes,
-            ParkedCharacterCount: parkedChars,
-            InteractKeybind: interactKey,
-            TradingPostKeybind: tpKey,
+            ParkedCharacterCount: ReadClampedInt(ParkedCharactersBox, 1, 64, fallback: 4),
+            InteractKeybind: NullIfBlank(InteractKeyBox.Text) ?? "F",
+            TradingPostKeybind: NullIfBlank(TpKeyBox.Text) ?? "O",
             RelistStaleUndercutSells: RelistStaleSellsCheckBox.IsChecked == true,
-            MaxBuyOrderSharePercent: int.TryParse(MaxBuyOrderShareBox.Text.Trim(), out var buyShare) ? Math.Clamp(buyShare, 0, 100) : 50,
+            MaxBuyOrderSharePercent: ReadClampedInt(MaxBuyOrderShareBox, 0, 100, fallback: 50),
             LatencyProfile: latencyProfile,
-            UiLoadWaitMs: uiLoadWaitMs,
-            ActionSettleDelayMs: actionSettleMs,
-            ApiTimeoutSeconds: apiTimeoutSeconds,
-            LaunchPlatform: launchPlatform,
-            MaxRecoveryRetries: maxRecoveryRetries,
-            AutoRestartGameOnFailure: autoRestartOnFailure,
-            MaxGameRestartsPerSession: maxGameRestarts,
+            UiLoadWaitMs: ReadClampedInt(UiLoadWaitMsBox, 500, 30_000, fallback: 7500),
+            ActionSettleDelayMs: ReadClampedInt(ActionSettleDelayMsBox, 100, 5_000, fallback: 900),
+            ApiTimeoutSeconds: ReadClampedInt(ApiTimeoutSecondsBox, 15, 120, fallback: 60),
+            LaunchPlatform: GetSelectedLaunchPlatform(),
+            MaxRecoveryRetries: ReadClampedInt(MaxRecoveryRetriesBox, 0, 10, fallback: 3),
+            AutoRestartGameOnFailure: AutoRestartOnFailureCheckBox.IsChecked == true,
+            MaxGameRestartsPerSession: ReadClampedInt(MaxGameRestartsBox, 0, 5, fallback: 2),
             AutoCloseGameOnSessionCap: AutoCloseGameOnCapCheckBox.IsChecked == true,
             AutoCloseAppOnSessionCap: AutoCloseAppOnCapCheckBox.IsChecked == true,
             ShutdownPcOnSessionCap: ShutdownPcOnCapCheckBox.IsChecked == true,
-            PcShutdownCountdownSeconds: shutdownCountdownSeconds,
+            PcShutdownCountdownSeconds: ReadClampedInt(PcShutdownCountdownBox, 10, 600, fallback: 60),
             PriceEntryMode: (PriceEntryModeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? Gw2ClientSettings.PriceEntryTypeExact);
-        Host.SessionPage.SessionCapStatusText.Text = settings.MaxSessionDurationMinutes is > 0
-            ? $"Session cap: {settings.FormatMaxSessionHours()}h"
-            : "Session cap: disabled";
+        ShowSessionCapStatus(settings);
         return true;
     }
 
@@ -235,12 +233,8 @@ public partial class SettingsPage
         decimal? goldFloor = decimal.TryParse(GoldThresholdNoBuyBox.Text.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out var parsedFloor) && parsedFloor >= 0
             ? parsedFloor
             : null;
-        var reportMinDuration = int.TryParse(ReportMinDurationBox.Text.Trim(), out var parsedMinDur)
-            ? Math.Clamp(parsedMinDur, 0, 1440)
-            : 5;
-        var maxSavedReports = int.TryParse(MaxSavedReportsBox.Text.Trim(), out var parsedMaxRpts)
-            ? Math.Clamp(parsedMaxRpts, 10, 1000)
-            : 100;
+        var reportMinDuration = ReadClampedInt(ReportMinDurationBox, 0, 1440, fallback: 5);
+        var maxSavedReports = ReadClampedInt(MaxSavedReportsBox, 10, 1000, fallback: 100);
 
         settings = new OperatorSettings(
             ThemeMode: theme,

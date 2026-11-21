@@ -72,8 +72,11 @@ public partial class SessionPage
         else
         {
             SetLaunchStep(LaunchSyncText, LaunchStep.Running, "Syncing account…");
-            SetLaunchStep(LaunchSyncText, await Host.IncomePage.SyncPortfolioCoreAsync() ? LaunchStep.Done : LaunchStep.Failed,
-                Host.IncomePage.LatestEquitySnapshot is { } snap ? $"Account synced ({MarketScanItem.FormatCoins(snap.WalletCopper)} wallet)" : "Account sync failed");
+            var synced = await Host.IncomePage.SyncPortfolioCoreAsync();
+            var syncText = Host.IncomePage.LatestEquitySnapshot is { } snap
+                ? $"Account synced ({MarketScanItem.FormatCoins(snap.WalletCopper)} wallet)"
+                : "Account sync failed";
+            SetLaunchStep(LaunchSyncText, synced ? LaunchStep.Done : LaunchStep.Failed, syncText);
         }
 
         SetLaunchStep(LaunchTuneText, LaunchStep.Running, "Auto-Tuning…");
@@ -193,6 +196,13 @@ public partial class SessionPage
         return string.Empty;
     }
 
-    private static string FormatAge(TimeSpan age) =>
-        age == TimeSpan.MaxValue ? "missing" : age.TotalDays >= 1 ? $"{age.TotalDays:0.#} days" : $"{age.TotalHours:0.#} h";
+    private static string FormatAge(TimeSpan age)
+    {
+        if (age == TimeSpan.MaxValue)
+        {
+            return "missing";
+        }
+
+        return age.TotalDays >= 1 ? $"{age.TotalDays:0.#} days" : $"{age.TotalHours:0.#} h";
+    }
 }

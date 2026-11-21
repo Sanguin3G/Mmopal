@@ -35,9 +35,8 @@ public sealed record HotkeyGesture(HotkeyModifiers Modifiers, uint VirtualKey, s
         var modifiers = HotkeyModifiers.None;
         string? keyToken = null;
 
-        foreach (var raw in parts)
+        foreach (var token in parts)
         {
-            var token = raw.Trim();
             if (token.Equals("Ctrl", StringComparison.OrdinalIgnoreCase) ||
                 token.Equals("Control", StringComparison.OrdinalIgnoreCase))
             {
@@ -103,22 +102,12 @@ public sealed record HotkeyGesture(HotkeyModifiers Modifiers, uint VirtualKey, s
         canonical = string.Empty;
         var upper = token.ToUpperInvariant();
 
-        if (upper.Length == 1)
+        // Letter and digit keys share their virtual-key code with the uppercase ASCII character.
+        if (upper.Length == 1 && char.IsAsciiLetterOrDigit(upper[0]))
         {
-            var ch = upper[0];
-            if (ch is >= 'A' and <= 'Z')
-            {
-                virtualKey = ch;
-                canonical = upper;
-                return true;
-            }
-
-            if (ch is >= '0' and <= '9')
-            {
-                virtualKey = ch;
-                canonical = upper;
-                return true;
-            }
+            virtualKey = upper[0];
+            canonical = upper;
+            return true;
         }
 
         if (upper.StartsWith('F') && int.TryParse(upper[1..], out var fn) && fn is >= 1 and <= 12)

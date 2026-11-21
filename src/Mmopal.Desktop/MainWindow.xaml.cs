@@ -222,13 +222,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        SessionPage.SessionView.Visibility = NavSession.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        IncomePage.IncomeView.Visibility = NavIncome.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ReportsPage.ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ScannerPage.ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ListsPage.ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        SettingsPage.SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        GuidePage.GuideView.Visibility = NavGuide.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        SessionPage.SessionView.Visibility = VisibleWhenChecked(NavSession);
+        IncomePage.IncomeView.Visibility = VisibleWhenChecked(NavIncome);
+        ReportsPage.ReportsView.Visibility = VisibleWhenChecked(NavReports);
+        ScannerPage.ScannerView.Visibility = VisibleWhenChecked(NavScanner);
+        ListsPage.ListsView.Visibility = VisibleWhenChecked(NavLists);
+        SettingsPage.SettingsView.Visibility = VisibleWhenChecked(NavSettings);
+        GuidePage.GuideView.Visibility = VisibleWhenChecked(NavGuide);
 
         if (NavReports.IsChecked == true)
         {
@@ -236,6 +236,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private static Visibility VisibleWhenChecked(RadioButton navButton) =>
+        navButton.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
     private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -269,62 +271,74 @@ public partial class MainWindow : Window
             or WorkerState.Recovering
             or WorkerState.Fishing;
 
-        SessionPage.StartSessionButton.IsEnabled = !isActive && !isPaused;
-        SessionPage.StartSessionButton.Content = isActive
-            ? "Running..."
-            : isPaused
-                ? "Paused"
-                : "Start session";
+        var isEnded = state is WorkerState.Stopped or WorkerState.Idle or WorkerState.Faulted or WorkerState.NeedsAttention;
+        var inSession = isActive || isPaused;
+
+        SessionPage.StartSessionButton.IsEnabled = !inSession;
+        SessionPage.StartSessionButton.Content = StartButtonLabel(isActive, isPaused);
         SessionPage.PauseSessionButton.IsEnabled = isActive;
         SessionPage.ResumeSessionButton.IsEnabled = isPaused;
-        SessionPage.StopSessionButton.IsEnabled = isActive || isPaused;
-        SessionPage.EmergencyStopButton.IsEnabled = isActive || isPaused;
-        SessionPage.TryOfflineButton.IsEnabled = !isActive && !isPaused;
-        SessionPage.SwapCharacterNowButton.IsEnabled = !isActive && !isPaused;
+        SessionPage.StopSessionButton.IsEnabled = inSession;
+        SessionPage.EmergencyStopButton.IsEnabled = inSession;
+        SessionPage.TryOfflineButton.IsEnabled = !inSession;
+        SessionPage.SwapCharacterNowButton.IsEnabled = !inSession;
 
-        var selectorsUnlocked = !isActive && !isPaused;
-        SessionPage.BotSelector.IsEnabled = selectorsUnlocked;
-        SessionPage.ModeSelector.IsEnabled = selectorsUnlocked;
-        SessionPage.ProfileSelector.IsEnabled = selectorsUnlocked;
-        SessionPage.SourceSelector.IsEnabled = selectorsUnlocked;
-        SessionPage.ArmLiveInputCheckBox.IsEnabled = selectorsUnlocked;
-        SessionPage.AutoSellInventoryCheckBox.IsEnabled = selectorsUnlocked;
+        SessionPage.BotSelector.IsEnabled = !inSession;
+        SessionPage.ModeSelector.IsEnabled = !inSession;
+        SessionPage.ProfileSelector.IsEnabled = !inSession;
+        SessionPage.SourceSelector.IsEnabled = !inSession;
+        SessionPage.ArmLiveInputCheckBox.IsEnabled = !inSession;
+        SessionPage.AutoSellInventoryCheckBox.IsEnabled = !inSession;
 
         if (isActive && SettingsPage.AutoDockBesideGw2CheckBox.IsChecked == true)
         {
             ApplySideDockBesideGw2();
         }
-        else if (state is WorkerState.Stopped or WorkerState.Idle or WorkerState.Faulted or WorkerState.NeedsAttention)
+        else if (isEnded)
         {
             RestorePreDockBounds();
         }
 
         if (isActive)
         {
-            if (SessionStartedAtUtc is null)
-            {
-                SessionStartedAtUtc = DateTimeOffset.UtcNow;
-                if (Gw2ClientSettings.TryParseMaxSessionHours(SettingsPage.MaxSessionHoursBox.Text, out var maxMins, out _) && maxMins is > 0)
-                {
-                    SessionExpiresAtUtc = SessionStartedAtUtc.Value.AddMinutes(maxMins.Value);
-                }
-            }
-
-            if (!_sessionClockTimer.IsEnabled)
-            {
-                _sessionClockTimer.Start();
-            }
-
-            SessionPage.UpdateSessionClockDisplay();
+            StartSessionClock();
         }
-        else if (state is WorkerState.Idle or WorkerState.Stopped or WorkerState.Faulted or WorkerState.NeedsAttention)
+        else if (isEnded)
         {
             _sessionClockTimer.Stop();
-            SessionPage.UpdateSessionClockDisplay();
         }
-        else if (state == WorkerState.Paused)
+        else if (!isPaused)
         {
-            SessionPage.UpdateSessionClockDisplay();
+            return;
+        }
+
+        SessionPage.UpdateSessionClockDisplay();
+    }
+
+    private static string StartButtonLabel(bool isActive, bool isPaused)
+    {
+        if (isActive)
+        {
+            return "Running...";
+        }
+
+        return isPaused ? "Paused" : "Start session";
+    }
+
+    private void StartSessionClock()
+    {
+        if (SessionStartedAtUtc is null)
+        {
+            SessionStartedAtUtc = DateTimeOffset.UtcNow;
+            if (Gw2ClientSettings.TryParseMaxSessionHours(SettingsPage.MaxSessionHoursBox.Text, out var maxMins, out _) && maxMins is > 0)
+            {
+                SessionExpiresAtUtc = SessionStartedAtUtc.Value.AddMinutes(maxMins.Value);
+            }
+        }
+
+        if (!_sessionClockTimer.IsEnabled)
+        {
+            _sessionClockTimer.Start();
         }
     }
 
@@ -398,15 +412,8 @@ public partial class MainWindow : Window
             SidebarStatusStack.VerticalAlignment = VerticalAlignment.Stretch;
         }
 
-        if (SessionPage.SessionHeaderPills is not null)
-        {
-            // Docked: pills go under the title so "Session Control Room" is not squeezed to "Session...".
-            Grid.SetRow(SessionPage.SessionHeaderPills, compact ? 1 : 0);
-            Grid.SetColumn(SessionPage.SessionHeaderPills, compact ? 0 : 1);
-            Grid.SetColumnSpan(SessionPage.SessionHeaderPills, compact ? 2 : 1);
-            SessionPage.SessionHeaderPills.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            SessionPage.SessionHeaderPills.Margin = compact ? new Thickness(0, 8, 0, 0) : new Thickness(0);
-        }
+        // Docked: pills go under the title so "Session Control Room" is not squeezed to "Session...".
+        PlaceHeaderActions(SessionPage.SessionHeaderPills, compact, compactTopMargin: 8);
 
         SidebarBrandText.Visibility = labelVisibility;
         SidebarFooterExpanded.Visibility = labelVisibility;
@@ -428,120 +435,87 @@ public partial class MainWindow : Window
         SessionPage.SessionSelectorsGrid.Columns = cardColumns;
         SessionPage.SessionKpiGrid.Columns = cardColumns;
         IncomePage.IncomeKpiGrid.Columns = cardColumns;
-        if (SessionPage.SessionSubtitleText is not null) SessionPage.SessionSubtitleText.Visibility = labelVisibility;
-        if (IncomePage.IncomeSubtitleText is not null) IncomePage.IncomeSubtitleText.Visibility = labelVisibility;
-        if (GuidePage.GuideScheduleGrid is not null) GuidePage.GuideScheduleGrid.Columns = cardColumns;
+        SessionPage.SessionSubtitleText.Visibility = labelVisibility;
+        IncomePage.IncomeSubtitleText.Visibility = labelVisibility;
+        GuidePage.GuideScheduleGrid.Columns = cardColumns;
         ScannerPage.ScannerCoreFiltersGrid.Columns = columns;
         ScannerPage.ScannerAdvancedFiltersGrid.Columns = columns;
-        if (ReportsPage.ReportDetailKpiGrid is not null)
+        ReportsPage.ReportDetailKpiGrid.Columns = columns;
+
+        PlaceHeaderActions(IncomePage.IncomeHeaderActionsPanel, compact, compactTopMargin: 10);
+
+        // Narrow windows show one chart (its selector also offers "Activity by hour") so the tables keep room.
+        IncomePage.IncomeChartsLeftCol.Width = new GridLength(compact ? 1 : 1.2, GridUnitType.Star);
+        IncomePage.IncomeChartsRightCol.Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        SetGridCell(IncomePage.DailyProfitChartCard, row: 0, column: 0);
+        IncomePage.DailyProfitChartCard.Margin = compact ? new Thickness(0) : new Thickness(0, 0, 12, 0);
+        if (!compact)
         {
-            ReportsPage.ReportDetailKpiGrid.Columns = columns;
+            SetGridCell(IncomePage.HourlyActivityChartCard, row: 0, column: 1);
         }
 
-        if (IncomePage.IncomeHeaderActionsPanel is not null)
-        {
-            if (compact)
-            {
-                Grid.SetRow(IncomePage.IncomeHeaderActionsPanel, 1);
-                Grid.SetColumn(IncomePage.IncomeHeaderActionsPanel, 0);
-                Grid.SetColumnSpan(IncomePage.IncomeHeaderActionsPanel, 2);
-                IncomePage.IncomeHeaderActionsPanel.HorizontalAlignment = HorizontalAlignment.Left;
-                IncomePage.IncomeHeaderActionsPanel.Margin = new Thickness(0, 10, 0, 0);
-            }
-            else
-            {
-                Grid.SetRow(IncomePage.IncomeHeaderActionsPanel, 0);
-                Grid.SetColumn(IncomePage.IncomeHeaderActionsPanel, 1);
-                Grid.SetColumnSpan(IncomePage.IncomeHeaderActionsPanel, 1);
-                IncomePage.IncomeHeaderActionsPanel.HorizontalAlignment = HorizontalAlignment.Right;
-                IncomePage.IncomeHeaderActionsPanel.Margin = new Thickness(0);
-            }
-        }
+        IncomePage.HourlyActivityChartCard.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
 
-        if (IncomePage.IncomeChartsLeftCol is not null && IncomePage.IncomeChartsRightCol is not null &&
-            IncomePage.DailyProfitChartCard is not null && IncomePage.HourlyActivityChartCard is not null)
-        {
-            // Narrow windows show one chart (its selector also offers "Activity by hour") so the tables keep room.
-            if (compact)
-            {
-                IncomePage.IncomeChartsLeftCol.Width = new GridLength(1, GridUnitType.Star);
-                IncomePage.IncomeChartsRightCol.Width = new GridLength(0);
-                Grid.SetRow(IncomePage.DailyProfitChartCard, 0);
-                Grid.SetColumn(IncomePage.DailyProfitChartCard, 0);
-                IncomePage.DailyProfitChartCard.Margin = new Thickness(0);
-                IncomePage.HourlyActivityChartCard.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                IncomePage.IncomeChartsLeftCol.Width = new GridLength(1.2, GridUnitType.Star);
-                IncomePage.IncomeChartsRightCol.Width = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(IncomePage.DailyProfitChartCard, 0);
-                Grid.SetColumn(IncomePage.DailyProfitChartCard, 0);
-                IncomePage.DailyProfitChartCard.Margin = new Thickness(0, 0, 12, 0);
-                Grid.SetRow(IncomePage.HourlyActivityChartCard, 0);
-                Grid.SetColumn(IncomePage.HourlyActivityChartCard, 1);
-                IncomePage.HourlyActivityChartCard.Visibility = Visibility.Visible;
-            }
-        }
+        ApplyTwoPaneLayout(
+            stacked: mediumCompact,
+            ListsPage.ListsLeftCol, ListsPage.ListsRightCol, ListsPage.ListsTopRow, ListsPage.ListsBottomRow,
+            ListsPage.CustomListCard, ListsPage.BlacklistCard,
+            stackedTopHeight: new GridLength(1, GridUnitType.Star),
+            sideBySideLeftWidth: new GridLength(1.2, GridUnitType.Star));
 
-        if (ListsPage.ListsLeftCol is not null && ListsPage.ListsRightCol is not null &&
-            ListsPage.ListsTopRow is not null && ListsPage.ListsBottomRow is not null &&
-            ListsPage.CustomListCard is not null && ListsPage.BlacklistCard is not null)
-        {
-            if (mediumCompact)
-            {
-                ListsPage.ListsLeftCol.Width = new GridLength(1, GridUnitType.Star);
-                ListsPage.ListsRightCol.Width = new GridLength(0);
-                ListsPage.ListsTopRow.Height = new GridLength(1, GridUnitType.Star);
-                ListsPage.ListsBottomRow.Height = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(ListsPage.CustomListCard, 0);
-                Grid.SetColumn(ListsPage.CustomListCard, 0);
-                ListsPage.CustomListCard.Margin = new Thickness(0, 0, 0, 12);
-                Grid.SetRow(ListsPage.BlacklistCard, 1);
-                Grid.SetColumn(ListsPage.BlacklistCard, 0);
-            }
-            else
-            {
-                ListsPage.ListsLeftCol.Width = new GridLength(1.2, GridUnitType.Star);
-                ListsPage.ListsRightCol.Width = new GridLength(1, GridUnitType.Star);
-                ListsPage.ListsTopRow.Height = new GridLength(1, GridUnitType.Star);
-                ListsPage.ListsBottomRow.Height = GridLength.Auto;
-                Grid.SetRow(ListsPage.CustomListCard, 0);
-                Grid.SetColumn(ListsPage.CustomListCard, 0);
-                ListsPage.CustomListCard.Margin = new Thickness(0, 0, 14, 0);
-                Grid.SetRow(ListsPage.BlacklistCard, 0);
-                Grid.SetColumn(ListsPage.BlacklistCard, 1);
-            }
-        }
+        ApplyTwoPaneLayout(
+            stacked: compact,
+            ReportsPage.ReportsLeftCol, ReportsPage.ReportsRightCol, ReportsPage.ReportsTopRow, ReportsPage.ReportsBottomRow,
+            ReportsPage.ReportsListCard, ReportsPage.ReportDetailCard,
+            stackedTopHeight: new GridLength(200),
+            sideBySideLeftWidth: new GridLength(300));
+    }
 
-        if (ReportsPage.ReportsLeftCol is not null && ReportsPage.ReportsRightCol is not null &&
-            ReportsPage.ReportsTopRow is not null && ReportsPage.ReportsBottomRow is not null &&
-            ReportsPage.ReportsListCard is not null && ReportsPage.ReportDetailCard is not null)
+    private static void SetGridCell(UIElement element, int row, int column)
+    {
+        Grid.SetRow(element, row);
+        Grid.SetColumn(element, column);
+    }
+
+    /// <summary>Compact: header actions wrap under the page title; otherwise they sit right of it.</summary>
+    private static void PlaceHeaderActions(FrameworkElement actions, bool compact, double compactTopMargin)
+    {
+        SetGridCell(actions, row: compact ? 1 : 0, column: compact ? 0 : 1);
+        Grid.SetColumnSpan(actions, compact ? 2 : 1);
+        actions.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        actions.Margin = compact ? new Thickness(0, compactTopMargin, 0, 0) : new Thickness(0);
+    }
+
+    /// <summary>Stacks two cards vertically, or places them side by side, in a 2x2 page grid.</summary>
+    private static void ApplyTwoPaneLayout(
+        bool stacked,
+        ColumnDefinition leftColumn,
+        ColumnDefinition rightColumn,
+        RowDefinition topRow,
+        RowDefinition bottomRow,
+        FrameworkElement firstCard,
+        FrameworkElement secondCard,
+        GridLength stackedTopHeight,
+        GridLength sideBySideLeftWidth)
+    {
+        SetGridCell(firstCard, row: 0, column: 0);
+        if (stacked)
         {
-            if (compact)
-            {
-                ReportsPage.ReportsLeftCol.Width = new GridLength(1, GridUnitType.Star);
-                ReportsPage.ReportsRightCol.Width = new GridLength(0);
-                ReportsPage.ReportsTopRow.Height = new GridLength(200);
-                ReportsPage.ReportsBottomRow.Height = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(ReportsPage.ReportsListCard, 0);
-                Grid.SetColumn(ReportsPage.ReportsListCard, 0);
-                ReportsPage.ReportsListCard.Margin = new Thickness(0, 0, 0, 12);
-                Grid.SetRow(ReportsPage.ReportDetailCard, 1);
-                Grid.SetColumn(ReportsPage.ReportDetailCard, 0);
-            }
-            else
-            {
-                ReportsPage.ReportsLeftCol.Width = new GridLength(300);
-                ReportsPage.ReportsRightCol.Width = new GridLength(1, GridUnitType.Star);
-                ReportsPage.ReportsTopRow.Height = new GridLength(1, GridUnitType.Star);
-                ReportsPage.ReportsBottomRow.Height = GridLength.Auto;
-                Grid.SetRow(ReportsPage.ReportsListCard, 0);
-                Grid.SetColumn(ReportsPage.ReportsListCard, 0);
-                ReportsPage.ReportsListCard.Margin = new Thickness(0, 0, 14, 0);
-                Grid.SetRow(ReportsPage.ReportDetailCard, 0);
-                Grid.SetColumn(ReportsPage.ReportDetailCard, 1);
-            }
+            leftColumn.Width = new GridLength(1, GridUnitType.Star);
+            rightColumn.Width = new GridLength(0);
+            topRow.Height = stackedTopHeight;
+            bottomRow.Height = new GridLength(1, GridUnitType.Star);
+            firstCard.Margin = new Thickness(0, 0, 0, 12);
+            SetGridCell(secondCard, row: 1, column: 0);
+        }
+        else
+        {
+            leftColumn.Width = sideBySideLeftWidth;
+            rightColumn.Width = new GridLength(1, GridUnitType.Star);
+            topRow.Height = new GridLength(1, GridUnitType.Star);
+            bottomRow.Height = GridLength.Auto;
+            firstCard.Margin = new Thickness(0, 0, 14, 0);
+            SetGridCell(secondCard, row: 0, column: 1);
         }
     }
 
@@ -654,209 +628,229 @@ public partial class MainWindow : Window
         var rawLog = $"{workerEvent.Type}: {workerEvent.Payload}";
         if (workerEvent.Type == WorkerEventTypes.Status)
         {
-            var status = JsonSerializer.Deserialize<WorkerStatus>(workerEvent.Payload);
-            if (status is not null)
-            {
-                LastWorkerState = status.State;
-                SessionPage.StatusText.Text = status.Message ?? status.LastAction ?? string.Empty;
-                var stateLabel = SessionPage.UpdateStatusCard(status.State, status.Message ?? status.LastAction);
-                UpdateSidebarStatus(status.State, stateLabel);
-                UpdateSessionButtonStates(status.State);
-                var statusDetail = status.Message ?? status.LastAction;
-                AddLog(
-                    string.IsNullOrWhiteSpace(statusDetail)
-                        ? $"Session state: {status.State}"
-                        : $"Status ({status.State}): {statusDetail}",
-                    rawLog);
-            }
-            else
-            {
-                SessionPage.StatusText.Text = workerEvent.Payload;
-                AddLog(rawLog, rawLog);
-            }
+            ApplyStatusEvent(workerEvent.Payload, rawLog);
         }
         else if (workerEvent.Type == WorkerEventTypes.Health)
         {
-            using var document = JsonDocument.Parse(workerEvent.Payload);
-            var root = document.RootElement;
-            var src = root.TryGetProperty("source", out var source) ? source.GetString() ?? "-" : "-";
-            SessionPage.ObservationSourceText.Text = src;
-            SessionPage.ObservationSourceText.Text = src switch
-            {
-                "screen" => "Screen observe",
-                "replay" => "replay",
-                _ => src
-            };
-
-            bool? tpOpen = null;
-            if (root.TryGetProperty("ui", out var ui) && ui.ValueKind == JsonValueKind.Object)
-            {
-                var open = ui.TryGetProperty("tradingPostOpen", out var tradingPostOpen) && tradingPostOpen.GetBoolean();
-                var item = ui.TryGetProperty("itemWindowOpen", out var itemWindowOpen) && itemWindowOpen.GetBoolean();
-                tpOpen = open;
-                SessionPage.ObservationUiText.Text = $"Trading Post: {(open ? "open" : "closed")}; item: {(item ? "open" : "closed")}";
-                SessionPage.GameHeadlineText.Text = open ? "TP open" : "TP closed";
-                SessionPage.GameHeadlineText.Foreground = open
-                    ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
-                    : ResolveBrush("WarningBrush", Brushes.DarkOrange);
-                SessionPage.GameCard.ToolTip = SessionPage.ObservationUiText.Text;
-            }
-
-            if (root.TryGetProperty("visiblePrice", out var visiblePrice) &&
-                visiblePrice.ValueKind == JsonValueKind.Object &&
-                visiblePrice.TryGetProperty("price", out var price) &&
-                price.ValueKind == JsonValueKind.Object &&
-                price.TryGetProperty("copper", out var copper))
-            {
-                SessionPage.ObservationPriceText.Text = copper.ToString();
-            }
-            else
-            {
-                SessionPage.ObservationPriceText.Text = "-";
-            }
-
-            var timingSummary = "-";
-            if (root.TryGetProperty("timings", out var timings))
-            {
-                if (timings.ValueKind == JsonValueKind.Object)
-                {
-                    var parts = new List<string>();
-                    if (timings.TryGetProperty("api", out var apiMs)) parts.Add($"api {FormatMs(apiMs)}");
-                    if (timings.TryGetProperty("ui", out var uiMs)) parts.Add($"ui {FormatMs(uiMs)}");
-                    timingSummary = parts.Count > 0 ? string.Join(" · ", parts) : timings.ToString();
-                }
-                else
-                {
-                    timingSummary = timings.ToString();
-                }
-            }
-
-            SessionPage.ObservationTimingText.Text = timingSummary;
-            SessionPage.ObservationTimingText.ToolTip = "Last cycle: GW2 API round trip and screen read time.";
-
-            var buyPausedLowGold = root.TryGetProperty("buyPausedLowGold", out var lowGoldProp) &&
-                                   lowGoldProp.ValueKind == JsonValueKind.True;
-            var orderBookText = root.TryGetProperty("orderBook", out var orderBook) && orderBook.ValueKind == JsonValueKind.String
-                ? orderBook.GetString()
-                : null;
-            if (buyPausedLowGold)
-            {
-                SessionPage.ObservationOrdersText.Text = !string.IsNullOrWhiteSpace(orderBookText)
-                    ? $"Buys paused (0g/reserve floor) • {orderBookText}"
-                    : "Buys paused (0g/reserve floor) — sell/collect only";
-            }
-            else if (orderBookText is not null)
-            {
-                SessionPage.ObservationOrdersText.Text = orderBookText;
-            }
-
-            SessionPage.UpdateOrdersCard(SessionPage.ObservationOrdersText.Text, buyPausedLowGold);
-
-            if (root.TryGetProperty("characterSwap", out var swap) && swap.ValueKind == JsonValueKind.String)
-            {
-                SessionPage.ShowSwapStatus(swap.GetString() ?? "AFK swap disabled");
-            }
-
-            if (root.TryGetProperty("sessionCap", out var sessionCap) && sessionCap.ValueKind == JsonValueKind.String)
-            {
-                SessionPage.SessionCapStatusText.Text = sessionCap.GetString() ?? "Max session cap disabled";
-            }
-
-            if (root.TryGetProperty("marketList", out var marketList) && marketList.ValueKind == JsonValueKind.String)
-            {
-                SessionPage.MarketListStatusText.Text = $"Shopping list: {marketList.GetString()}";
-            }
-
-            if (root.TryGetProperty("portfolio", out var portfolioProp) && portfolioProp.ValueKind == JsonValueKind.String)
-            {
-                SessionPage.PortfolioStatusText.Text = portfolioProp.GetString() ?? "History: —";
-            }
-
-            if (root.TryGetProperty("sessionStartedAt", out var startedProp) &&
-                startedProp.ValueKind == JsonValueKind.String &&
-                DateTimeOffset.TryParse(startedProp.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var startedAt))
-            {
-                SessionStartedAtUtc = startedAt;
-            }
-
-            if (root.TryGetProperty("sessionExpiresAt", out var expiresProp))
-            {
-                if (expiresProp.ValueKind == JsonValueKind.String &&
-                    DateTimeOffset.TryParse(expiresProp.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAt))
-                {
-                    SessionExpiresAtUtc = expiresAt;
-                }
-                else if (expiresProp.ValueKind == JsonValueKind.Null)
-                {
-                    SessionExpiresAtUtc = null;
-                }
-            }
-
-            SessionPage.UpdateSessionClockDisplay();
-
-            var decCount = root.TryGetProperty("decisions", out var decProp) && decProp.ValueKind == JsonValueKind.Number
-                ? decProp.GetInt32()
-                : 0;
-            var actCount = root.TryGetProperty("actions", out var actProp) && actProp.ValueKind == JsonValueKind.Number
-                ? actProp.GetInt32()
-                : 0;
-            var soldCount = root.TryGetProperty("soldCount", out var soldProp) && soldProp.ValueKind == JsonValueKind.Number
-                ? soldProp.GetInt32()
-                : 0;
-            var canceledOutbid = root.TryGetProperty("canceledOutbidBuys", out var cancelProp) && cancelProp.ValueKind == JsonValueKind.Number
-                ? cancelProp.GetInt32()
-                : 0;
-            var healthErr = root.TryGetProperty("error", out var errProp) && errProp.ValueKind == JsonValueKind.String
-                ? errProp.GetString()
-                : null;
-
-            var summaryParts = new List<string>
-            {
-                $"Cycle [{src}]",
-                $"{decCount} evaluated",
-                $"{actCount} actions"
-            };
-            if (tpOpen.HasValue) summaryParts.Insert(1, tpOpen.Value ? "TP open" : "TP closed");
-            if (soldCount > 0) summaryParts.Add($"{soldCount} listed sell");
-            if (canceledOutbid > 0) summaryParts.Add($"{canceledOutbid} outbid buys refreshed");
-            if (buyPausedLowGold) summaryParts.Add("buys paused (0g/floor)");
-            if (!string.IsNullOrWhiteSpace(timingSummary) && timingSummary != "-") summaryParts.Add(timingSummary);
-            if (!string.IsNullOrWhiteSpace(healthErr)) summaryParts.Add($"error: {healthErr}");
-
-            AddLog(string.Join(" • ", summaryParts), rawLog);
+            ApplyHealthEvent(workerEvent.Payload, rawLog);
         }
         else if (workerEvent.Type == WorkerEventTypes.SessionReport)
         {
-            try
-            {
-                var notification = JsonSerializer.Deserialize<SessionReportNotification>(workerEvent.Payload, PayloadJson);
-                if (notification is not null)
-                {
-                    var rpt = notification.Report;
-                    var dur = SessionReportFormatter.FormatDuration(rpt.DurationSeconds);
-                    var msg = notification.Saved
-                        ? $"Session report saved [{rpt.Outcome}] — {rpt.TotalTradeActions} trade action(s), {rpt.DeliveryCollections} pickup(s), {rpt.CharacterSwapsCompleted} swap(s), duration {dur}."
-                        : $"Session finished [{rpt.Outcome}] in {dur} (not saved per report eligibility rules).";
-                    AddLog(msg, rawLog);
-                    _ = ReportsPage.LoadSessionReportsAsync();
-                    if (notification.CapReached && (notification.ShutdownPc || notification.AutoCloseApp))
-                    {
-                        HandleSessionCapCompletion(notification);
-                    }
-                    return;
-                }
-            }
-            catch (JsonException)
-            {
-                // Fall back to raw logging below if payload shape was unexpected.
-            }
-
-            AddLog(rawLog, rawLog);
+            ApplySessionReportEvent(workerEvent.Payload, rawLog);
         }
         else
         {
             AddLog(rawLog, rawLog);
         }
+    }
+
+    private void ApplyStatusEvent(string payload, string rawLog)
+    {
+        var status = JsonSerializer.Deserialize<WorkerStatus>(payload);
+        if (status is null)
+        {
+            SessionPage.StatusText.Text = payload;
+            AddLog(rawLog, rawLog);
+            return;
+        }
+
+        var statusDetail = status.Message ?? status.LastAction;
+        LastWorkerState = status.State;
+        SessionPage.StatusText.Text = statusDetail ?? string.Empty;
+        var stateLabel = SessionPage.UpdateStatusCard(status.State, statusDetail);
+        UpdateSidebarStatus(status.State, stateLabel);
+        UpdateSessionButtonStates(status.State);
+        AddLog(
+            string.IsNullOrWhiteSpace(statusDetail)
+                ? $"Session state: {status.State}"
+                : $"Status ({status.State}): {statusDetail}",
+            rawLog);
+    }
+
+    private void ApplyHealthEvent(string payload, string rawLog)
+    {
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        var src = root.TryGetProperty("source", out var source) ? source.GetString() ?? "-" : "-";
+        SessionPage.ObservationSourceText.Text = src switch
+        {
+            "screen" => "Screen observe",
+            "replay" => "replay",
+            _ => src
+        };
+
+        bool? tpOpen = null;
+        if (root.TryGetProperty("ui", out var ui) && ui.ValueKind == JsonValueKind.Object)
+        {
+            var open = ui.TryGetProperty("tradingPostOpen", out var tradingPostOpen) && tradingPostOpen.GetBoolean();
+            var item = ui.TryGetProperty("itemWindowOpen", out var itemWindowOpen) && itemWindowOpen.GetBoolean();
+            tpOpen = open;
+            SessionPage.ObservationUiText.Text = $"Trading Post: {(open ? "open" : "closed")}; item: {(item ? "open" : "closed")}";
+            SessionPage.GameHeadlineText.Text = open ? "TP open" : "TP closed";
+            SessionPage.GameHeadlineText.Foreground = open
+                ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
+                : ResolveBrush("WarningBrush", Brushes.DarkOrange);
+            SessionPage.GameCard.ToolTip = SessionPage.ObservationUiText.Text;
+        }
+
+        SessionPage.ObservationPriceText.Text =
+            root.TryGetProperty("visiblePrice", out var visiblePrice) &&
+            visiblePrice.ValueKind == JsonValueKind.Object &&
+            visiblePrice.TryGetProperty("price", out var price) &&
+            price.ValueKind == JsonValueKind.Object &&
+            price.TryGetProperty("copper", out var copper)
+                ? copper.ToString()
+                : "-";
+
+        var timingSummary = root.TryGetProperty("timings", out var timings) ? FormatTimings(timings) : "-";
+        SessionPage.ObservationTimingText.Text = timingSummary;
+        SessionPage.ObservationTimingText.ToolTip = "Last cycle: GW2 API round trip and screen read time.";
+
+        var buyPausedLowGold = root.TryGetProperty("buyPausedLowGold", out var lowGoldProp) &&
+                               lowGoldProp.ValueKind == JsonValueKind.True;
+        var orderBookText = GetStringProperty(root, "orderBook");
+        if (buyPausedLowGold)
+        {
+            SessionPage.ObservationOrdersText.Text = !string.IsNullOrWhiteSpace(orderBookText)
+                ? $"Buys paused (0g/reserve floor) • {orderBookText}"
+                : "Buys paused (0g/reserve floor) — sell/collect only";
+        }
+        else if (orderBookText is not null)
+        {
+            SessionPage.ObservationOrdersText.Text = orderBookText;
+        }
+
+        SessionPage.UpdateOrdersCard(SessionPage.ObservationOrdersText.Text, buyPausedLowGold);
+
+        if (TryGetStringProperty(root, "characterSwap", out var swap))
+        {
+            SessionPage.ShowSwapStatus(swap ?? "AFK swap disabled");
+        }
+
+        if (TryGetStringProperty(root, "sessionCap", out var sessionCap))
+        {
+            SessionPage.SessionCapStatusText.Text = sessionCap ?? "Max session cap disabled";
+        }
+
+        if (TryGetStringProperty(root, "marketList", out var marketList))
+        {
+            SessionPage.MarketListStatusText.Text = $"Shopping list: {marketList}";
+        }
+
+        if (TryGetStringProperty(root, "portfolio", out var portfolio))
+        {
+            SessionPage.PortfolioStatusText.Text = portfolio ?? "History: —";
+        }
+
+        ApplySessionTimes(root);
+        SessionPage.UpdateSessionClockDisplay();
+
+        var summaryParts = new List<string>
+        {
+            $"Cycle [{src}]",
+            $"{GetInt32Property(root, "decisions")} evaluated",
+            $"{GetInt32Property(root, "actions")} actions"
+        };
+        if (tpOpen.HasValue) summaryParts.Insert(1, tpOpen.Value ? "TP open" : "TP closed");
+        var soldCount = GetInt32Property(root, "soldCount");
+        if (soldCount > 0) summaryParts.Add($"{soldCount} listed sell");
+        var canceledOutbid = GetInt32Property(root, "canceledOutbidBuys");
+        if (canceledOutbid > 0) summaryParts.Add($"{canceledOutbid} outbid buys refreshed");
+        if (buyPausedLowGold) summaryParts.Add("buys paused (0g/floor)");
+        if (!string.IsNullOrWhiteSpace(timingSummary) && timingSummary != "-") summaryParts.Add(timingSummary);
+        var healthError = GetStringProperty(root, "error");
+        if (!string.IsNullOrWhiteSpace(healthError)) summaryParts.Add($"error: {healthError}");
+
+        AddLog(string.Join(" • ", summaryParts), rawLog);
+    }
+
+    /// <summary>The worker owns the session clock; its start and cap times override the local guesses.</summary>
+    private void ApplySessionTimes(JsonElement root)
+    {
+        if (TryGetStringProperty(root, "sessionStartedAt", out var startedText) &&
+            DateTimeOffset.TryParse(startedText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var startedAt))
+        {
+            SessionStartedAtUtc = startedAt;
+        }
+
+        if (!root.TryGetProperty("sessionExpiresAt", out var expiresProp))
+        {
+            return;
+        }
+
+        if (expiresProp.ValueKind == JsonValueKind.String &&
+            DateTimeOffset.TryParse(expiresProp.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAt))
+        {
+            SessionExpiresAtUtc = expiresAt;
+        }
+        else if (expiresProp.ValueKind == JsonValueKind.Null)
+        {
+            SessionExpiresAtUtc = null;
+        }
+    }
+
+    private void ApplySessionReportEvent(string payload, string rawLog)
+    {
+        SessionReportNotification? notification = null;
+        try
+        {
+            notification = JsonSerializer.Deserialize<SessionReportNotification>(payload, PayloadJson);
+        }
+        catch (JsonException)
+        {
+            // Fall back to raw logging below if payload shape was unexpected.
+        }
+
+        if (notification is null)
+        {
+            AddLog(rawLog, rawLog);
+            return;
+        }
+
+        var report = notification.Report;
+        var duration = SessionReportFormatter.FormatDuration(report.DurationSeconds);
+        var message = notification.Saved
+            ? $"Session report saved [{report.Outcome}] — {report.TotalTradeActions} trade action(s), {report.DeliveryCollections} pickup(s), {report.CharacterSwapsCompleted} swap(s), duration {duration}."
+            : $"Session finished [{report.Outcome}] in {duration} (not saved per report eligibility rules).";
+        AddLog(message, rawLog);
+        _ = ReportsPage.LoadSessionReportsAsync();
+        if (notification.CapReached && (notification.ShutdownPc || notification.AutoCloseApp))
+        {
+            HandleSessionCapCompletion(notification);
+        }
+    }
+
+    private static bool TryGetStringProperty(JsonElement element, string name, out string? value)
+    {
+        if (element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String)
+        {
+            value = property.GetString();
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static string? GetStringProperty(JsonElement element, string name) =>
+        TryGetStringProperty(element, name, out var value) ? value : null;
+
+    private static int GetInt32Property(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.Number
+            ? property.GetInt32()
+            : 0;
+
+    private static string FormatTimings(JsonElement timings)
+    {
+        if (timings.ValueKind != JsonValueKind.Object)
+        {
+            return timings.ToString();
+        }
+
+        var parts = new List<string>();
+        if (timings.TryGetProperty("api", out var apiMs)) parts.Add($"api {FormatMs(apiMs)}");
+        if (timings.TryGetProperty("ui", out var uiMs)) parts.Add($"ui {FormatMs(uiMs)}");
+        return parts.Count > 0 ? string.Join(" · ", parts) : timings.ToString();
     }
 
     // ---------------------------------------------------------------------
@@ -886,10 +880,17 @@ public partial class MainWindow : Window
         _ => phase
     };
 
-    private static string FormatMs(JsonElement value) =>
-        value.TryGetDouble(out var ms)
-            ? ms >= 1000 ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + "s" : ms.ToString("0", CultureInfo.InvariantCulture) + "ms"
-            : value.ToString();
+    private static string FormatMs(JsonElement value)
+    {
+        if (!value.TryGetDouble(out var ms))
+        {
+            return value.ToString();
+        }
+
+        return ms >= 1000
+            ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + "s"
+            : ms.ToString("0", CultureInfo.InvariantCulture) + "ms";
+    }
 
     internal void RefreshReadinessChecklist()
     {
@@ -932,16 +933,35 @@ public partial class MainWindow : Window
     private void LoadApiKeyVault()
     {
         ApiKeyVault = _loadApiKeyVault();
+        RefreshHasVerifiedApiKey();
+        SelectActiveAccountLaunchPlatform();
+        RebuildApiKeyViews();
+    }
+
+    internal void RefreshHasVerifiedApiKey() =>
         HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
-        if (!string.IsNullOrWhiteSpace(ApiKeyVault.ActiveEntry?.LaunchPlatform))
+
+    /// <summary>Shows the active account's launch platform without saving settings back.</summary>
+    private void SelectActiveAccountLaunchPlatform()
+    {
+        if (string.IsNullOrWhiteSpace(ApiKeyVault.ActiveEntry?.LaunchPlatform))
         {
-            var wasLoading = IsLoadingUi;
-            IsLoadingUi = true;
-            SelectComboByTag(SettingsPage.LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
-            IsLoadingUi = wasLoading;
+            return;
         }
 
-        RebuildApiKeyViews();
+        var wasLoading = IsLoadingUi;
+        IsLoadingUi = true;
+        SelectComboByTag(SettingsPage.LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
+        IsLoadingUi = wasLoading;
+    }
+
+    /// <summary>An idle worker is restarted so it picks up the newly active account.</summary>
+    internal async Task RestartWorkerIfIdleAsync()
+    {
+        if (Supervisor is DesktopWorkerSupervisor concreteSupervisor && LastWorkerState is WorkerState.Idle or WorkerState.Stopped)
+        {
+            await concreteSupervisor.RestartWorkerAsync();
+        }
     }
 
     internal void RebuildApiKeyViews()
@@ -962,22 +982,18 @@ public partial class MainWindow : Window
             else
             {
                 SidebarAccountSelector.IsEnabled = true;
-                var selectedIdx = 0;
+                var selectedIndex = 0;
                 for (var i = 0; i < ApiKeyVault.Entries.Count; i++)
                 {
                     var entry = ApiKeyVault.Entries[i];
-                    SidebarAccountSelector.Items.Add(new ComboBoxItem
-                    {
-                        Content = entry.DisplayLabel,
-                        Tag = entry.Id
-                    });
+                    SidebarAccountSelector.Items.Add(new ComboBoxItem { Content = entry.DisplayLabel, Tag = entry.Id });
                     if (string.Equals(entry.Id, activeId, StringComparison.OrdinalIgnoreCase))
                     {
-                        selectedIdx = i;
+                        selectedIndex = i;
                     }
                 }
 
-                SidebarAccountSelector.SelectedIndex = selectedIdx;
+                SidebarAccountSelector.SelectedIndex = selectedIndex;
             }
         }
         finally
@@ -996,27 +1012,16 @@ public partial class MainWindow : Window
 
     internal async Task SwitchActiveAccountAsync(string keyId)
     {
-        if (string.Equals(ApiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        if (!ApiKeyVault.Entries.Any(e => string.Equals(e.Id, keyId, StringComparison.OrdinalIgnoreCase)))
+        if (string.Equals(ApiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase) ||
+            !ApiKeyVault.Entries.Any(e => string.Equals(e.Id, keyId, StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
 
         ApiKeyVault = ApiKeyVault with { ActiveKeyId = keyId };
         SaveApiKeyVault(ApiKeyVault);
-        HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
-        if (!string.IsNullOrWhiteSpace(ApiKeyVault.ActiveEntry?.LaunchPlatform))
-        {
-            var wasLoading = IsLoadingUi;
-            IsLoadingUi = true;
-            SelectComboByTag(SettingsPage.LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
-            IsLoadingUi = wasLoading;
-        }
-
+        RefreshHasVerifiedApiKey();
+        SelectActiveAccountLaunchPlatform();
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         SettingsPage.SaveAllSettingsSilently();
@@ -1025,11 +1030,7 @@ public partial class MainWindow : Window
         AddLog($"Switched active account to {activeLabel}.");
         await IncomePage.ReloadLedgerForActiveAccountAsync();
         await ReportsPage.LoadSessionReportsAsync();
-
-        if (Supervisor is DesktopWorkerSupervisor concreteSupervisor && LastWorkerState is WorkerState.Idle or WorkerState.Stopped)
-        {
-            await concreteSupervisor.RestartWorkerAsync();
-        }
+        await RestartWorkerIfIdleAsync();
     }
 
     internal void UpdateVaultEntry(string keyId, Func<Gw2ApiKeyEntry, Gw2ApiKeyEntry> transform)
@@ -1052,17 +1053,14 @@ public partial class MainWindow : Window
 
         ApiKeyVault = new Gw2ApiKeyVaultData(nextActiveId, remaining);
         SaveApiKeyVault(ApiKeyVault);
-        HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        RefreshHasVerifiedApiKey();
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         AddLog("Removed API key from DPAPI vault.");
 
         await IncomePage.ReloadLedgerForActiveAccountAsync();
         await ReportsPage.LoadSessionReportsAsync();
-        if (Supervisor is DesktopWorkerSupervisor concreteSupervisor && LastWorkerState is WorkerState.Idle or WorkerState.Stopped)
-        {
-            await concreteSupervisor.RestartWorkerAsync();
-        }
+        await RestartWorkerIfIdleAsync();
     }
 
     internal void RegisterConfiguredHotkeys(bool logWarnings)
@@ -1072,15 +1070,11 @@ public partial class MainWindow : Window
         var emergencyKey = NullIfBlank(SettingsPage.EmergencyStopHotkeyBox.Text);
         var warnings = _hotkeys.RegisterSet(
             pauseKey,
-            () => _ = Dispatcher.InvokeAsync(async () =>
-            {
-                var cmd = LastWorkerState == WorkerState.Paused ? WorkerCommandTypes.Resume : WorkerCommandTypes.Pause;
-                await SendAsync(new WorkerCommand(cmd));
-            }),
+            SendOnDispatcher(() => LastWorkerState == WorkerState.Paused ? WorkerCommandTypes.Resume : WorkerCommandTypes.Pause),
             stopKey,
-            () => _ = Dispatcher.InvokeAsync(async () => await SendAsync(new WorkerCommand(WorkerCommandTypes.Stop))),
+            SendOnDispatcher(() => WorkerCommandTypes.Stop),
             emergencyKey,
-            () => _ = Dispatcher.InvokeAsync(async () => await SendAsync(new WorkerCommand(WorkerCommandTypes.EmergencyStop))));
+            SendOnDispatcher(() => WorkerCommandTypes.EmergencyStop));
 
         SidebarHotkeyHint.Text = $"Pause: {pauseKey ?? "off"}  •  Stop: {stopKey ?? "off"}";
         if (warnings.Count == 0)
@@ -1098,6 +1092,10 @@ public partial class MainWindow : Window
 
         UpdateSidebarStatusTooltip();
     }
+
+    /// <summary>Hotkeys fire off the UI thread; the command type is chosen when the key is pressed.</summary>
+    private Action SendOnDispatcher(Func<string> commandType) =>
+        () => _ = Dispatcher.InvokeAsync(async () => await SendAsync(new WorkerCommand(commandType())));
 
     private void UpdateSidebarStatus(WorkerState state, string label)
     {
@@ -1129,20 +1127,20 @@ public partial class MainWindow : Window
         var clockText = SessionPage.SessionClockText?.Text ?? "00:00:00";
         var accountLabel = ApiKeyVault.ActiveEntry?.DisplayLabel ?? "None";
         var hotkeys = SidebarHotkeyHint?.Text ?? string.Empty;
-        SidebarStatusBorder.ToolTip = string.IsNullOrWhiteSpace(hotkeys)
-            ? $"Status: {statusLabel}\nClock: {clockText}\nAccount: {accountLabel}"
-            : $"Status: {statusLabel}\nClock: {clockText}\nAccount: {accountLabel}\n{hotkeys}";
+        var tooltip = $"Status: {statusLabel}\nClock: {clockText}\nAccount: {accountLabel}";
+        SidebarStatusBorder.ToolTip = string.IsNullOrWhiteSpace(hotkeys) ? tooltip : $"{tooltip}\n{hotkeys}";
     }
 
-    private static string LimitsPath => Path.Combine(RuntimePaths.Create().Profiles, "trading-limits.json");
-    private static string ClientSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "client-settings.json");
-    private static string OperatorSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "operator-settings.json");
-    private static string ApiKeyStorePath => Path.Combine(RuntimePaths.Create().Profiles, "gw2-api-key.dpapi");
-    private static string ApiKeyVaultPath => Path.Combine(RuntimePaths.Create().Profiles, "gw2-api-keys.dpapi");
-    internal static string CustomShoppingListPath => Path.Combine(RuntimePaths.Create().Profiles, "custom-shoppinglist.json");
-    internal static string BlacklistStorePath => Path.Combine(RuntimePaths.Create().Profiles, "blacklist.json");
+    private static string ProfileFile(string fileName) => Path.Combine(RuntimePaths.Create().Profiles, fileName);
 
-    internal static string ScannedCandidatesPath => Path.Combine(RuntimePaths.Create().Profiles, "scanned-candidates.json");
+    private static string LimitsPath => ProfileFile("trading-limits.json");
+    private static string ClientSettingsPath => ProfileFile("client-settings.json");
+    private static string OperatorSettingsPath => ProfileFile("operator-settings.json");
+    private static string ApiKeyStorePath => ProfileFile("gw2-api-key.dpapi");
+    private static string ApiKeyVaultPath => ProfileFile("gw2-api-keys.dpapi");
+    internal static string CustomShoppingListPath => ProfileFile("custom-shoppinglist.json");
+    internal static string BlacklistStorePath => ProfileFile("blacklist.json");
+    internal static string ScannedCandidatesPath => ProfileFile("scanned-candidates.json");
     private static string LedgerDbPath => RuntimePaths.Create().Database;
 
     // ---------------------------------------------------------------------
@@ -1166,9 +1164,8 @@ public partial class MainWindow : Window
         var countdownSeconds = notification.ShutdownPc
             ? Math.Clamp(notification.ShutdownCountdownSeconds, 10, 600)
             : 15;
-        var summaryNote = notification.Saved
-            ? $"Reached the {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)} session cap · report saved in Session Reports"
-            : $"Reached the {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)} session cap";
+        var capNote = $"Reached the {SessionReportFormatter.FormatDuration(notification.Report.DurationSeconds)} session cap";
+        var summaryNote = notification.Saved ? $"{capNote} · report saved in Session Reports" : capNote;
 
         if (!IsVisible)
         {
@@ -1177,7 +1174,7 @@ public partial class MainWindow : Window
             {
                 _executeSystemShutdown(countdownSeconds);
             }
-            else if (notification.AutoCloseApp)
+            else
             {
                 _requestAppClose();
             }

@@ -25,30 +25,23 @@ public partial class ListsPage : UserControl
 
     private MainWindow Host => _host ?? throw new InvalidOperationException("The page is not attached to the main window.");
 
-    private bool Loading => _host is null || _host.IsLoadingUi;
-
     internal void Attach(MainWindow host) => _host = host;
 
     internal ObservableCollection<ItemCandidate> CustomShoppingList => _customShoppingList;
 
     internal ObservableCollection<string> Blacklist => _blacklist;
 
-    private void CustomItemInput_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            AddCustomItem_Click(sender, e);
-            e.Handled = true;
-        }
-    }
+    private void CustomItemInput_KeyDown(object sender, KeyEventArgs e) =>
+        RunOnEnter(e, () => AddCustomItem_Click(sender, e));
 
-    private void BlacklistInput_KeyDown(object sender, KeyEventArgs e)
+    private void BlacklistInput_KeyDown(object sender, KeyEventArgs e) =>
+        RunOnEnter(e, () => AddBlacklistItem_Click(sender, e));
+
+    private static void RunOnEnter(KeyEventArgs e, Action action)
     {
-        if (e.Key == Key.Enter)
-        {
-            AddBlacklistItem_Click(sender, e);
-            e.Handled = true;
-        }
+        if (e.Key != Key.Enter) return;
+        action();
+        e.Handled = true;
     }
 
     private void AddCustomItem_Click(object sender, RoutedEventArgs e)
@@ -184,18 +177,25 @@ public partial class ListsPage : UserControl
     internal void AddOrReplaceCustomCandidate(ItemCandidate candidate)
     {
         var normalized = ItemNameNormalizer.Normalize(candidate.ItemName);
+        var existingIndex = -1;
         for (var i = 0; i < _customShoppingList.Count; i++)
         {
             if (ItemNameNormalizer.Normalize(_customShoppingList[i].ItemName) == normalized)
             {
-                _customShoppingList[i] = candidate;
-                OperatorListsStore.SaveShoppingList(MainWindow.CustomShoppingListPath, _customShoppingList);
-                UpdateListCounts();
-                return;
+                existingIndex = i;
+                break;
             }
         }
 
-        _customShoppingList.Add(candidate);
+        if (existingIndex >= 0)
+        {
+            _customShoppingList[existingIndex] = candidate;
+        }
+        else
+        {
+            _customShoppingList.Add(candidate);
+        }
+
         OperatorListsStore.SaveShoppingList(MainWindow.CustomShoppingListPath, _customShoppingList);
         UpdateListCounts();
     }
@@ -212,15 +212,8 @@ public partial class ListsPage : UserControl
 
     private void UpdateListCounts()
     {
-        if (CustomListCountText is not null)
-        {
-            CustomListCountText.Text = $"{_customShoppingList.Count} item{(_customShoppingList.Count == 1 ? string.Empty : "s")}";
-        }
-
-        if (BlacklistCountText is not null)
-        {
-            BlacklistCountText.Text = $"{_blacklist.Count} blocked";
-        }
+        CustomListCountText.Text = $"{_customShoppingList.Count} item{(_customShoppingList.Count == 1 ? string.Empty : "s")}";
+        BlacklistCountText.Text = $"{_blacklist.Count} blocked";
     }
 
     internal void LoadLists(

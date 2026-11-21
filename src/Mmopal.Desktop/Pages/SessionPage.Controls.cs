@@ -31,15 +31,7 @@ public partial class SessionPage
 
             if (result.WindowReady && Host.ClientPreparer is Gw2ClientPreparer)
             {
-                var templateRoot = ResolveTemplateRootDirectory();
-                var uiDriver = new Gw2TradingPostUiDriver(
-                    new WindowsDesktopScreenshotProvider(),
-                    new FrameTemplateMatcher(),
-                    new Win32InputController(),
-                    new Win32WindowController(),
-                    templateRoot,
-                    clientSettings,
-                    Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+                var uiDriver = CreateUiDriver(clientSettings);
                 var advanced = await Task.Run(() => uiDriver.TryAdvanceLauncherOrCharacterSelectAsync()).ConfigureAwait(false);
                 if (advanced)
                 {
@@ -50,46 +42,18 @@ public partial class SessionPage
                 }
             }
 
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-                StatusText.Text = statusMessage;
-                AddLog($"GW2 Client: {statusMessage}");
-                LaunchSnapButton.IsEnabled = true;
-                LaunchSnapButton.Content = originalContent;
-            });
+            await ShowClientToolResultAsync(LaunchSnapButton, originalContent, statusMessage, $"GW2 Client: {statusMessage}");
         }
         catch (Exception exception)
         {
-            try
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-                    StatusText.Text = $"GW2 launch/snap failed: {exception.Message}";
-                    AddLog($"ERROR: {exception.Message}");
-                    LaunchSnapButton.IsEnabled = true;
-                    LaunchSnapButton.Content = originalContent;
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (InvalidOperationException)
-            {
-            }
+            await IgnoreShutdownErrorsAsync(() => ShowClientToolResultAsync(
+                LaunchSnapButton,
+                originalContent,
+                $"GW2 launch/snap failed: {exception.Message}",
+                $"ERROR: {exception.Message}"));
         }
 
-        try
-        {
-            await FlashButtonFeedbackAsync(LaunchSnapButton, succeeded ? "✓ Snapped" : "Check status");
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-        }
+        await IgnoreShutdownErrorsAsync(() => FlashButtonFeedbackAsync(LaunchSnapButton, succeeded ? "✓ Snapped" : "Check status"));
     }
 
     private async void SwapCharacterNow_Click(object sender, RoutedEventArgs e)
@@ -125,53 +89,59 @@ public partial class SessionPage
             }
             else
             {
-                var templateRoot = ResolveTemplateRootDirectory();
-                var uiDriver = new Gw2TradingPostUiDriver(
-                    new WindowsDesktopScreenshotProvider(),
-                    new FrameTemplateMatcher(),
-                    new Win32InputController(),
-                    new Win32WindowController(),
-                    templateRoot,
-                    clientSettings,
-                    Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+                var uiDriver = CreateUiDriver(clientSettings);
                 (succeeded, statusMessage) = await Task.Run(() => uiDriver.RotateParkedCharacterAsync(
                     clientSettings.RandomizeCharacterSelection,
                     clientSettings.ParkedCharacterCount)).ConfigureAwait(false);
             }
 
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-                StatusText.Text = statusMessage;
-                AddLog($"Character Swap: {statusMessage}");
-                SwapCharacterNowButton.IsEnabled = true;
-                SwapCharacterNowButton.Content = originalContent;
-            });
+            await ShowClientToolResultAsync(SwapCharacterNowButton, originalContent, statusMessage, $"Character Swap: {statusMessage}");
         }
         catch (Exception exception)
         {
-            try
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-                    StatusText.Text = $"Character swap failed: {exception.Message}";
-                    AddLog($"ERROR (Character Swap): {exception.Message}");
-                    SwapCharacterNowButton.IsEnabled = true;
-                    SwapCharacterNowButton.Content = originalContent;
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (InvalidOperationException)
-            {
-            }
+            await IgnoreShutdownErrorsAsync(() => ShowClientToolResultAsync(
+                SwapCharacterNowButton,
+                originalContent,
+                $"Character swap failed: {exception.Message}",
+                $"ERROR (Character Swap): {exception.Message}"));
         }
 
+        await IgnoreShutdownErrorsAsync(() => FlashButtonFeedbackAsync(SwapCharacterNowButton, succeeded ? "✓ Swapped" : "Failed"));
+    }
+
+    private static Gw2TradingPostUiDriver CreateUiDriver(Gw2ClientSettings clientSettings)
+    {
+        var templateRoot = ResolveTemplateRootDirectory();
+        return new Gw2TradingPostUiDriver(
+            new WindowsDesktopScreenshotProvider(),
+            new FrameTemplateMatcher(),
+            new Win32InputController(),
+            new Win32WindowController(),
+            templateRoot,
+            clientSettings,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+    }
+
+    /// <summary>
+    /// Shows a client tool's outcome and gives its button back. The tool work continues off the UI thread, so this
+    /// goes through the dispatcher and does nothing once the window is closing.
+    /// </summary>
+    private Task ShowClientToolResultAsync(Button button, object? originalContent, string status, string logLine) =>
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            StatusText.Text = status;
+            AddLog(logLine);
+            button.IsEnabled = true;
+            button.Content = originalContent;
+        }).Task;
+
+    /// <summary>The window may close while a client tool runs; UI updates that then fail are dropped.</summary>
+    private static async Task IgnoreShutdownErrorsAsync(Func<Task> uiUpdate)
+    {
         try
         {
-            await FlashButtonFeedbackAsync(SwapCharacterNowButton, succeeded ? "✓ Swapped" : "Failed");
+            await uiUpdate();
         }
         catch (OperationCanceledException)
         {
@@ -183,10 +153,10 @@ public partial class SessionPage
 
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
-        var bot = Enum.Parse<BotKind>(((ComboBoxItem)BotSelector.SelectedItem).Tag.ToString()!);
-        var mode = Enum.Parse<RunMode>(((ComboBoxItem)ModeSelector.SelectedItem).Tag.ToString()!);
-        var profile = ((ComboBoxItem)ProfileSelector.SelectedItem).Tag.ToString()!;
-        var source = ((ComboBoxItem)SourceSelector.SelectedItem).Tag.ToString()!;
+        var bot = Enum.Parse<BotKind>(RequiredTag(BotSelector));
+        var mode = Enum.Parse<RunMode>(RequiredTag(ModeSelector));
+        var profile = RequiredTag(ProfileSelector);
+        var source = RequiredTag(SourceSelector);
         Host.SettingsPage.TuneBeforeSession();
         if (!Host.SettingsPage.TryReadLimits(out var limits)) return;
         if (!Host.SettingsPage.TryReadClientSettings(out var clientSettings)) return;
@@ -252,7 +222,7 @@ public partial class SessionPage
 
     private async void TryOfflineSample_Click(object sender, RoutedEventArgs e)
     {
-        var profile = ((ComboBoxItem)ProfileSelector.SelectedItem).Tag.ToString()!;
+        var profile = RequiredTag(ProfileSelector);
         var sample = new TradingReplayRequest(
             Candidates:
             [
@@ -277,6 +247,9 @@ public partial class SessionPage
             profile,
             JsonSerializer.Serialize(sample, MainWindow.PayloadJson)));
     }
+
+    /// <summary>The session selectors always have a tagged item selected.</summary>
+    private static string RequiredTag(ComboBox selector) => ((ComboBoxItem)selector.SelectedItem).Tag.ToString()!;
 
     private async void Pause_Click(object sender, RoutedEventArgs e) => await Host.SendAsync(new WorkerCommand(WorkerCommandTypes.Pause));
 

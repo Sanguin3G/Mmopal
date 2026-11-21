@@ -121,22 +121,29 @@ public partial class SessionCompletionWindow : Window
     }
 
     /// <summary>Largest coin only ("62g", "15s", "40c"): the exact amount is in the tooltip.</summary>
-    internal static string CompactCoins(long copper) =>
-        copper >= 10_000 ? $"{copper / 10_000}g" : copper >= 100 ? $"{copper / 100}s" : $"{Math.Max(0, copper)}c";
-
-    private void Cancel_Click(object sender, RoutedEventArgs e)
+    internal static string CompactCoins(long copper)
     {
-        _actionHandled = true;
-        _timer.Stop();
-        Close();
+        if (copper >= 10_000)
+        {
+            return $"{copper / 10_000}g";
+        }
+
+        return copper >= 100 ? $"{copper / 100}s" : $"{Math.Max(0, copper)}c";
     }
+
+    private void Cancel_Click(object sender, RoutedEventArgs e) => StopCountdownAndClose();
 
     private void CloseAppOnly_Click(object sender, RoutedEventArgs e)
     {
+        StopCountdownAndClose();
+        _onCloseAppOnly();
+    }
+
+    private void StopCountdownAndClose()
+    {
         _actionHandled = true;
         _timer.Stop();
         Close();
-        _onCloseAppOnly();
     }
 
     private void ExecuteNow_Click(object sender, RoutedEventArgs e) => TriggerPrimaryAction();
@@ -148,9 +155,7 @@ public partial class SessionCompletionWindow : Window
             return;
         }
 
-        _actionHandled = true;
-        _timer.Stop();
-        Close();
+        StopCountdownAndClose();
         _onExecutePrimary();
     }
 

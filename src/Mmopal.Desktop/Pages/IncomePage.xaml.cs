@@ -24,11 +24,8 @@ public partial class IncomePage : UserControl
     private TradingIncomeReport? _lastIncomeReport;
     private Gw2EquitySnapshot? _latestEquitySnapshot;
     private IReadOnlyList<Gw2EquitySnapshot> _equitySnapshots = Array.Empty<Gw2EquitySnapshot>();
-    private Gw2DeliverySnapshot? _latestDelivery;
     private int _openBuyCount;
-    private int _openSellCount;
     private int _outbidBuyCount;
-    private int _undercutSellCount;
     private IReadOnlyList<string> _losingItems = Array.Empty<string>();
     private MainWindow? _host;
 
@@ -67,13 +64,7 @@ public partial class IncomePage : UserControl
     {
         ArchivedTransactions = Array.Empty<Gw2LedgerTransaction>();
         _latestEquitySnapshot = null;
-        _latestDelivery = null;
-        _latestActiveOrders.Clear();
-        _activeOrderRows.Clear();
-        _openBuyCount = 0;
-        _openSellCount = 0;
-        _outbidBuyCount = 0;
-        _undercutSellCount = 0;
+        ReplaceActiveOrders([]);
 
         if (Host.LedgerStore is null)
         {
@@ -146,7 +137,7 @@ public partial class IncomePage : UserControl
                 Host.ApiKeyVault.ActiveEntry is { } activeEntry &&
                 !string.Equals(activeEntry.AccountName, resolvedAccount, StringComparison.OrdinalIgnoreCase))
             {
-                Host.UpdateVaultEntry(activeEntry.Id, e => e with
+                Host.UpdateVaultEntry(activeEntry.Id, entry => entry with
                 {
                     AccountName = resolvedAccount,
                     Status = "VALID",
@@ -160,30 +151,7 @@ public partial class IncomePage : UserControl
             ArchivedTransactions = await Host.LedgerStore.GetTransactionsAsync(resolvedAccount);
             _latestEquitySnapshot = result.LatestSnapshot;
             _equitySnapshots = await Host.LedgerStore.GetEquitySnapshotsAsync(null, resolvedAccount);
-            _latestDelivery = result.Delivery;
-
-            _latestActiveOrders.Clear();
-            _activeOrderRows.Clear();
-            _openBuyCount = 0;
-            _openSellCount = 0;
-            _outbidBuyCount = 0;
-            _undercutSellCount = 0;
-
-            foreach (var order in result.ActiveOrders)
-            {
-                _latestActiveOrders.Add(order);
-                _activeOrderRows.Add(new ActiveOrderViewRow(order));
-                if (order.Kind == TransactionType.Buy)
-                {
-                    _openBuyCount++;
-                    if (order.BookStatus == "Outbid") _outbidBuyCount++;
-                }
-                else
-                {
-                    _openSellCount++;
-                    if (order.BookStatus == "Undercut") _undercutSellCount++;
-                }
-            }
+            ReplaceActiveOrders(result.ActiveOrders);
 
             Host.HasVerifiedApiKey = true;
             syncSucceeded = true;
@@ -210,6 +178,25 @@ public partial class IncomePage : UserControl
         }
 
         return syncSucceeded;
+    }
+
+    private void ReplaceActiveOrders(IEnumerable<Gw2ActiveOrder> orders)
+    {
+        _latestActiveOrders.Clear();
+        _activeOrderRows.Clear();
+        _openBuyCount = 0;
+        _outbidBuyCount = 0;
+
+        foreach (var order in orders)
+        {
+            _latestActiveOrders.Add(order);
+            _activeOrderRows.Add(new ActiveOrderViewRow(order));
+            if (order.Kind == TransactionType.Buy)
+            {
+                _openBuyCount++;
+                if (order.BookStatus == "Outbid") _outbidBuyCount++;
+            }
+        }
     }
 
     private void UpdateLosingItemsPanel()
@@ -314,8 +301,7 @@ public partial class IncomePage : UserControl
             if (IncomeInsights.NetWorthChange(_equitySnapshots, windowStart) is { } change)
             {
                 var delta = change.End.ValueCopper - change.Start.ValueCopper;
-                IncomeNetWorthChangeText.Text =
-                    $"{(delta >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(delta))} since {change.Start.At.ToLocalTime():MMM d, HH:mm}";
+                IncomeNetWorthChangeText.Text = $"{FormatSignedCoins(delta)} since {change.Start.At.ToLocalTime():MMM d, HH:mm}";
                 IncomeNetWorthChangeText.Foreground = delta >= 0
                     ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
                     : ResolveBrush("DangerBrush", Brushes.IndianRed);
@@ -415,6 +401,10 @@ public partial class IncomePage : UserControl
         _hourlyChartBars.Clear();
         var hasProfitBars = report.HourlySeries.Any(h => h.RealizedProfitCopper != 0);
         var bestHour = report.HourlySeries.OrderByDescending(h => h.RealizedProfitCopper).FirstOrDefault();
+        var maxAbsProfit = hasProfitBars ? Math.Max(1L, report.HourlySeries.Max(h => Math.Abs(h.RealizedProfitCopper))) : 1L;
+        var maxFillCount = !hasProfitBars && report.HourlySeries.Count > 0
+            ? Math.Max(1, report.HourlySeries.Max(h => h.BuyFills + h.SellFills))
+            : 1;
 
         foreach (var hour in report.HourlySeries)
         {
@@ -422,15 +412,13 @@ public partial class IncomePage : UserControl
             Brush brush;
             if (hasProfitBars)
             {
-                var maxAbsProf = Math.Max(1L, report.HourlySeries.Max(h => Math.Abs(h.RealizedProfitCopper)));
-                ratio = Math.Abs(hour.RealizedProfitCopper) / (double)maxAbsProf;
-                brush = hour.RealizedProfitCopper > 0 ? goldBrush : hour.RealizedProfitCopper < 0 ? dangerBrush : mutedBrush;
+                ratio = Math.Abs(hour.RealizedProfitCopper) / (double)maxAbsProfit;
+                brush = SignBrush(hour.RealizedProfitCopper, goldBrush, dangerBrush, mutedBrush);
             }
             else
             {
                 var count = hour.BuyFills + hour.SellFills;
-                var maxCount = Math.Max(1, report.HourlySeries.Max(h => h.BuyFills + h.SellFills));
-                ratio = count / (double)maxCount;
+                ratio = count / (double)maxFillCount;
                 brush = count > 0 ? accentBrush : mutedBrush;
             }
 
@@ -480,7 +468,7 @@ public partial class IncomePage : UserControl
         }
 
         var delta = points[^1].ValueCopper - points[0].ValueCopper;
-        DailyChartSummaryText.Text = $"{(delta >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(delta))} • low {MarketScanItem.FormatCoins(low)} • high {MarketScanItem.FormatCoins(high)}";
+        DailyChartSummaryText.Text = $"{FormatSignedCoins(delta)} • low {MarketScanItem.FormatCoins(low)} • high {MarketScanItem.FormatCoins(high)}";
     }
 
     private void RebuildDailyProfitChart(TradingIncomeReport report, Brush successBrush, Brush dangerBrush, Brush mutedBrush)
@@ -493,7 +481,7 @@ public partial class IncomePage : UserControl
         {
             var ratio = Math.Abs(day.ProfitCopper) / (double)maxDailyAbs;
             var height = day.ProfitCopper == 0 ? 4.0 : Math.Max(8.0, ratio * 84.0);
-            var brush = day.ProfitCopper > 0 ? successBrush : day.ProfitCopper < 0 ? dangerBrush : mutedBrush;
+            var brush = SignBrush(day.ProfitCopper, successBrush, dangerBrush, mutedBrush);
             _dailyChartBars.Add(new ChartBarItem(day.Label, height, brush, day.Tooltip, MarketScanItem.FormatCoins(day.ProfitCopper)));
         }
 
@@ -501,6 +489,16 @@ public partial class IncomePage : UserControl
             ? $"{recentDays.Length} day(s) • Total {MarketScanItem.FormatCoins(report.MatchedProfitCopper)}"
             : "No closed flips in timeframe";
     }
+
+    private static Brush SignBrush(long value, Brush positive, Brush negative, Brush zero) => Math.Sign(value) switch
+    {
+        > 0 => positive,
+        < 0 => negative,
+        _ => zero
+    };
+
+    private static string FormatSignedCoins(long copper) =>
+        $"{(copper >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(copper))}";
 
     private DateTimeOffset? ResolveSelectedTimeframeStartUtc()
     {
@@ -532,9 +530,14 @@ public partial class IncomePage : UserControl
         public string ItemName => order.ItemName;
         public long Quantity => order.Quantity;
         public string YourPriceFormatted => MarketScanItem.FormatCoins(order.UnitPriceCopper);
-        public string MarketTopFormatted => order.Kind == TransactionType.Buy
-            ? (order.MarketHighestBuyCopper is { } b ? MarketScanItem.FormatCoins(b) : "—")
-            : (order.MarketLowestSellCopper is { } s ? MarketScanItem.FormatCoins(s) : "—");
+        public string MarketTopFormatted
+        {
+            get
+            {
+                var marketTop = order.Kind == TransactionType.Buy ? order.MarketHighestBuyCopper : order.MarketLowestSellCopper;
+                return marketTop is { } copper ? MarketScanItem.FormatCoins(copper) : "—";
+            }
+        }
         public string BookStatus => order.BookStatus;
         public string CreatedFormatted => order.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
         public string AgeFormatted => IncomeInsights.FormatAge(DateTimeOffset.UtcNow - order.CreatedAt);

@@ -25,8 +25,6 @@ public partial class ScannerPage : UserControl
 
     private MainWindow Host => _host ?? throw new InvalidOperationException("The page is not attached to the main window.");
 
-    private bool Loading => _host is null || _host.IsLoadingUi;
-
     internal void Attach(MainWindow host) => _host = host;
 
     internal ObservableCollection<MarketScanItem> ScanResults => _scanResults;
@@ -96,9 +94,7 @@ public partial class ScannerPage : UserControl
         _scanCancellation = new CancellationTokenSource();
         var ct = _scanCancellation.Token;
 
-        ScanMarketButton.IsEnabled = false;
-        ReFilterButton.IsEnabled = false;
-        CancelScanButton.IsEnabled = true;
+        SetScanRunning(true);
         ScanProgressBar.Value = 0;
         ScanStatusText.Text = useCachedPrices
             ? "Re-filtering cached Trading Post prices..."
@@ -126,12 +122,7 @@ public partial class ScannerPage : UserControl
             }
 
             items = AnnotateWithHistory(items);
-            _scanResults.Clear();
-            foreach (var item in items)
-            {
-                _scanResults.Add(item);
-            }
-
+            ReplaceScanResults(items);
             ScanProgressBar.Value = 100;
             var spikeNote = Host.MarketScanner is Gw2MarketScanner { LastSpikesSkipped: > 0 } spikeScanner
                 ? $" Skipped {spikeScanner.LastSpikesSkipped} price spike(s) vs the 7-day average."
@@ -152,12 +143,26 @@ public partial class ScannerPage : UserControl
         }
         finally
         {
-            ScanMarketButton.IsEnabled = true;
-            ReFilterButton.IsEnabled = true;
-            CancelScanButton.IsEnabled = false;
+            SetScanRunning(false);
         }
 
         return false;
+    }
+
+    private void SetScanRunning(bool running)
+    {
+        ScanMarketButton.IsEnabled = !running;
+        ReFilterButton.IsEnabled = !running;
+        CancelScanButton.IsEnabled = running;
+    }
+
+    private void ReplaceScanResults(IEnumerable<MarketScanItem> items)
+    {
+        _scanResults.Clear();
+        foreach (var item in items)
+        {
+            _scanResults.Add(item);
+        }
     }
 
     private void CancelScan_Click(object sender, RoutedEventArgs e) => _scanCancellation?.Cancel();
@@ -174,12 +179,7 @@ public partial class ScannerPage : UserControl
         try
         {
             var imported = await Gw2MarketScanner.ImportFromFileAsync(dialog.FileName);
-            _scanResults.Clear();
-            foreach (var item in imported)
-            {
-                _scanResults.Add(item);
-            }
-
+            ReplaceScanResults(imported);
             ScanStatusText.Text = $"Imported {imported.Count} items from {Path.GetFileName(dialog.FileName)}.";
             Host.AddLog($"Imported {imported.Count} items into Market Scanner from {dialog.FileName}.");
         }
@@ -214,11 +214,7 @@ public partial class ScannerPage : UserControl
 
     private void AddSelectedScanToCustomList_Click(object sender, RoutedEventArgs e)
     {
-        if (ScanResultsGrid.SelectedItem is not MarketScanItem selected)
-        {
-            ScanStatusText.Text = "Select an item in the table first.";
-            return;
-        }
+        if (SelectedScanItemOrPrompt() is not { } selected) return;
 
         Host.ListsPage.AddOrReplaceCustomCandidate(selected.ToCandidate());
         Host.RefreshReadinessChecklist();
@@ -227,15 +223,22 @@ public partial class ScannerPage : UserControl
 
     private void BlacklistSelectedScanItem_Click(object sender, RoutedEventArgs e)
     {
-        if (ScanResultsGrid.SelectedItem is not MarketScanItem selected)
-        {
-            ScanStatusText.Text = "Select an item in the table first.";
-            return;
-        }
+        if (SelectedScanItemOrPrompt() is not { } selected) return;
 
         Host.ListsPage.AddBlacklistEntry(selected.ItemName);
         _scanResults.Remove(selected);
         ScanStatusText.Text = $"Blacklisted '{selected.ItemName}'.";
+    }
+
+    private MarketScanItem? SelectedScanItemOrPrompt()
+    {
+        if (ScanResultsGrid.SelectedItem is MarketScanItem selected)
+        {
+            return selected;
+        }
+
+        ScanStatusText.Text = "Select an item in the table first.";
+        return null;
     }
 
     internal bool TryReadScanFilter(out MarketScanFilter filter, out string? error)
@@ -281,7 +284,7 @@ public partial class ScannerPage : UserControl
                 return false;
             }
 
-            maxBuyCopper = (long)decimal.Round(maxBuyGold * 10_000m, 0, MidpointRounding.AwayFromZero);
+            maxBuyCopper = ToCopper(maxBuyGold, copperPerUnit: 10_000m);
         }
 
         if (!long.TryParse(ScanMinSupplyBox.Text.Trim(), out var minSupply) || minSupply < 0 ||
@@ -300,19 +303,18 @@ public partial class ScannerPage : UserControl
             return false;
         }
 
-        var rarity = (ScanRaritySelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        var itemType = (ScanCategorySelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        var sortMode = (ScanSortSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? MarketScanSortModes.GoldPerDay;
-        var scopeText = (ScanScopeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "2000";
-        var maxScan = int.TryParse(scopeText, out var parsedScope) ? parsedScope : 2000;
+        var rarity = SelectedTag(ScanRaritySelector);
+        var itemType = SelectedTag(ScanCategorySelector);
+        var sortMode = SelectedTag(ScanSortSelector) ?? MarketScanSortModes.GoldPerDay;
+        var maxScan = int.TryParse(SelectedTag(ScanScopeSelector), out var parsedScope) ? parsedScope : 2000;
         var defaultQty = long.TryParse(Host.SettingsPage.DefaultQuantityBox.Text.Trim(), out var parsedQty) && parsedQty > 0 ? parsedQty : 1;
         var overbid = int.TryParse(Host.SettingsPage.OverbidMinBox.Text.Trim(), out var parsedOb) && parsedOb >= 0 ? parsedOb : 0;
         var undercut = int.TryParse(Host.SettingsPage.UndercutMinBox.Text.Trim(), out var parsedUc) && parsedUc >= 0 ? parsedUc : 0;
 
         filter = new MarketScanFilter(
             MinimumProfitPercentage: minRoi,
-            MinimumProfitCopper: (long)decimal.Round(minProfitSilver * 100m, 0, MidpointRounding.AwayFromZero),
-            MinimumBuyPriceCopper: (long)decimal.Round(minBuySilver * 100m, 0, MidpointRounding.AwayFromZero),
+            MinimumProfitCopper: ToCopper(minProfitSilver, copperPerUnit: 100m),
+            MinimumBuyPriceCopper: ToCopper(minBuySilver, copperPerUnit: 100m),
             MaximumBuyPriceCopper: maxBuyCopper,
             MinimumSupply: minSupply,
             MinimumDemand: minDemand,
@@ -332,6 +334,11 @@ public partial class ScannerPage : UserControl
         return true;
     }
 
+    private static long ToCopper(decimal amount, decimal copperPerUnit) =>
+        (long)decimal.Round(amount * copperPerUnit, 0, MidpointRounding.AwayFromZero);
+
+    private static string? SelectedTag(ComboBox box) => (box.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+
     internal decimal ReadAutoRescanHours() =>
         decimal.TryParse(AutoRescanHoursBox?.Text?.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out var hours) && hours > 0
             ? Math.Min(hours, 24m)
@@ -339,7 +346,6 @@ public partial class ScannerPage : UserControl
 
     internal ScannerUiState CaptureScannerUiState()
     {
-        static string? TagOf(ComboBox box) => (box.SelectedItem as ComboBoxItem)?.Tag?.ToString();
         return new ScannerUiState(
             MinRoi: ScanMinRoiBox.Text.Trim(),
             MaxRoi: ScanMaxRoiBox.Text.Trim(),
@@ -349,10 +355,10 @@ public partial class ScannerPage : UserControl
             MinSupply: ScanMinSupplyBox.Text.Trim(),
             MinDemand: ScanMinDemandBox.Text.Trim(),
             MinTradesPerDay: ScanMinTradesPerDayBox.Text.Trim(),
-            Rarity: TagOf(ScanRaritySelector),
-            Category: TagOf(ScanCategorySelector),
-            Sort: TagOf(ScanSortSelector),
-            Scope: TagOf(ScanScopeSelector),
+            Rarity: SelectedTag(ScanRaritySelector),
+            Category: SelectedTag(ScanCategorySelector),
+            Sort: SelectedTag(ScanSortSelector),
+            Scope: SelectedTag(ScanScopeSelector),
             CheckWalls: ScanCheckWallsCheckBox.IsChecked == true,
             ShowTradesPerDay: ScanVelocityCheckBox.IsChecked == true,
             SkipPriceSpikes: ScanSkipSpikesCheckBox.IsChecked == true);
@@ -373,10 +379,10 @@ public partial class ScannerPage : UserControl
         ScanMinSupplyBox.Text = state.MinSupply;
         ScanMinDemandBox.Text = state.MinDemand;
         ScanMinTradesPerDayBox.Text = state.MinTradesPerDay;
-        if (state.Rarity is not null) SelectComboByTag(ScanRaritySelector, state.Rarity);
-        if (state.Category is not null) SelectComboByTag(ScanCategorySelector, state.Category);
-        if (state.Sort is not null) SelectComboByTag(ScanSortSelector, state.Sort);
-        if (state.Scope is not null) SelectComboByTag(ScanScopeSelector, state.Scope);
+        SelectComboByTag(ScanRaritySelector, state.Rarity);
+        SelectComboByTag(ScanCategorySelector, state.Category);
+        SelectComboByTag(ScanSortSelector, state.Sort);
+        SelectComboByTag(ScanScopeSelector, state.Scope);
         ScanCheckWallsCheckBox.IsChecked = state.CheckWalls;
         ScanSkipSpikesCheckBox.IsChecked = state.SkipPriceSpikes;
     }
