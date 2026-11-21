@@ -6,7 +6,7 @@ The .NET 10 solution under `src/` is completely standalone and does not load or 
 
 - `src/` contains the WPF control panel, restartable worker process, typed GW2 trading logic, owned Windows capture/OpenCV/Windows OCR vision, official GW2 API client, persistence, and optional licensing.
 - `assets/templates/tradingpost/` holds the Trading Post UI template images copied from the old scripts.
-- `runtime/legacy/` remains on disk only as an unreferenced archive of the old app and can be deleted whenever no longer needed for reference.
+- The old Lua/native app (`runtime/legacy/`) and its archived docs (`archive/`) have been deleted; they remain in git history.
 
 Replay data, the offline sample, dry run, and **Screen observe** all run inside the .NET 10 worker using owned Win32 desktop capture, OpenCV template matching, Windows OCR, and the official Guild Wars 2 API. Fixture recording and raw frame capture stay optional. **Live (Armed trading)** places, cancels and lists Trading Post orders through bounded, verified clicks and keystrokes, and only while **Arm live input** is checked (choosing Live ticks it for you).
 
@@ -20,7 +20,7 @@ dotnet build Mmopal.sln
 dotnet test Mmopal.sln
 ```
 
-Use Rider for the .NET solution. Python tooling, if added later, belongs under `tools/vision-replay` and is not part of the live worker.
+Use Rider for the .NET solution.
 
 ## Runtime data
 

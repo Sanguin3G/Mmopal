@@ -11,10 +11,6 @@ runtime-data/
 *.db
 *.db-shm
 *.db-wal
-**/settings.ini
-**/config.ini
-**/current_transactions.csv
-**/shoppinglist_*.csv
 **/custom_shoppinglist.csv
 **/blacklisted_items.csv
 **/license.json
@@ -24,13 +20,10 @@ archive/recovered-ide/
 archive/native-api/html/
 archive/removed-games/
 
-# Recovered binaries and native dependencies
+# Binaries
 *.dll
 *.exe
-*.lib
-*.exp
 *.pdb
-*.traineddata
 
 # IDE/user files
 .idea/
