@@ -92,7 +92,7 @@ public partial class GuidePage : UserControl
 
         CheckDpiText.Text = $"Windows Display Scaling: {dpi.Summary}";
 
-        var customItemCount = Host.CustomShoppingList.Count;
+        var customItemCount = Host.ListsPage.CustomShoppingList.Count;
         var candidatesPath = Host.CandidatesPathBox.Text;
         var hasCandidates = customItemCount > 0 || !string.IsNullOrWhiteSpace(candidatesPath);
         if (hasCandidates)

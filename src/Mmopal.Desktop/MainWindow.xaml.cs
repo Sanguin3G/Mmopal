@@ -46,9 +46,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _sessionClockTimer;
 
     private readonly ObservableCollection<MarketScanItem> _scanResults = new();
-    private readonly ObservableCollection<ItemCandidate> _customShoppingList = new();
-    internal ObservableCollection<ItemCandidate> CustomShoppingList => _customShoppingList;
-    private readonly ObservableCollection<string> _blacklist = new();
     private readonly ObservableCollection<ItemPnlRow> _itemPnlRows = new();
     private readonly ObservableCollection<ActiveOrderViewRow> _activeOrderRows = new();
     private readonly ObservableCollection<LedgerHistoryViewRow> _ledgerRows = new();
@@ -192,9 +189,8 @@ public partial class MainWindow : Window
 
         InitializeComponent();
         GuidePage.Attach(this);
+        ListsPage.Attach(this);
         ScanResultsGrid.ItemsSource = _scanResults;
-        CustomShoppingListGrid.ItemsSource = _customShoppingList;
-        BlacklistListBox.ItemsSource = _blacklist;
         ItemPnlGrid.ItemsSource = _itemPnlRows;
         ActiveOrdersGrid.ItemsSource = _activeOrderRows;
         LedgerHistoryGrid.ItemsSource = _ledgerRows;
@@ -210,7 +206,7 @@ public partial class MainWindow : Window
         LoadLimits();
         LoadClientSettings();
         LoadOperatorSettings();
-        LoadOperatorLists(
+        ListsPage.LoadLists(
             loadCustomList ?? (() => Array.Empty<ItemCandidate>()),
             loadBlacklist ?? (() => Array.Empty<string>()));
         LoadApiKeyVault();
@@ -260,7 +256,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------------
 
     /// <summary>The pages in the content area. Each page's XAML has its own namescope.</summary>
-    private IEnumerable<FrameworkElement> Pages => [GuidePage];
+    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage];
 
     /// <summary>Finds a named element in the shell or in any page.</summary>
     internal object? FindElement(string name) =>
@@ -269,7 +265,7 @@ public partial class MainWindow : Window
     private void Nav_Checked(object sender, RoutedEventArgs e)
     {
         if (SessionView is null || IncomeView is null || ReportsView is null || ScannerView is null ||
-            ListsView is null || SettingsView is null || GuidePage.GuideView is null)
+            ListsPage.ListsView is null || SettingsView is null || GuidePage.GuideView is null)
         {
             return;
         }
@@ -278,7 +274,7 @@ public partial class MainWindow : Window
         IncomeView.Visibility = NavIncome.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        ListsPage.ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = NavSettings.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         GuidePage.GuideView.Visibility = NavGuide.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
@@ -687,33 +683,33 @@ public partial class MainWindow : Window
             }
         }
 
-        if (ListsLeftCol is not null && ListsRightCol is not null &&
-            ListsTopRow is not null && ListsBottomRow is not null &&
-            CustomListCard is not null && BlacklistCard is not null)
+        if (ListsPage.ListsLeftCol is not null && ListsPage.ListsRightCol is not null &&
+            ListsPage.ListsTopRow is not null && ListsPage.ListsBottomRow is not null &&
+            ListsPage.CustomListCard is not null && ListsPage.BlacklistCard is not null)
         {
             if (mediumCompact)
             {
-                ListsLeftCol.Width = new GridLength(1, GridUnitType.Star);
-                ListsRightCol.Width = new GridLength(0);
-                ListsTopRow.Height = new GridLength(1, GridUnitType.Star);
-                ListsBottomRow.Height = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(CustomListCard, 0);
-                Grid.SetColumn(CustomListCard, 0);
-                CustomListCard.Margin = new Thickness(0, 0, 0, 12);
-                Grid.SetRow(BlacklistCard, 1);
-                Grid.SetColumn(BlacklistCard, 0);
+                ListsPage.ListsLeftCol.Width = new GridLength(1, GridUnitType.Star);
+                ListsPage.ListsRightCol.Width = new GridLength(0);
+                ListsPage.ListsTopRow.Height = new GridLength(1, GridUnitType.Star);
+                ListsPage.ListsBottomRow.Height = new GridLength(1, GridUnitType.Star);
+                Grid.SetRow(ListsPage.CustomListCard, 0);
+                Grid.SetColumn(ListsPage.CustomListCard, 0);
+                ListsPage.CustomListCard.Margin = new Thickness(0, 0, 0, 12);
+                Grid.SetRow(ListsPage.BlacklistCard, 1);
+                Grid.SetColumn(ListsPage.BlacklistCard, 0);
             }
             else
             {
-                ListsLeftCol.Width = new GridLength(1.2, GridUnitType.Star);
-                ListsRightCol.Width = new GridLength(1, GridUnitType.Star);
-                ListsTopRow.Height = new GridLength(1, GridUnitType.Star);
-                ListsBottomRow.Height = GridLength.Auto;
-                Grid.SetRow(CustomListCard, 0);
-                Grid.SetColumn(CustomListCard, 0);
-                CustomListCard.Margin = new Thickness(0, 0, 14, 0);
-                Grid.SetRow(BlacklistCard, 0);
-                Grid.SetColumn(BlacklistCard, 1);
+                ListsPage.ListsLeftCol.Width = new GridLength(1.2, GridUnitType.Star);
+                ListsPage.ListsRightCol.Width = new GridLength(1, GridUnitType.Star);
+                ListsPage.ListsTopRow.Height = new GridLength(1, GridUnitType.Star);
+                ListsPage.ListsBottomRow.Height = GridLength.Auto;
+                Grid.SetRow(ListsPage.CustomListCard, 0);
+                Grid.SetColumn(ListsPage.CustomListCard, 0);
+                ListsPage.CustomListCard.Margin = new Thickness(0, 0, 14, 0);
+                Grid.SetRow(ListsPage.BlacklistCard, 0);
+                Grid.SetColumn(ListsPage.BlacklistCard, 1);
             }
         }
 
@@ -993,11 +989,11 @@ public partial class MainWindow : Window
         _saveClientSettings(clientSettings);
         _saveOperatorSettings(opSettings);
 
-        IReadOnlyList<ItemCandidate>? inlineCandidates = opSettings.UseCustomShoppingList && _customShoppingList.Count > 0
-            ? _customShoppingList.ToArray()
+        IReadOnlyList<ItemCandidate>? inlineCandidates = opSettings.UseCustomShoppingList && ListsPage.CustomShoppingList.Count > 0
+            ? ListsPage.CustomShoppingList.ToArray()
             : null;
-        IReadOnlyList<string>? inlineBlacklist = _blacklist.Count > 0
-            ? _blacklist.ToArray()
+        IReadOnlyList<string>? inlineBlacklist = ListsPage.Blacklist.Count > 0
+            ? ListsPage.Blacklist.ToArray()
             : null;
 
         long? minBalanceCopper = opSettings.GoldThresholdNoBuy is { } goldFloor
@@ -1394,7 +1390,7 @@ public partial class MainWindow : Window
         if (listPath is null)
         {
             // No list at all: trade the fresh scan, unless a Custom Shopping List is the operator's whole plan.
-            if (UseCustomListOnStartCheckBox.IsChecked == true && _customShoppingList.Count > 0)
+            if (UseCustomListOnStartCheckBox.IsChecked == true && ListsPage.CustomShoppingList.Count > 0)
             {
                 return string.Empty;
             }
@@ -1429,7 +1425,7 @@ public partial class MainWindow : Window
     private void UpdateLosingItemsPanel()
     {
         var guidance = PortfolioProfitAdvisor.BuildGuidance(_archivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
-        var blacklisted = _blacklist.Select(ItemNameNormalizer.Normalize).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var blacklisted = ListsPage.Blacklist.Select(ItemNameNormalizer.Normalize).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _losingItems = (guidance.LosingItems ?? Array.Empty<string>())
             .Where(name => !blacklisted.Contains(ItemNameNormalizer.Normalize(name)))
             .ToArray();
@@ -1451,7 +1447,7 @@ public partial class MainWindow : Window
         var items = _losingItems.ToArray();
         foreach (var name in items)
         {
-            AddBlacklistEntry(name);
+            ListsPage.AddBlacklistEntry(name);
         }
 
         UpdateLosingItemsPanel();
@@ -1493,7 +1489,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        AddBlacklistEntry(selected.ItemName);
+        ListsPage.AddBlacklistEntry(selected.ItemName);
         IncomeSyncStatusText.Text = $"Added '{selected.ItemName}' to Blacklist.";
         AddLog($"Blacklisted '{selected.ItemName}' from Income Leaderboard.");
     }
@@ -1979,7 +1975,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var blacklistSnapshot = _blacklist.ToArray();
+            var blacklistSnapshot = ListsPage.Blacklist.ToArray();
             IReadOnlyList<MarketScanItem> items;
             if (useCachedPrices && _marketScanner is Gw2MarketScanner concreteScanner && concreteScanner.HasCachedScan)
             {
@@ -2085,7 +2081,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        AddOrReplaceCustomCandidate(selected.ToCandidate());
+        ListsPage.AddOrReplaceCustomCandidate(selected.ToCandidate());
         RefreshReadinessChecklist();
         ScanStatusText.Text = $"Added '{selected.ItemName}' to Custom Shopping List.";
     }
@@ -2098,161 +2094,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        AddBlacklistEntry(selected.ItemName);
+        ListsPage.AddBlacklistEntry(selected.ItemName);
         _scanResults.Remove(selected);
         ScanStatusText.Text = $"Blacklisted '{selected.ItemName}'.";
-    }
-
-    // ---------------------------------------------------------------------
-    // Custom Shopping List & Blacklist Editors
-    // ---------------------------------------------------------------------
-
-    private void CustomItemInput_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            AddCustomItem_Click(sender, e);
-            e.Handled = true;
-        }
-    }
-
-    private void BlacklistInput_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            AddBlacklistItem_Click(sender, e);
-            e.Handled = true;
-        }
-    }
-
-    private void AddCustomItem_Click(object sender, RoutedEventArgs e)
-    {
-        var name = NullIfBlank(CustomItemNameBox.Text);
-        if (name is null) return;
-        var rarity = (CustomItemRaritySelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Basic";
-        var qty = long.TryParse(CustomItemQtyBox.Text.Trim(), out var parsedQty) && parsedQty > 0 ? parsedQty : 1;
-
-        AddOrReplaceCustomCandidate(new ItemCandidate(name, Rarity: rarity, Quantity: qty));
-        CustomItemNameBox.Clear();
-        UpdateListCounts();
-        RefreshReadinessChecklist();
-    }
-
-    private void RemoveCustomItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (CustomShoppingListGrid.SelectedItem is not ItemCandidate selected) return;
-        _customShoppingList.Remove(selected);
-        OperatorListsStore.SaveShoppingList(CustomShoppingListPath, _customShoppingList);
-        UpdateListCounts();
-        RefreshReadinessChecklist();
-    }
-
-    private async void ImportCustomList_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Import Custom Shopping List",
-            Filter = "CSV or JSON (*.csv;*.json)|*.csv;*.json|All Files (*.*)|*.*"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        try
-        {
-            var loaded = await CandidatesLoader.LoadCandidatesAsync(dialog.FileName);
-            foreach (var item in loaded)
-            {
-                AddOrReplaceCustomCandidate(item);
-            }
-
-            UpdateListCounts();
-            RefreshReadinessChecklist();
-            AddLog($"Imported {loaded.Count} items into Custom Shopping List.");
-        }
-        catch (Exception exception)
-        {
-            AddLog($"ERROR importing custom list: {exception.Message}");
-        }
-    }
-
-    private void ExportCustomList_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export Custom Shopping List CSV",
-            FileName = "custom_shoppinglist.csv",
-            Filter = "CSV (*.csv)|*.csv"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        OperatorListsStore.ExportShoppingListCsv(dialog.FileName, _customShoppingList);
-        AddLog($"Exported {_customShoppingList.Count} custom items to {dialog.FileName}.");
-    }
-
-    private void UseCustomListForSession_Click(object sender, RoutedEventArgs e)
-    {
-        OperatorListsStore.SaveShoppingList(CustomShoppingListPath, _customShoppingList);
-        UseCustomListOnStartCheckBox.IsChecked = true;
-        SaveOperatorSettingsIfValid();
-        RefreshReadinessChecklist();
-        StatusText.Text = $"Custom Shopping List ({_customShoppingList.Count} items) ready for next session.";
-        AddLog($"Custom Shopping List ({_customShoppingList.Count} items) enabled for Start session.");
-    }
-
-    private void AddBlacklistItem_Click(object sender, RoutedEventArgs e)
-    {
-        var entry = NullIfBlank(BlacklistInputBox.Text);
-        if (entry is null) return;
-        AddBlacklistEntry(entry);
-        BlacklistInputBox.Clear();
-        UpdateListCounts();
-    }
-
-    private void RemoveBlacklistItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (BlacklistListBox.SelectedItem is not string selected) return;
-        _blacklist.Remove(selected);
-        OperatorListsStore.SaveBlacklist(BlacklistStorePath, _blacklist);
-        UpdateListCounts();
-    }
-
-    private async void ImportBlacklist_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Import Blacklist",
-            Filter = "CSV or JSON (*.csv;*.json;*.txt)|*.csv;*.json;*.txt|All Files (*.*)|*.*"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        try
-        {
-            var entries = await CandidatesLoader.LoadBlacklistAsync(dialog.FileName);
-            foreach (var entry in entries)
-            {
-                AddBlacklistEntry(entry);
-            }
-
-            UpdateListCounts();
-            AddLog($"Imported {entries.Count} blacklist entries.");
-        }
-        catch (Exception exception)
-        {
-            AddLog($"ERROR importing blacklist: {exception.Message}");
-        }
-    }
-
-    private void ExportBlacklist_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export Blacklist CSV",
-            FileName = "blacklisted_items.csv",
-            Filter = "CSV (*.csv)|*.csv"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        OperatorListsStore.ExportBlacklistCsv(dialog.FileName, _blacklist);
-        AddLog($"Exported {_blacklist.Count} blacklist entries to {dialog.FileName}.");
     }
 
     // ---------------------------------------------------------------------
@@ -3418,48 +3262,6 @@ public partial class MainWindow : Window
 
     private void UpdateLogCount() => LogCountText.Text = $"{LogList.Items.Count} events";
 
-    private void AddOrReplaceCustomCandidate(ItemCandidate candidate)
-    {
-        var normalized = ItemNameNormalizer.Normalize(candidate.ItemName);
-        for (var i = 0; i < _customShoppingList.Count; i++)
-        {
-            if (ItemNameNormalizer.Normalize(_customShoppingList[i].ItemName) == normalized)
-            {
-                _customShoppingList[i] = candidate;
-                OperatorListsStore.SaveShoppingList(CustomShoppingListPath, _customShoppingList);
-                UpdateListCounts();
-                return;
-            }
-        }
-
-        _customShoppingList.Add(candidate);
-        OperatorListsStore.SaveShoppingList(CustomShoppingListPath, _customShoppingList);
-        UpdateListCounts();
-    }
-
-    private void AddBlacklistEntry(string entry)
-    {
-        var trimmed = entry.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed)) return;
-        if (_blacklist.Any(existing => existing.Equals(trimmed, StringComparison.OrdinalIgnoreCase))) return;
-        _blacklist.Add(trimmed);
-        OperatorListsStore.SaveBlacklist(BlacklistStorePath, _blacklist);
-        UpdateListCounts();
-    }
-
-    private void UpdateListCounts()
-    {
-        if (CustomListCountText is not null)
-        {
-            CustomListCountText.Text = $"{_customShoppingList.Count} item{(_customShoppingList.Count == 1 ? string.Empty : "s")}";
-        }
-
-        if (BlacklistCountText is not null)
-        {
-            BlacklistCountText.Text = $"{_blacklist.Count} blocked";
-        }
-    }
-
     private void RefreshApiKeyIndicator()
     {
         if (_apiKeyVault.ActiveEntry is { } active)
@@ -3576,8 +3378,8 @@ public partial class MainWindow : Window
     private static string OperatorSettingsPath => Path.Combine(RuntimePaths.Create().Profiles, "operator-settings.json");
     private static string ApiKeyStorePath => Path.Combine(RuntimePaths.Create().Profiles, "gw2-api-key.dpapi");
     private static string ApiKeyVaultPath => Path.Combine(RuntimePaths.Create().Profiles, "gw2-api-keys.dpapi");
-    private static string CustomShoppingListPath => Path.Combine(RuntimePaths.Create().Profiles, "custom-shoppinglist.json");
-    private static string BlacklistStorePath => Path.Combine(RuntimePaths.Create().Profiles, "blacklist.json");
+    internal static string CustomShoppingListPath => Path.Combine(RuntimePaths.Create().Profiles, "custom-shoppinglist.json");
+    internal static string BlacklistStorePath => Path.Combine(RuntimePaths.Create().Profiles, "blacklist.json");
     private decimal ReadAutoRescanHours() =>
         decimal.TryParse(AutoRescanHoursBox?.Text?.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out var hours) && hours > 0
             ? Math.Min(hours, 24m)
@@ -3715,17 +3517,6 @@ public partial class MainWindow : Window
         ReportMinDurationBox.Text = Math.Clamp(settings.ReportMinDurationMinutes, 0, 1440).ToString(CultureInfo.InvariantCulture);
         MaxSavedReportsBox.Text = Math.Clamp(settings.MaxSavedSessionReports, 10, 1000).ToString(CultureInfo.InvariantCulture);
         UpdateReportRulesSummary(settings.ToSessionReportPolicy());
-    }
-
-    private void LoadOperatorLists(
-        Func<IReadOnlyList<ItemCandidate>> loadCustomList,
-        Func<IReadOnlyList<string>> loadBlacklist)
-    {
-        _customShoppingList.Clear();
-        foreach (var item in loadCustomList()) _customShoppingList.Add(item);
-        _blacklist.Clear();
-        foreach (var entry in loadBlacklist()) _blacklist.Add(entry);
-        UpdateListCounts();
     }
 
     private bool TryReadLimits(out TradingLimits limits)
@@ -3920,7 +3711,7 @@ public partial class MainWindow : Window
         ScanSkipSpikesCheckBox.IsChecked = state.SkipPriceSpikes;
     }
 
-    private void SaveOperatorSettingsIfValid()
+    internal void SaveOperatorSettingsIfValid()
     {
         if (TryReadOperatorSettings(out var opSettings))
         {
