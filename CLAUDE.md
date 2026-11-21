@@ -13,7 +13,7 @@ orders through bounded clicks and keystrokes. Live input only happens in Live mo
 | `src/Mmopal.Worker` | The worker process. `Runtime/` session loop (`WorkerRuntime` + partials: Commands, Status, ShoppingList, Inventory, Recovery) and the named-pipe server · `TradingPost/` the screen driver (`Gw2TradingPostUiDriver` + partials: Launcher, Characters, TradingPostWindow, Buying, Selling, PriceReading, Search, Transactions) · `Vision/` digit-shape price reader · `Client/` game launch/restart. |
 | `src/Mmopal.Native` | Win32 capture, input, windows, OpenCV template matching, Windows OCR, DPAPI secrets. |
 | `src/Mmopal.Infrastructure` | SQLite stores (checkpoints, ledger, session reports), paths, logging. |
-| `src/Mmopal.Desktop` | WPF app: `MainWindow` shell (sidebar, responsive layout, worker events) and its pages. |
+| `src/Mmopal.Desktop` | WPF app: `MainWindow` shell (sidebar, navigation, responsive layout, worker events) and one UserControl per page in `Pages/` (Session, Income, Reports, Scanner, Lists, Settings, Guide). `MainWindow.FindName` also searches the pages, which the smoke tests rely on. |
 | `tests/Mmopal.Domain.Tests` | xUnit tests, including WPF smoke tests and real GW2 dialog crops in `Fixtures/coin-frames`. |
 | `assets/templates/tradingpost` | Template PNGs, calibrated on 1024×768 frames. |
 | `docs/` | How it behaves: `gw2-trading-controller.md` (live flows), `trading-strategy.md` (rules, Auto-Tune), `run.md`. |
