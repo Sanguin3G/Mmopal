@@ -37,12 +37,7 @@ public sealed class Win32ProcessController : IProcessController
         var trimmed = Environment.ExpandEnvironmentVariables(executablePath.Trim());
         if (IsUriLaunch(trimmed))
         {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = trimmed,
-                UseShellExecute = true
-            };
-            Process.Start(startInfo);
+            Process.Start(new ProcessStartInfo { FileName = trimmed, UseShellExecute = true });
             return Task.FromResult(true);
         }
 
@@ -122,8 +117,7 @@ public sealed class Win32ProcessController : IProcessController
 
     internal static string NormalizeProcessName(string executableName)
     {
-        var trimmed = executableName.Trim();
-        var fileName = Path.GetFileName(trimmed);
+        var fileName = Path.GetFileName(executableName.Trim());
         return fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
             ? fileName[..^4]
             : fileName;

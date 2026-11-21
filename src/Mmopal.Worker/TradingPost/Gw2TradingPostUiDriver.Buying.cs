@@ -147,13 +147,13 @@ public sealed partial class Gw2TradingPostUiDriver
 
         if (buyersAnchor is null)
         {
-            await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-            return new TradingActionResult(
+            return await CloseItemWindowWithResultAsync(
                 action,
                 TradingActionStatus.Failed,
                 wrongTitles.Count > 0
                     ? $"None of the search rows opened '{action.ItemName}' (saw: {string.Join(", ", wrongTitles.Select(t => $"'{t}'"))}); not buying a different item."
-                    : $"Item order window did not open for '{action.ItemName}'.");
+                    : $"Item order window did not open for '{action.ItemName}'.",
+                cancellationToken).ConfigureAwait(false);
         }
 
         // Wait for async order-book rows from the GW2 server before selecting Row 1 under Current Buyers.
@@ -174,8 +174,7 @@ public sealed partial class Gw2TradingPostUiDriver
             {
                 if (IsPaused)
                 {
-                    await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-                    return new TradingActionResult(action, TradingActionStatus.Skipped, "Paused by operator before submitting buy order.");
+                    return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Skipped, "Paused by operator before submitting buy order.", cancellationToken).ConfigureAwait(false);
                 }
 
                 if (await TryFindOnceAsync("placeOrder.png", CaptureRegion.FullScreen1024x768, 0.72m, cancellationToken).ConfigureAwait(false) is not null)
@@ -224,16 +223,14 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogInformation("Typed price for {Item}: {Message}", action.ItemName, choice.Message);
             if (choice.Target is not { } target)
             {
-                await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-                return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {choice.Message}");
+                return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Failed, $"Buy order aborted: {choice.Message}", cancellationToken).ConfigureAwait(false);
             }
 
             var (confirmed, confirmMessage) = await TypeAndConfirmPriceAsync(target, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, confirmMessage);
             if (!confirmed)
             {
-                await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-                return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {confirmMessage}");
+                return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Failed, $"Buy order aborted: {confirmMessage}", cancellationToken).ConfigureAwait(false);
             }
 
             typedUnitPrice = target;
@@ -250,8 +247,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
         if (IsPaused)
         {
-            await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-            return new TradingActionResult(action, TradingActionStatus.Skipped, "Paused by operator before submitting buy order.");
+            return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Skipped, "Paused by operator before submitting buy order.", cancellationToken).ConfigureAwait(false);
         }
 
         // A message box over the dialog would swallow the Place Order click while the order is reported as placed.
@@ -259,8 +255,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var placeButton = await WaitForTemplateAsync("placeOrder.png", CaptureRegion.FullScreen1024x768, 0.72m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
         if (placeButton is null)
         {
-            await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-            return new TradingActionResult(action, TradingActionStatus.Failed, $"Place Order button was not visible for '{action.ItemName}'.");
+            return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Failed, $"Place Order button was not visible for '{action.ItemName}'.", cancellationToken).ConfigureAwait(false);
         }
 
         if (_textLocator is not null && typedUnitPrice is null)
@@ -275,13 +270,11 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, check.Message);
             if (check.Abort)
             {
-                await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
-                return new TradingActionResult(action, TradingActionStatus.Failed, $"Buy order aborted: {check.Message}");
+                return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Failed, $"Buy order aborted: {check.Message}", cancellationToken).ConfigureAwait(false);
             }
         }
 
-        await ClickCenterAsync(placeButton, cancellationToken).ConfigureAwait(false);
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
+        await ClickCenterAndSettleAsync(placeButton, cancellationToken).ConfigureAwait(false);
         await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
 
         return typedUnitPrice is { } placed
@@ -296,6 +289,16 @@ public sealed partial class Gw2TradingPostUiDriver
                 action,
                 TradingActionStatus.Completed,
                 $"Placed live buy order for {qty}x '{action.ItemName}' (+{overbidSteps}c overbid).");
+    }
+
+    private async Task<TradingActionResult> CloseItemWindowWithResultAsync(
+        TradingAction action,
+        TradingActionStatus status,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+        return new TradingActionResult(action, status, message);
     }
 
     /// <summary>

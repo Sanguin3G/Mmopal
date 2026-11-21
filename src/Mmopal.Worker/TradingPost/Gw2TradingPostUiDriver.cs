@@ -148,11 +148,6 @@ public sealed partial class Gw2TradingPostUiDriver
     /// <summary>When a "lost its connection ... wait a few minutes" message box was last dismissed, if ever.</summary>
     public DateTimeOffset? ServerDisconnectSeenUtc { get; set; }
 
-    /// <summary>
-    /// True when the Total line's digit groups equal unit × q (q = 1..250) with only "zero-ish" groups missing: a
-    /// silver or copper value whose two-digit form contains a 0 (00, 06, 50 …), which OCR tends to drop. Gold is never
-    /// allowed to be missing, and no group may be extra or different.
-    /// </summary>
     // The Total line's digits, right of the "Total Price:" label (the label's letters would be read as digits).
     private static readonly CaptureRegion GlyphTotalRegion = new(382, 330, 250, 44);
 
@@ -187,43 +182,51 @@ public sealed partial class Gw2TradingPostUiDriver
         }
     }
 
-    private async Task CloseItemWindowAsync(CancellationToken cancellationToken)
+    private Task CloseItemWindowAsync(CancellationToken cancellationToken)
     {
         var region = _requireTemplateFilesOnDisk
             ? ModalCloseButtonRegion
             : new CaptureRegion(0, 0, 800, 400);
-        for (var i = 0; i < 3; i++)
-        {
-            var close = await TryFindOnceAsync("exit_item_window.png", region, 0.75m, cancellationToken).ConfigureAwait(false);
-            if (close is null) break;
-            await ClickCenterAsync(close, cancellationToken).ConfigureAwait(false);
-            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        }
+        return ClickWhileVisibleAsync(
+            () => TryFindOnceAsync("exit_item_window.png", region, 0.75m, cancellationToken),
+            cancellationToken);
     }
 
     private async Task CloseAllTpWindowsAsync(CancellationToken cancellationToken)
     {
         await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+        await ClickWhileVisibleAsync(
+            () => TryFindOnceAsync("exit_window.png", TopHeaderRegion, 0.78m, cancellationToken),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task ResetFiltersAsync(CancellationToken cancellationToken)
+    {
+        var region = new CaptureRegion(0, 0, 900, 300);
+        return ClickWhileVisibleAsync(
+            async () => await TryFindOnceAsync("reset_filter_A.png", region, 0.75m, cancellationToken).ConfigureAwait(false)
+                        ?? await TryFindOnceAsync("reset_filter_B.png", region, 0.75m, cancellationToken).ConfigureAwait(false),
+            cancellationToken);
+    }
+
+    /// <summary>Clicks a close or reset control up to three times, for as long as it is still found.</summary>
+    private async Task ClickWhileVisibleAsync(Func<Task<TemplateMatch?>> find, CancellationToken cancellationToken)
+    {
         for (var i = 0; i < 3; i++)
         {
-            var close = await TryFindOnceAsync("exit_window.png", TopHeaderRegion, 0.78m, cancellationToken).ConfigureAwait(false);
-            if (close is null) break;
-            await ClickCenterAsync(close, cancellationToken).ConfigureAwait(false);
+            var control = await find().ConfigureAwait(false);
+            if (control is null) break;
+            await ClickCenterAsync(control, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task ResetFiltersAsync(CancellationToken cancellationToken)
+    /// <summary>Snaps the game window to (0, 0) at the configured size (1024x768 when unset).</summary>
+    private Task<bool> EnsureGameWindowAsync(CancellationToken cancellationToken)
     {
-        var region = new CaptureRegion(0, 0, 900, 300);
-        for (var i = 0; i < 3; i++)
-        {
-            var reset = await TryFindOnceAsync("reset_filter_A.png", region, 0.75m, cancellationToken).ConfigureAwait(false)
-                        ?? await TryFindOnceAsync("reset_filter_B.png", region, 0.75m, cancellationToken).ConfigureAwait(false);
-            if (reset is null) break;
-            await ClickCenterAsync(reset, cancellationToken).ConfigureAwait(false);
-            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        }
+        var width = _settings.WindowWidth > 0 ? _settings.WindowWidth : 1024;
+        var height = _settings.WindowHeight > 0 ? _settings.WindowHeight : 768;
+        return _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken);
     }
 
     private Task<TemplateMatch?> WaitForTemplateAsync(
@@ -244,8 +247,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var candidates = new List<(string FileName, string Path)>(fileNames.Count);
         foreach (var fileName in fileNames)
         {
-            var path = ResolveTemplatePath(fileName);
-            if (!_requireTemplateFilesOnDisk || File.Exists(path))
+            if (TryResolveTemplate(fileName, out var path))
             {
                 candidates.Add((fileName, path));
             }
@@ -289,13 +291,9 @@ public sealed partial class Gw2TradingPostUiDriver
         decimal minScore,
         CancellationToken cancellationToken)
     {
-        var path = ResolveTemplatePath(fileName);
-        if (_requireTemplateFilesOnDisk && !File.Exists(path))
-        {
-            return Task.FromResult<TemplateMatch?>(null);
-        }
-
-        return TryFindOnceAtPathAsync(fileName, path, region, minScore, cancellationToken);
+        return TryResolveTemplate(fileName, out var path)
+            ? TryFindOnceAtPathAsync(fileName, path, region, minScore, cancellationToken)
+            : Task.FromResult<TemplateMatch?>(null);
     }
 
     private Task<TemplateMatch?> TryFindInFrameAsync(
@@ -305,16 +303,9 @@ public sealed partial class Gw2TradingPostUiDriver
         decimal minScore,
         CancellationToken cancellationToken)
     {
-        var path = ResolveTemplatePath(fileName);
-        if (_requireTemplateFilesOnDisk && !File.Exists(path))
-        {
-            return Task.FromResult<TemplateMatch?>(null);
-        }
-
-        return _templates.FindAsync(
-            frame,
-            new TemplateDefinition(fileName, path, region, minScore),
-            cancellationToken);
+        return TryResolveTemplate(fileName, out var path)
+            ? _templates.FindAsync(frame, new TemplateDefinition(fileName, path, region, minScore), cancellationToken)
+            : Task.FromResult<TemplateMatch?>(null);
     }
 
     private async Task<TemplateMatch?> TryFindOnceAtPathAsync(
@@ -333,6 +324,16 @@ public sealed partial class Gw2TradingPostUiDriver
 
     private Task ClickCenterAsync(TemplateMatch match, CancellationToken cancellationToken) =>
         _input.ClickAsync(CenterX(match), CenterY(match), cancellationToken);
+
+    private async Task ClickCenterAndSettleAsync(TemplateMatch match, CancellationToken cancellationToken)
+    {
+        await ClickCenterAsync(match, cancellationToken).ConfigureAwait(false);
+        await SettleAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Center of an OCR line box (at least 1 px in from its corner), as a click point.</summary>
+    private static (int X, int Y) OcrBoxCenter(OcrTextBox box) =>
+        (box.X + Math.Max(1, box.Width / 2), box.Y + Math.Max(1, box.Height / 2));
 
     private static int CenterX(TemplateMatch match) => match.X + Math.Max(0, match.Width / 2);
     private static int CenterY(TemplateMatch match) => match.Y + Math.Max(0, match.Height / 2);
@@ -358,4 +359,10 @@ public sealed partial class Gw2TradingPostUiDriver
             ? fileName
             : Path.Combine(Path.GetFullPath(Environment.ExpandEnvironmentVariables(_templateRoot)), fileName);
 
+    /// <summary>Resolves a template's path; false when template files are required and this one is missing.</summary>
+    private bool TryResolveTemplate(string fileName, out string path)
+    {
+        path = ResolveTemplatePath(fileName);
+        return !_requireTemplateFilesOnDisk || File.Exists(path);
+    }
 }

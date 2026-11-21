@@ -23,7 +23,7 @@ public static partial class WindowsDisplayHealth
         }
         catch
         {
-            dpi = 96;
+            // Keep the 96 DPI default when the system DPI cannot be queried.
         }
 
         var scalePercent = (int)Math.Round(dpi * 100.0 / 96.0);

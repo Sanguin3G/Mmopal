@@ -20,14 +20,10 @@ public sealed partial class Gw2TradingPostUiDriver
         if (okButton is not null)
         {
             _logger.LogWarning("Dismissing in-game dialog ('ok.png') at ({X}, {Y}) during recovery.", CenterX(okButton), CenterY(okButton));
-            await ClickCenterAsync(okButton, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            await ClickCenterAndSettleAsync(okButton, cancellationToken).ConfigureAwait(false);
         }
 
-        var width = _settings.WindowWidth > 0 ? _settings.WindowWidth : 1024;
-        var height = _settings.WindowHeight > 0 ? _settings.WindowHeight : 768;
-        await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
-
+        await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
         await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
 
         if (!await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) &&
@@ -42,13 +38,7 @@ public sealed partial class Gw2TradingPostUiDriver
                      await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false) is null)
             {
                 // Clear stuck in-game overlays (esc menu / tooltips / focus loss) before retrying F/O.
-                await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
-                await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-                if (await TryFindOnceAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, cancellationToken).ConfigureAwait(false) is not null)
-                {
-                    await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
-                    await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-                }
+                await PressEscapeClosingGameMenuAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -97,10 +87,7 @@ public sealed partial class Gw2TradingPostUiDriver
             await SettleAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var width = _settings.WindowWidth > 0 ? _settings.WindowWidth : 1024;
-        var height = _settings.WindowHeight > 0 ? _settings.WindowHeight : 768;
-        await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
-
+        await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
         if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false))
         {
             return (true, "Trading Post is open.");
@@ -113,7 +100,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
         if (await TryAdvanceLauncherOrCharacterSelectAsync(cancellationToken).ConfigureAwait(false))
         {
-            await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
+            await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
             if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
                 await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false))
             {
@@ -154,7 +141,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 _ = await TryAdvanceLauncherOrCharacterSelectAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
+            await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
 
             if (attempt > 1)
             {
@@ -190,15 +177,12 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogInformation("Opening Trading Post (attempt {Attempt}/3 with key '{Key}').", attempt, keyToPress);
             await _input.KeyPressAsync(keyToPress, cancellationToken).ConfigureAwait(false);
 
-            var found = await WaitForTradingPostOrSidebarAsync(cancellationToken).ConfigureAwait(false);
-            if (found)
+            if (await WaitForTradingPostOrSidebarAsync(cancellationToken).ConfigureAwait(false) &&
+                (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
+                 await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false)))
             {
-                if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
-                    await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    LastTradingPostOpenFailed = false;
-                    return (true, $"Trading Post opened via '{keyToPress}' on attempt {attempt}.");
-                }
+                LastTradingPostOpenFailed = false;
+                return (true, $"Trading Post opened via '{keyToPress}' on attempt {attempt}.");
             }
         }
 
@@ -210,6 +194,12 @@ public sealed partial class Gw2TradingPostUiDriver
     private async Task CloseStrayWindowsAsync(int attempt, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Closing any non-TP window (bank, NPC dialog) before attempt {Attempt}/3.", attempt);
+        await PressEscapeClosingGameMenuAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Presses Esc once, and again when that opened the Game Menu (its Log Out button is showing).</summary>
+    private async Task PressEscapeClosingGameMenuAsync(CancellationToken cancellationToken)
+    {
         await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         if (await TryFindOnceAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, cancellationToken).ConfigureAwait(false) is not null)
@@ -232,8 +222,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var takeAll = await TryFindOnceAsync("take_all.png", CaptureRegion.FullScreen1024x768, 0.72m, cancellationToken).ConfigureAwait(false);
         if (takeAll is null && _textLocator is not null)
         {
-            var header = await FindDeliveryHeaderAsync(cancellationToken).ConfigureAwait(false);
-            if (header is { } point)
+            if (await FindDeliveryHeaderAsync(cancellationToken).ConfigureAwait(false) is { } point)
             {
                 _logger.LogInformation("Delivery Box panel is collapsed; expanding it to reach Take All.");
                 await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
@@ -259,8 +248,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
-        await ClickCenterAsync(takeAll, cancellationToken).ConfigureAwait(false);
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
+        await ClickCenterAndSettleAsync(takeAll, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -338,41 +326,33 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
-        if (await TryFindInFrameAsync(frame, "transactions.png", TransactionsTabRegion, 0.70m, cancellationToken).ConfigureAwait(false) is not null ||
-            await TryFindInFrameAsync(frame, "buy_items_tab_open.png", BuyTabRegion, 0.65m, cancellationToken).ConfigureAwait(false) is not null ||
-            await TryFindInFrameAsync(frame, "buy_items_tab.png", BuyTabRegion, 0.68m, cancellationToken).ConfigureAwait(false) is not null ||
-            await TryFindInFrameAsync(frame, "items_tab.png", SellTabRegion, 0.68m, cancellationToken).ConfigureAwait(false) is not null ||
-            await TryFindInFrameAsync(frame, "cog.png", SearchFieldRegion, 0.70m, cancellationToken).ConfigureAwait(false) is not null ||
-            await TryFindInFrameAsync(frame, "search.png", SearchFieldRegion, 0.70m, cancellationToken).ConfigureAwait(false) is not null ||
-            await TryFindInFrameAsync(frame, "exit_item_window.png", ModalCloseButtonRegion, 0.75m, cancellationToken).ConfigureAwait(false) is not null)
-        {
-            return true;
-        }
-
-        return false;
+        return await TryFindInFrameAsync(frame, "transactions.png", TransactionsTabRegion, 0.70m, cancellationToken).ConfigureAwait(false) is not null ||
+               await TryFindInFrameAsync(frame, "buy_items_tab_open.png", BuyTabRegion, 0.65m, cancellationToken).ConfigureAwait(false) is not null ||
+               await TryFindInFrameAsync(frame, "buy_items_tab.png", BuyTabRegion, 0.68m, cancellationToken).ConfigureAwait(false) is not null ||
+               await TryFindInFrameAsync(frame, "items_tab.png", SellTabRegion, 0.68m, cancellationToken).ConfigureAwait(false) is not null ||
+               await TryFindInFrameAsync(frame, "cog.png", SearchFieldRegion, 0.70m, cancellationToken).ConfigureAwait(false) is not null ||
+               await TryFindInFrameAsync(frame, "search.png", SearchFieldRegion, 0.70m, cancellationToken).ConfigureAwait(false) is not null ||
+               await TryFindInFrameAsync(frame, "exit_item_window.png", ModalCloseButtonRegion, 0.75m, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private async Task<bool> TrySwitchFromBlackLionToTradingPostAsync(CancellationToken cancellationToken)
     {
         var sidebarTp = await TryFindOnceAsync("tradingpost_tab.png", LeftSidebarTpTabRegion, 0.68m, cancellationToken).ConfigureAwait(false);
-        if (sidebarTp is null && _requireTemplateFilesOnDisk)
+        if (sidebarTp is not null)
         {
-            var blackLion = await TryFindOnceAsync("black_lion.png", BlackLionCrestRegion, 0.75m, cancellationToken).ConfigureAwait(false);
-            if (blackLion is not null)
-            {
-                await _input.ClickAsync(DeterministicLeftSidebarTpPoint.X, DeterministicLeftSidebarTpPoint.Y, cancellationToken).ConfigureAwait(false);
-                await SettleAsync(cancellationToken).ConfigureAwait(false);
-                return await WaitForTradingPostTabAsync(cancellationToken).ConfigureAwait(false);
-            }
+            _logger.LogInformation("Switching Black Lion window from Gem Store to Trading Post tab via sidebar icon.");
+            await ClickCenterAndSettleAsync(sidebarTp, cancellationToken).ConfigureAwait(false);
+            return await WaitForTradingPostTabAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (sidebarTp is null)
+        if (!_requireTemplateFilesOnDisk ||
+            await TryFindOnceAsync("black_lion.png", BlackLionCrestRegion, 0.75m, cancellationToken).ConfigureAwait(false) is null)
         {
             return false;
         }
 
-        _logger.LogInformation("Switching Black Lion window from Gem Store to Trading Post tab via sidebar icon.");
-        await ClickCenterAsync(sidebarTp, cancellationToken).ConfigureAwait(false);
+        // The Black Lion window is open but its sidebar icon was not matched: click the icon's measured position.
+        await _input.ClickAsync(DeterministicLeftSidebarTpPoint.X, DeterministicLeftSidebarTpPoint.Y, cancellationToken).ConfigureAwait(false);
         await SettleAsync(cancellationToken).ConfigureAwait(false);
         return await WaitForTradingPostTabAsync(cancellationToken).ConfigureAwait(false);
     }

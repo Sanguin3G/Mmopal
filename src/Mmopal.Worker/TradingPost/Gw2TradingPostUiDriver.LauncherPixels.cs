@@ -30,15 +30,10 @@ public sealed partial class Gw2TradingPostUiDriver
         var bottomSampleLimit = Math.Min(720, height);
         for (var y = 180; y < bottomSampleLimit; y += 4)
         {
-            var rowOffset = y * stride;
             for (var x = 20; x < leftSampleLimit; x += 4)
             {
                 totalSamples++;
-                var px = rowOffset + (x * 4);
-                var b = frame.Pixels[px];
-                var g = frame.Pixels[px + 1];
-                var r = frame.Pixels[px + 2];
-                if (r > 215 && g > 210 && b > 195)
+                if (IsCardWhite(frame.Pixels, stride, x, y))
                 {
                     whiteSamples++;
                 }
@@ -57,14 +52,12 @@ public sealed partial class Gw2TradingPostUiDriver
         var marginMaxX = Math.Min(44, width - 1);
         for (var y = 20; y < height; y += 2)
         {
-            var rowOffset = y * stride;
             var marginWhite = 0;
             var marginTotal = 0;
             for (var x = 20; x <= marginMaxX; x += 4)
             {
                 marginTotal++;
-                var px = rowOffset + (x * 4);
-                if (frame.Pixels[px + 2] > 215 && frame.Pixels[px + 1] > 210 && frame.Pixels[px] > 195)
+                if (IsCardWhite(frame.Pixels, stride, x, y))
                 {
                     marginWhite++;
                 }
@@ -84,11 +77,9 @@ public sealed partial class Gw2TradingPostUiDriver
             var bandMaxX = Math.Min(420, width);
             for (var y = 100; y < Math.Min(height - 2, 755); y += 3)
             {
-                var rowOffset = y * stride;
                 for (var x = 10; x < bandMaxX; x += 5)
                 {
-                    var px = rowOffset + (x * 4);
-                    if (frame.Pixels[px + 2] > 215 && frame.Pixels[px + 1] > 210 && frame.Pixels[px] > 195)
+                    if (IsCardWhite(frame.Pixels, stride, x, y))
                     {
                         if (y < cardTop) cardTop = y;
                         if (y > cardBottom) cardBottom = y;
@@ -102,11 +93,9 @@ public sealed partial class Gw2TradingPostUiDriver
         var maxScanX = width - 4;
         for (var y = Math.Max(0, cardTop); y <= Math.Min(height - 2, cardBottom); y += 6)
         {
-            var rowOffset = y * stride;
             for (var x = 10; x < maxScanX; x += 5)
             {
-                var px = rowOffset + (x * 4);
-                if (frame.Pixels[px + 2] > 215 && frame.Pixels[px + 1] > 210 && frame.Pixels[px] > 195)
+                if (IsCardWhite(frame.Pixels, stride, x, y))
                 {
                     if (x < cardLeft) cardLeft = x;
                     if (x > cardRight) cardRight = x;
@@ -326,6 +315,13 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         return new LauncherWhiteCardState(loginX, loginY, playX, playY, loginActive, playActive);
+    }
+
+    /// <summary>The launcher card's near-white background (stricter than <see cref="IsLightCardPixel"/>).</summary>
+    private static bool IsCardWhite(byte[] pixels, int stride, int x, int y)
+    {
+        var (r, g, b) = SampleRgb(pixels, stride, x, y);
+        return r > 215 && g > 210 && b > 195;
     }
 
     private static bool IsLightCardPixel(byte r, byte g, byte b) =>

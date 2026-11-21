@@ -238,8 +238,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 var listButton = await WaitForTemplateAsync("ListThisItem.png", CaptureRegion.FullScreen1024x768, 0.70m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
                 if (listButton is not null && !IsPaused)
                 {
-                    await ClickCenterAsync(listButton, cancellationToken).ConfigureAwait(false);
-                    await SettleAsync(cancellationToken).ConfigureAwait(false);
+                    await ClickCenterAndSettleAsync(listButton, cancellationToken).ConfigureAwait(false);
                     results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.Listed, $"Sell listing placed{typedSellNote}."));
                 }
                 else

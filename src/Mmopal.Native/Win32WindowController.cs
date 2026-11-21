@@ -31,7 +31,7 @@ public sealed partial class Win32WindowController : IWindowController
         var title = ReadWindowText(handle);
         var className = ReadClassName(handle);
         _ = GetWindowRect(handle, out var rect);
-        var is3D = PreferredGw2WindowClasses.Any(c => string.Equals(className, c, StringComparison.OrdinalIgnoreCase));
+        var is3D = IsGameWindowClass(className);
         var isLauncher = !is3D &&
                          (string.Equals(className, LauncherWindowClass, StringComparison.OrdinalIgnoreCase) ||
                           string.Equals(title, "Guild Wars 2", StringComparison.OrdinalIgnoreCase));
@@ -66,13 +66,7 @@ public sealed partial class Win32WindowController : IWindowController
         }
 
         var handle = FindTargetWindow(processName);
-        if (handle == IntPtr.Zero)
-        {
-            return Task.FromResult(false);
-        }
-
-        var positioned = PositionAndResize(handle, x: 0, y: 0, width, height);
-        return Task.FromResult(positioned);
+        return Task.FromResult(handle != IntPtr.Zero && PositionAndResize(handle, x: 0, y: 0, width, height));
     }
 
     internal static IntPtr FindTargetWindow(string processOrTitle)
@@ -254,6 +248,9 @@ public sealed partial class Win32WindowController : IWindowController
         }
     }
 
+    private static bool IsGameWindowClass(string className) =>
+        PreferredGw2WindowClasses.Any(c => string.Equals(className, c, StringComparison.OrdinalIgnoreCase));
+
     private static string ReadWindowText(IntPtr hwnd)
     {
         var length = GetWindowTextLengthW(hwnd);
@@ -294,8 +291,7 @@ public sealed partial class Win32WindowController : IWindowController
     {
         public long Area => (long)Math.Max(0, Width) * Math.Max(0, Height);
 
-        public bool Is3DGameWindow =>
-            PreferredGw2WindowClasses.Any(c => string.Equals(ClassName, c, StringComparison.OrdinalIgnoreCase));
+        public bool Is3DGameWindow => IsGameWindowClass(ClassName);
 
         public bool IsUndersizedSplashWindow =>
             !Is3DGameWindow &&

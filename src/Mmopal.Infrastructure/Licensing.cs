@@ -140,7 +140,7 @@ public sealed class RemoteHttpProvider : ILicenseProvider
         var checkedAt = DateTimeOffset.UtcNow;
         if (string.IsNullOrWhiteSpace(_options.Endpoint))
         {
-            return new LicenseSnapshot(true, false, new HashSet<LicenseFeature>(), Name, null, null, checkedAt, "No remote license endpoint was configured.");
+            return Invalid(checkedAt, "No remote license endpoint was configured.");
         }
 
         try
@@ -151,7 +151,7 @@ public sealed class RemoteHttpProvider : ILicenseProvider
 
             if (response is null)
             {
-                return new LicenseSnapshot(true, false, new HashSet<LicenseFeature>(), Name, null, null, checkedAt, "Remote license response was empty.");
+                return Invalid(checkedAt, "Remote license response was empty.");
             }
 
             return new LicenseSnapshot(
@@ -166,13 +166,16 @@ public sealed class RemoteHttpProvider : ILicenseProvider
         }
         catch (HttpRequestException exception)
         {
-            return new LicenseSnapshot(true, false, new HashSet<LicenseFeature>(), Name, null, null, checkedAt, $"Remote license check failed: {exception.Message}");
+            return Invalid(checkedAt, $"Remote license check failed: {exception.Message}");
         }
         catch (TaskCanceledException)
         {
-            return new LicenseSnapshot(true, false, new HashSet<LicenseFeature>(), Name, null, null, checkedAt, "Remote license check timed out.");
+            return Invalid(checkedAt, "Remote license check timed out.");
         }
     }
+
+    private LicenseSnapshot Invalid(DateTimeOffset checkedAt, string message) =>
+        new(true, false, new HashSet<LicenseFeature>(), Name, null, null, checkedAt, message);
 }
 
 public sealed class LicenseService

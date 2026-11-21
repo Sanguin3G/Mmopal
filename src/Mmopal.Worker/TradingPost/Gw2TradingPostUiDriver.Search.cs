@@ -96,8 +96,7 @@ public sealed partial class Gw2TradingPostUiDriver
             cancellationToken).ConfigureAwait(false);
         if (buyTab is not null)
         {
-            await ClickCenterAsync(buyTab, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            await ClickCenterAndSettleAsync(buyTab, cancellationToken).ConfigureAwait(false);
             return true;
         }
 
@@ -267,14 +266,14 @@ public sealed partial class Gw2TradingPostUiDriver
 
     private async Task ReplaceFieldTextAsync(string text, CancellationToken cancellationToken)
     {
-        await _input.KeyPressAsync("ctrl+a", cancellationToken).ConfigureAwait(false);
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("backspace", cancellationToken).ConfigureAwait(false);
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("ctrl+a", cancellationToken).ConfigureAwait(false);
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("backspace", cancellationToken).ConfigureAwait(false);
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        for (var pass = 0; pass < 2; pass++)
+        {
+            await _input.KeyPressAsync("ctrl+a", cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            await _input.KeyPressAsync("backspace", cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         await _input.SendTextAsync(text, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -23,9 +23,7 @@ public sealed partial class Gw2TradingPostUiDriver
     {
         var advanced = false;
         var hadLauncherActivity = false;
-        var width = _settings.WindowWidth > 0 ? _settings.WindowWidth : 1024;
-        var height = _settings.WindowHeight > 0 ? _settings.WindowHeight : 768;
-        await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
+        await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
         var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
 
         if (await DismissLauncherDialogsAsync(frame, cancellationToken).ConfigureAwait(false))
@@ -92,7 +90,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     {
                         if (_requireTemplateFilesOnDisk)
                         {
-                            await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
+                            await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
                         }
 
                         // Re-check on a fresh frame right before clicking: the launcher may have moved on to the
@@ -158,7 +156,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
                 // Keep re-snapping the window on every poll so when the "Downloading 0KB" splash HWND
                 // closes and the main Launcher HWND opens in the center of the screen, it snaps to (0, 0) immediately.
-                await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
+                await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
                 isLauncherWindow = IsLauncherProcessWindowActive();
                 if (IsGame3DWindowActive())
                 {
@@ -205,8 +203,8 @@ public sealed partial class Gw2TradingPostUiDriver
                 cancellationToken.ThrowIfCancellationRequested();
                 if (IsPaused) return advanced;
 
-                await _windows.EnsureWindowAsync(Gw2ClientSettings.DefaultWindowName, width, height, cancellationToken).ConfigureAwait(false);
-                frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+                await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
+                frame =await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
 
                 if (DetectLauncherWhiteCard(frame) is null)
                 {
@@ -298,7 +296,7 @@ public sealed partial class Gw2TradingPostUiDriver
             {
                 if (IsOcrLoginLabel(box.Text) && box.Y >= 460 && box.X <= 240)
                 {
-                    ocrLogin = (box.X + Math.Max(1, box.Width / 2), box.Y + Math.Max(1, box.Height / 2));
+                    ocrLogin = OcrBoxCenter(box);
                     break;
                 }
             }
@@ -319,17 +317,13 @@ public sealed partial class Gw2TradingPostUiDriver
 
                 if (ocrPlay is null && IsOcrPlayButtonLabel(upper) && box.X >= 600)
                 {
-                    ocrPlay = (box.X + Math.Max(1, box.Width / 2), box.Y + Math.Max(1, box.Height / 2));
+                    ocrPlay = OcrBoxCenter(box);
                 }
             }
         }
 
-        var loginPoint = ocrLogin;
-        if (loginPoint is null && loginTemplate is not null)
-        {
-            loginPoint = (CenterX(loginTemplate), CenterY(loginTemplate));
-        }
-
+        // OCR first, then the template, then the white-card pixel geometry.
+        var loginPoint = ocrLogin ?? CenterOf(loginTemplate);
         if (loginPoint is null && whiteCard is { LoginButtonActive: true })
         {
             loginPoint = (whiteCard.LoginX, whiteCard.LoginY);
@@ -338,12 +332,7 @@ public sealed partial class Gw2TradingPostUiDriver
         (int X, int Y)? playPoint = null;
         if (!ocrReadyVisible && (_settings.IsSteamPlatform || loginPoint is null))
         {
-            playPoint = ocrPlay;
-            if (playPoint is null && playTemplate is not null)
-            {
-                playPoint = (CenterX(playTemplate), CenterY(playTemplate));
-            }
-
+            playPoint = ocrPlay ?? CenterOf(playTemplate);
             if (playPoint is null && whiteCard is { PlayButtonActive: true })
             {
                 playPoint = (whiteCard.PlayX, whiteCard.PlayY);
@@ -357,6 +346,9 @@ public sealed partial class Gw2TradingPostUiDriver
             OcrReadyVisible: ocrReadyVisible,
             OcrAutoPlayVisible: ocrAutoPlayVisible);
     }
+
+    private static (int X, int Y)? CenterOf(TemplateMatch? match) =>
+        match is null ? null : (CenterX(match), CenterY(match));
 
     private async Task<TemplateMatch?> FindCharacterSelectPlayAsync(
         AutomationFrame frame,
@@ -422,34 +414,28 @@ public sealed partial class Gw2TradingPostUiDriver
     private async Task<bool> DismissLauncherDialogsAsync(AutomationFrame frame, CancellationToken cancellationToken)
     {
         var dismissed = false;
-        var agreement = await TryFindInFrameAsync(frame, "accept_agreement.png", CaptureRegion.FullScreen1024x768, 0.78m, cancellationToken).ConfigureAwait(false);
-        if (agreement is not null)
+        foreach (var dialogButton in new[] { "accept_agreement.png", "remind_me_later.png" })
         {
-            await ClickCenterAsync(agreement, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
-            dismissed = true;
-        }
-
-        var remindLater = await TryFindInFrameAsync(frame, "remind_me_later.png", CaptureRegion.FullScreen1024x768, 0.78m, cancellationToken).ConfigureAwait(false);
-        if (remindLater is not null)
-        {
-            await ClickCenterAsync(remindLater, cancellationToken).ConfigureAwait(false);
-            await SettleAsync(cancellationToken).ConfigureAwait(false);
-            dismissed = true;
+            var button = await TryFindInFrameAsync(frame, dialogButton, CaptureRegion.FullScreen1024x768, 0.78m, cancellationToken).ConfigureAwait(false);
+            if (button is not null)
+            {
+                await ClickCenterAndSettleAsync(button, cancellationToken).ConfigureAwait(false);
+                dismissed = true;
+            }
         }
 
         return dismissed;
     }
 
-    private bool IsLauncherProcessWindowActive() =>
-        _requireTemplateFilesOnDisk &&
-        _windows is Win32WindowController winCtrl &&
-        winCtrl.InspectWindow(Gw2ClientSettings.DefaultWindowName) is { IsLauncherWindow: true };
+    private bool IsLauncherProcessWindowActive() => InspectGameWindow() is { IsLauncherWindow: true };
 
-    private bool IsGame3DWindowActive() =>
-        _requireTemplateFilesOnDisk &&
-        _windows is Win32WindowController winCtrl &&
-        winCtrl.InspectWindow(Gw2ClientSettings.DefaultWindowName) is { IsGame3DWindow: true };
+    private bool IsGame3DWindowActive() => InspectGameWindow() is { IsGame3DWindow: true };
+
+    /// <summary>The live GW2 window's class/title inspection; null in tests (no template files) or when not found.</summary>
+    private Gw2WindowInspection? InspectGameWindow() =>
+        _requireTemplateFilesOnDisk && _windows is Win32WindowController windowController
+            ? windowController.InspectWindow(Gw2ClientSettings.DefaultWindowName)
+            : null;
 
     private async Task<bool> IsLauncherStillActiveAsync(CancellationToken cancellationToken)
     {
@@ -461,5 +447,4 @@ public sealed partial class Gw2TradingPostUiDriver
         var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
         return DetectLauncherWhiteCard(frame) is not null;
     }
-
 }
