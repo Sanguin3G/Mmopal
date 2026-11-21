@@ -109,13 +109,7 @@ public partial class SettingsPage
         }
 
         row.CustomName = name;
-        Host.ApiKeyVault = Host.ApiKeyVault with
-        {
-            Entries = Host.ApiKeyVault.Entries
-                .Select(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase) ? e with { CustomName = name } : e)
-                .ToArray()
-        };
-        Host.SaveApiKeyVault(Host.ApiKeyVault);
+        Host.UpdateVaultEntry(row.Id, item => item with { CustomName = name });
         ApiKeyStatusText.Text = string.IsNullOrEmpty(name)
             ? $"Removed the name of {entry.AccountName}."
             : $"Saved the name '{name}' for {entry.AccountName}.";
@@ -168,7 +162,7 @@ public partial class SettingsPage
 
             Host.ApiKeyVault = Host.ApiKeyVault with { Entries = refreshed.ToArray() };
             Host.SaveApiKeyVault(Host.ApiKeyVault);
-            Host.HasVerifiedApiKey = Host.ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+            Host.RefreshHasVerifiedApiKey();
             Host.RebuildApiKeyViews();
             Host.RefreshReadinessChecklist();
             ApiKeyStatusText.Text = $"Re-verified {Host.ApiKeyVault.Entries.Count} key(s): {verifiedCount} valid.";
@@ -273,10 +267,7 @@ public partial class SettingsPage
 
             await Host.IncomePage.ReloadLedgerForActiveAccountAsync();
             await Host.ReportsPage.LoadSessionReportsAsync();
-            if (Host.Supervisor is DesktopWorkerSupervisor concreteSupervisor && Host.LastWorkerState is WorkerState.Idle or WorkerState.Stopped)
-            {
-                await concreteSupervisor.RestartWorkerAsync();
-            }
+            await Host.RestartWorkerIfIdleAsync();
         }
         catch (Exception exception)
         {

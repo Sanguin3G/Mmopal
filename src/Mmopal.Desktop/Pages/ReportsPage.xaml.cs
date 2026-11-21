@@ -67,7 +67,7 @@ public partial class ReportsPage : UserControl
 
     private void ApplyReportsFilter()
     {
-        if (_sessionReportRows is null || ReportsCountText is null || ReportOutcomeFilterSelector is null)
+        if (ReportsCountText is null || ReportOutcomeFilterSelector is null)
         {
             return;
         }
@@ -87,15 +87,7 @@ public partial class ReportsPage : UserControl
         _sessionReportRows.Clear();
         foreach (var report in filtered)
         {
-            var outcomeBrush = report.Outcome switch
-            {
-                "Time Cap Reached" => ResolveBrush("GoldAccentBrush", Brushes.Goldenrod),
-                "Completed" => ResolveBrush("SuccessBrush", Brushes.SeaGreen),
-                "Needs Attention" => ResolveBrush("WarningBrush", Brushes.DarkOrange),
-                "Faulted" => ResolveBrush("DangerBrush", Brushes.IndianRed),
-                _ => ResolveBrush("AccentBrush", Brushes.DodgerBlue)
-            };
-            _sessionReportRows.Add(new SessionReportListItem(report, outcomeBrush));
+            _sessionReportRows.Add(new SessionReportListItem(report, OutcomeBrush(report.Outcome)));
         }
 
         ReportsCountText.Text = $"{_sessionReportRows.Count} report{(_sessionReportRows.Count == 1 ? string.Empty : "s")}";
@@ -127,16 +119,8 @@ public partial class ReportsPage : UserControl
         ReportEmptyStatePanel.Visibility = Visibility.Collapsed;
         ReportDetailContentPanel.Visibility = Visibility.Visible;
 
-        var outcomeBrush = report.Outcome switch
-        {
-            "Time Cap Reached" => ResolveBrush("GoldAccentBrush", Brushes.Goldenrod),
-            "Completed" => ResolveBrush("SuccessBrush", Brushes.SeaGreen),
-            "Needs Attention" => ResolveBrush("WarningBrush", Brushes.DarkOrange),
-            "Faulted" => ResolveBrush("DangerBrush", Brushes.IndianRed),
-            _ => ResolveBrush("AccentBrush", Brushes.DodgerBlue)
-        };
         ReportDetailOutcomeText.Text = report.Outcome.ToUpperInvariant();
-        ReportDetailOutcomeText.Foreground = outcomeBrush;
+        ReportDetailOutcomeText.Foreground = OutcomeBrush(report.Outcome);
         ReportDetailTitleText.Text = $"{report.AccountName} — {report.RunMode} • Pace {report.Profile}";
         ReportDetailMetaText.Text =
             $"Started {report.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  •  Ended {report.EndedAt.ToLocalTime():HH:mm:ss}  •  Source: {report.DataSource}";
@@ -153,32 +137,60 @@ public partial class ReportsPage : UserControl
         var endBal = report.EndingWalletCopper.HasValue ? MarketScanItem.FormatCoins(report.EndingWalletCopper.Value) : "—";
         ReportKpiWalletText.Text = $"Wallet: {startBal} -> {endBal}";
 
-        ReportKpiHealthText.Text = report.ErrorCount > 0
-            ? $"{report.ErrorCount} error(s)"
-            : report.WarningCount > 0 || report.RecoveryAttempts > 0 || report.GameRestarts > 0
-                ? $"{report.WarningCount} warn • {report.RecoveryAttempts + report.GameRestarts} rec"
-                : "Clean";
-        ReportKpiHealthText.Foreground = report.ErrorCount > 0
-            ? ResolveBrush("DangerBrush", Brushes.IndianRed)
-            : report.HasIssues
-                ? ResolveBrush("WarningBrush", Brushes.DarkOrange)
-                : ResolveBrush("SuccessBrush", Brushes.SeaGreen);
+        ReportKpiHealthText.Text = HealthSummary(report);
+        ReportKpiHealthText.Foreground = HealthBrush(report);
         ReportKpiSwapsText.Text = $"{report.CharacterSwapsCompleted} swaps • {report.DeliveryCollections} delivery ({MarketScanItem.FormatCoins(report.DeliveryCoinsCollectedCopper)})";
 
         ReportTradesTabItem.Header = $"Trade & Action Log ({report.Trades.Count})";
         ReportIncidentsTabItem.Header = $"Incidents & Bugs ({report.Incidents.Count})";
 
         _reportTradeRows.Clear();
-        foreach (var t in report.Trades)
+        foreach (var trade in report.Trades)
         {
-            _reportTradeRows.Add(new ReportTradeRow(t));
+            _reportTradeRows.Add(new ReportTradeRow(trade));
         }
 
         _reportIncidentRows.Clear();
-        foreach (var inc in report.Incidents)
+        foreach (var incident in report.Incidents)
         {
-            _reportIncidentRows.Add(new ReportIncidentRow(inc));
+            _reportIncidentRows.Add(new ReportIncidentRow(incident));
         }
+    }
+
+    private static Brush OutcomeBrush(string outcome) => outcome switch
+    {
+        "Time Cap Reached" => ResolveBrush("GoldAccentBrush", Brushes.Goldenrod),
+        "Completed" => ResolveBrush("SuccessBrush", Brushes.SeaGreen),
+        "Needs Attention" => ResolveBrush("WarningBrush", Brushes.DarkOrange),
+        "Faulted" => ResolveBrush("DangerBrush", Brushes.IndianRed),
+        _ => ResolveBrush("AccentBrush", Brushes.DodgerBlue)
+    };
+
+    private static string HealthSummary(TradingSessionReport report)
+    {
+        if (report.ErrorCount > 0)
+        {
+            return $"{report.ErrorCount} error(s)";
+        }
+
+        if (report.WarningCount > 0 || report.RecoveryAttempts > 0 || report.GameRestarts > 0)
+        {
+            return $"{report.WarningCount} warn • {report.RecoveryAttempts + report.GameRestarts} rec";
+        }
+
+        return "Clean";
+    }
+
+    private static Brush HealthBrush(TradingSessionReport report)
+    {
+        if (report.ErrorCount > 0)
+        {
+            return ResolveBrush("DangerBrush", Brushes.IndianRed);
+        }
+
+        return report.HasIssues
+            ? ResolveBrush("WarningBrush", Brushes.DarkOrange)
+            : ResolveBrush("SuccessBrush", Brushes.SeaGreen);
     }
 
     internal void UpdateReportRulesSummary(SessionReportPolicySettings policy)
@@ -217,7 +229,28 @@ public partial class ReportsPage : UserControl
 
     private async void RefreshReports_Click(object sender, RoutedEventArgs e) => await LoadSessionReportsAsync();
 
-    private void ExportReportMarkdown_Click(object sender, RoutedEventArgs e)
+    private void ExportReportMarkdown_Click(object sender, RoutedEventArgs e) =>
+        ExportSelectedReport(
+            "Export Session Report (Markdown)",
+            "md",
+            "Markdown (*.md)|*.md|Text (*.txt)|*.txt",
+            "Markdown",
+            SessionReportFormatter.ToMarkdown);
+
+    private void ExportReportJson_Click(object sender, RoutedEventArgs e) =>
+        ExportSelectedReport(
+            "Export Session Report (JSON)",
+            "json",
+            "JSON (*.json)|*.json",
+            "JSON",
+            report => JsonSerializer.Serialize(report, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+
+    private void ExportSelectedReport(
+        string dialogTitle,
+        string extension,
+        string filter,
+        string formatName,
+        Func<TradingSessionReport, string> render)
     {
         if (_selectedReport is null)
         {
@@ -227,35 +260,14 @@ public partial class ReportsPage : UserControl
 
         var dialog = new SaveFileDialog
         {
-            Title = "Export Session Report (Markdown)",
-            FileName = $"mmopal-session-{_selectedReport.StartedAt.ToLocalTime():yyyyMMdd-HHmm}.md",
-            Filter = "Markdown (*.md)|*.md|Text (*.txt)|*.txt"
+            Title = dialogTitle,
+            FileName = $"mmopal-session-{_selectedReport.StartedAt.ToLocalTime():yyyyMMdd-HHmm}.{extension}",
+            Filter = filter
         };
         if (dialog.ShowDialog(Host) != true) return;
 
-        File.WriteAllText(dialog.FileName, SessionReportFormatter.ToMarkdown(_selectedReport));
-        Host.AddLog($"Exported Markdown report to {dialog.FileName}.");
-    }
-
-    private void ExportReportJson_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedReport is null)
-        {
-            Host.SessionPage.StatusText.Text = "Select a session report first.";
-            return;
-        }
-
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export Session Report (JSON)",
-            FileName = $"mmopal-session-{_selectedReport.StartedAt.ToLocalTime():yyyyMMdd-HHmm}.json",
-            Filter = "JSON (*.json)|*.json"
-        };
-        if (dialog.ShowDialog(Host) != true) return;
-
-        var pretty = JsonSerializer.Serialize(_selectedReport, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
-        File.WriteAllText(dialog.FileName, pretty);
-        Host.AddLog($"Exported JSON report to {dialog.FileName}.");
+        File.WriteAllText(dialog.FileName, render(_selectedReport));
+        Host.AddLog($"Exported {formatName} report to {dialog.FileName}.");
     }
 
     private async void DeleteReport_Click(object sender, RoutedEventArgs e)
