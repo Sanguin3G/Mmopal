@@ -43,12 +43,12 @@ public partial class ScannerPage : UserControl
     /// <summary>Labels each scan row with what your own last 30 days of trades say about it.</summary>
     private IReadOnlyList<MarketScanItem> AnnotateWithHistory(IReadOnlyList<MarketScanItem> items)
     {
-        if (Host.ArchivedTransactions.Count == 0)
+        if (Host.IncomePage.ArchivedTransactions.Count == 0)
         {
             return items;
         }
 
-        var guidance = PortfolioProfitAdvisor.BuildGuidance(Host.ArchivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
+        var guidance = PortfolioProfitAdvisor.BuildGuidance(Host.IncomePage.ArchivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
         return items
             .Select(item => guidance.TryGetAdvice(item.ItemId, item.ItemName) is { } advice ? item with { HistoryNote = advice.ShortLabel } : item)
             .ToArray();

@@ -33,7 +33,7 @@ public partial class MainWindow : Window
     private readonly Func<string?> _detectGw2Path;
     private readonly Func<IReadOnlyList<Gw2InstallCandidate>> _discoverGw2Installs;
     internal Func<DisplayScaleInfo> DetectDisplayScale { get; }
-    private readonly TradingLedgerStore? _ledgerStore;
+    internal TradingLedgerStore? LedgerStore { get; }
     internal SessionReportStore? SessionReportStore { get; }
     internal IGw2MarketScanner MarketScanner { get; }
     private readonly Func<Gw2ApiKeyVaultData> _loadApiKeyVault;
@@ -41,30 +41,14 @@ public partial class MainWindow : Window
     private readonly Action _requestAppClose;
     private readonly Action<int> _executeSystemShutdown;
     private readonly GlobalHotkeyService _hotkeys = new();
-    private readonly HttpClient _gw2HttpClient = new() { BaseAddress = new Uri("https://api.guildwars2.com/"), Timeout = TimeSpan.FromSeconds(120) };
+    internal HttpClient Gw2HttpClient { get; } = new() { BaseAddress = new Uri("https://api.guildwars2.com/"), Timeout = TimeSpan.FromSeconds(120) };
     private readonly DispatcherTimer _cycleTimer;
     private readonly DispatcherTimer _sessionClockTimer;
 
-    private readonly ObservableCollection<ItemPnlRow> _itemPnlRows = new();
-    private readonly ObservableCollection<ActiveOrderViewRow> _activeOrderRows = new();
-    private readonly ObservableCollection<LedgerHistoryViewRow> _ledgerRows = new();
-    private readonly ObservableCollection<ChartBarItem> _dailyChartBars = new();
-    private readonly ObservableCollection<ChartBarItem> _hourlyChartBars = new();
     private readonly ObservableCollection<ApiKeyRowViewModel> _apiKeyRows = new();
-    private readonly List<Gw2ActiveOrder> _latestActiveOrders = new();
     private readonly List<(DateTime Timestamp, string Human, string Raw)> _logEntries = new();
 
-    private Gw2ApiKeyVaultData _apiKeyVault = new(null, Array.Empty<Gw2ApiKeyEntry>());
-    internal IReadOnlyList<Gw2LedgerTransaction> ArchivedTransactions { get; private set; } = Array.Empty<Gw2LedgerTransaction>();
-    private IReadOnlyList<ItemPnlRow> _allTimeframePnlRows = Array.Empty<ItemPnlRow>();
-    private TradingIncomeReport? _lastIncomeReport;
-    private Gw2EquitySnapshot? _latestEquitySnapshot;
-    private IReadOnlyList<Gw2EquitySnapshot> _equitySnapshots = Array.Empty<Gw2EquitySnapshot>();
-    private Gw2DeliverySnapshot? _latestDelivery;
-    private int _openBuyCount;
-    private int _openSellCount;
-    private int _outbidBuyCount;
-    private int _undercutSellCount;
+    internal Gw2ApiKeyVaultData ApiKeyVault { get; set; } = new(null, Array.Empty<Gw2ApiKeyEntry>());
     private bool _bannerDismissed;
     internal bool HasVerifiedApiKey { get; set; }
     private Rect? _preDockBounds;
@@ -81,7 +65,6 @@ public partial class MainWindow : Window
     private bool _runLaunchAutomation;
     private bool _isFirstRun;
     private string? _lastAutoTunedPreset;
-    private IReadOnlyList<string> _losingItems = Array.Empty<string>();
     // Auto-Tune fields the operator set by hand; Auto-Tune keeps them (the 25g gold floor was reset to 80g before).
     private readonly HashSet<string> _autoTuneKeeps = new(StringComparer.OrdinalIgnoreCase);
     private bool _applyingAutoTune;
@@ -166,9 +149,9 @@ public partial class MainWindow : Window
         _detectGw2Path = detectGw2Path ?? (() => null);
         _discoverGw2Installs = discoverGw2Installs ?? (() => []);
         DetectDisplayScale = detectDisplayScale ?? (() => new DisplayScaleInfo(96, 100, true, "100% (96 DPI)"));
-        _ledgerStore = ledgerStore;
+        LedgerStore = ledgerStore;
         SessionReportStore = sessionReportStore;
-        MarketScanner = marketScanner ?? new Gw2MarketScanner(_gw2HttpClient, _ledgerStore);
+        MarketScanner = marketScanner ?? new Gw2MarketScanner(Gw2HttpClient, LedgerStore);
         _loadApiKeyVault = loadApiKeyVault ?? (() => new Gw2ApiKeyVaultData(null, Array.Empty<Gw2ApiKeyEntry>()));
         _saveApiKeyVault = saveApiKeyVault ?? (_ => { });
         _requestAppClose = requestAppClose ?? Close;
@@ -185,11 +168,7 @@ public partial class MainWindow : Window
         ListsPage.Attach(this);
         ReportsPage.Attach(this);
         ScannerPage.Attach(this);
-        ItemPnlGrid.ItemsSource = _itemPnlRows;
-        ActiveOrdersGrid.ItemsSource = _activeOrderRows;
-        LedgerHistoryGrid.ItemsSource = _ledgerRows;
-        DailyProfitChartItems.ItemsSource = _dailyChartBars;
-        HourlyActivityChartItems.ItemsSource = _hourlyChartBars;
+        IncomePage.Attach(this);
         ApiKeysGrid.ItemsSource = _apiKeyRows;
         ShowRawLogCheckBox.Checked += (_, _) => RebuildLogList();
         ShowRawLogCheckBox.Unchecked += (_, _) => RebuildLogList();
@@ -224,7 +203,7 @@ public partial class MainWindow : Window
         };
         Loaded += async (_, _) =>
         {
-            await LoadCachedPortfolioOnStartupAsync();
+            await IncomePage.LoadCachedPortfolioOnStartupAsync();
             await ReportsPage.LoadSessionReportsAsync();
             await RunLaunchAutomationAsync();
         };
@@ -235,7 +214,7 @@ public partial class MainWindow : Window
             ScannerPage.CancelRunningScan();
             _hotkeys.Dispose();
             SaveAllSettingsSilently();
-            _gw2HttpClient.Dispose();
+            Gw2HttpClient.Dispose();
             var disposeTask = Task.Run(async () => await _supervisor.DisposeAsync().ConfigureAwait(false));
             disposeTask.Wait(TimeSpan.FromSeconds(2));
         };
@@ -246,7 +225,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------------
 
     /// <summary>The pages in the content area. Each page's XAML has its own namescope.</summary>
-    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage, ScannerPage];
+    private IEnumerable<FrameworkElement> Pages => [GuidePage, ListsPage, ReportsPage, ScannerPage, IncomePage];
 
     /// <summary>Finds a named element in the shell or in any page.</summary>
     internal object? FindElement(string name) =>
@@ -254,14 +233,14 @@ public partial class MainWindow : Window
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
     {
-        if (SessionView is null || IncomeView is null || ReportsPage.ReportsView is null || ScannerPage.ScannerView is null ||
+        if (SessionView is null || IncomePage.IncomeView is null || ReportsPage.ReportsView is null || ScannerPage.ScannerView is null ||
             ListsPage.ListsView is null || SettingsView is null || GuidePage.GuideView is null)
         {
             return;
         }
 
         SessionView.Visibility = NavSession.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        IncomeView.Visibility = NavIncome.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        IncomePage.IncomeView.Visibility = NavIncome.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ReportsPage.ReportsView.Visibility = NavReports.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ScannerPage.ScannerView.Visibility = NavScanner.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         ListsPage.ListsView.Visibility = NavLists.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
@@ -293,11 +272,7 @@ public partial class MainWindow : Window
             app.ApplyWindowTitleBar(this);
         }
 
-        if (_lastIncomeReport is not null)
-        {
-            RebuildIncomeCharts(_lastIncomeReport);
-        }
-
+        IncomePage.RefreshAfterThemeChange();
         ReportsPage.RefreshAfterThemeChange();
 
         RefreshReadinessChecklist();
@@ -349,7 +324,7 @@ public partial class MainWindow : Window
     {
         if (IsLoadingUi) return;
         var platformTag = GetSelectedLaunchPlatform();
-        if (_apiKeyVault.ActiveEntry is { } active &&
+        if (ApiKeyVault.ActiveEntry is { } active &&
             !string.Equals(active.LaunchPlatform, platformTag, StringComparison.OrdinalIgnoreCase))
         {
             UpdateVaultEntry(active.Id, entry => entry with { LaunchPlatform = platformTag });
@@ -378,7 +353,7 @@ public partial class MainWindow : Window
         var profileTag = (ProfileSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "balanced";
         var paceText = TradingPaceDescriptions.Describe(profileTag);
         var platform = GetSelectedLaunchPlatform();
-        var acct = _apiKeyVault.ActiveEntry?.DisplayLabel;
+        var acct = ApiKeyVault.ActiveEntry?.DisplayLabel;
         SessionPaceSummaryText.Text = string.IsNullOrWhiteSpace(acct)
             ? $"{paceText}  •  Platform: {platform}"
             : $"{paceText}  •  Platform: {platform} ({acct})";
@@ -533,7 +508,7 @@ public partial class MainWindow : Window
     {
         if (SidebarColumn is null || SidebarBorder is null || MainContentBorder is null ||
             SidebarStatusBorder is null || SidebarStatusRow is null || SidebarStatusDot is null ||
-            SessionSelectorsGrid is null || SessionKpiGrid is null || IncomeKpiGrid is null ||
+            SessionSelectorsGrid is null || SessionKpiGrid is null || IncomePage.IncomeKpiGrid is null ||
             ScannerPage.ScannerCoreFiltersGrid is null || ScannerPage.ScannerAdvancedFiltersGrid is null)
         {
             return;
@@ -613,9 +588,9 @@ public partial class MainWindow : Window
         var cardColumns = narrowCharts ? 2 : 4;
         SessionSelectorsGrid.Columns = cardColumns;
         SessionKpiGrid.Columns = cardColumns;
-        IncomeKpiGrid.Columns = cardColumns;
+        IncomePage.IncomeKpiGrid.Columns = cardColumns;
         if (SessionSubtitleText is not null) SessionSubtitleText.Visibility = labelVisibility;
-        if (IncomeSubtitleText is not null) IncomeSubtitleText.Visibility = labelVisibility;
+        if (IncomePage.IncomeSubtitleText is not null) IncomePage.IncomeSubtitleText.Visibility = labelVisibility;
         if (GuidePage.GuideScheduleGrid is not null) GuidePage.GuideScheduleGrid.Columns = cardColumns;
         ScannerPage.ScannerCoreFiltersGrid.Columns = columns;
         ScannerPage.ScannerAdvancedFiltersGrid.Columns = columns;
@@ -624,49 +599,49 @@ public partial class MainWindow : Window
             ReportsPage.ReportDetailKpiGrid.Columns = columns;
         }
 
-        if (IncomeHeaderActionsPanel is not null)
+        if (IncomePage.IncomeHeaderActionsPanel is not null)
         {
             if (compact)
             {
-                Grid.SetRow(IncomeHeaderActionsPanel, 1);
-                Grid.SetColumn(IncomeHeaderActionsPanel, 0);
-                Grid.SetColumnSpan(IncomeHeaderActionsPanel, 2);
-                IncomeHeaderActionsPanel.HorizontalAlignment = HorizontalAlignment.Left;
-                IncomeHeaderActionsPanel.Margin = new Thickness(0, 10, 0, 0);
+                Grid.SetRow(IncomePage.IncomeHeaderActionsPanel, 1);
+                Grid.SetColumn(IncomePage.IncomeHeaderActionsPanel, 0);
+                Grid.SetColumnSpan(IncomePage.IncomeHeaderActionsPanel, 2);
+                IncomePage.IncomeHeaderActionsPanel.HorizontalAlignment = HorizontalAlignment.Left;
+                IncomePage.IncomeHeaderActionsPanel.Margin = new Thickness(0, 10, 0, 0);
             }
             else
             {
-                Grid.SetRow(IncomeHeaderActionsPanel, 0);
-                Grid.SetColumn(IncomeHeaderActionsPanel, 1);
-                Grid.SetColumnSpan(IncomeHeaderActionsPanel, 1);
-                IncomeHeaderActionsPanel.HorizontalAlignment = HorizontalAlignment.Right;
-                IncomeHeaderActionsPanel.Margin = new Thickness(0);
+                Grid.SetRow(IncomePage.IncomeHeaderActionsPanel, 0);
+                Grid.SetColumn(IncomePage.IncomeHeaderActionsPanel, 1);
+                Grid.SetColumnSpan(IncomePage.IncomeHeaderActionsPanel, 1);
+                IncomePage.IncomeHeaderActionsPanel.HorizontalAlignment = HorizontalAlignment.Right;
+                IncomePage.IncomeHeaderActionsPanel.Margin = new Thickness(0);
             }
         }
 
-        if (IncomeChartsLeftCol is not null && IncomeChartsRightCol is not null &&
-            DailyProfitChartCard is not null && HourlyActivityChartCard is not null)
+        if (IncomePage.IncomeChartsLeftCol is not null && IncomePage.IncomeChartsRightCol is not null &&
+            IncomePage.DailyProfitChartCard is not null && IncomePage.HourlyActivityChartCard is not null)
         {
             // Narrow windows show one chart (its selector also offers "Activity by hour") so the tables keep room.
             if (compact)
             {
-                IncomeChartsLeftCol.Width = new GridLength(1, GridUnitType.Star);
-                IncomeChartsRightCol.Width = new GridLength(0);
-                Grid.SetRow(DailyProfitChartCard, 0);
-                Grid.SetColumn(DailyProfitChartCard, 0);
-                DailyProfitChartCard.Margin = new Thickness(0);
-                HourlyActivityChartCard.Visibility = Visibility.Collapsed;
+                IncomePage.IncomeChartsLeftCol.Width = new GridLength(1, GridUnitType.Star);
+                IncomePage.IncomeChartsRightCol.Width = new GridLength(0);
+                Grid.SetRow(IncomePage.DailyProfitChartCard, 0);
+                Grid.SetColumn(IncomePage.DailyProfitChartCard, 0);
+                IncomePage.DailyProfitChartCard.Margin = new Thickness(0);
+                IncomePage.HourlyActivityChartCard.Visibility = Visibility.Collapsed;
             }
             else
             {
-                IncomeChartsLeftCol.Width = new GridLength(1.2, GridUnitType.Star);
-                IncomeChartsRightCol.Width = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(DailyProfitChartCard, 0);
-                Grid.SetColumn(DailyProfitChartCard, 0);
-                DailyProfitChartCard.Margin = new Thickness(0, 0, 12, 0);
-                Grid.SetRow(HourlyActivityChartCard, 0);
-                Grid.SetColumn(HourlyActivityChartCard, 1);
-                HourlyActivityChartCard.Visibility = Visibility.Visible;
+                IncomePage.IncomeChartsLeftCol.Width = new GridLength(1.2, GridUnitType.Star);
+                IncomePage.IncomeChartsRightCol.Width = new GridLength(1, GridUnitType.Star);
+                Grid.SetRow(IncomePage.DailyProfitChartCard, 0);
+                Grid.SetColumn(IncomePage.DailyProfitChartCard, 0);
+                IncomePage.DailyProfitChartCard.Margin = new Thickness(0, 0, 12, 0);
+                Grid.SetRow(IncomePage.HourlyActivityChartCard, 0);
+                Grid.SetColumn(IncomePage.HourlyActivityChartCard, 1);
+                IncomePage.HourlyActivityChartCard.Visibility = Visibility.Visible;
             }
         }
 
@@ -1071,159 +1046,8 @@ public partial class MainWindow : Window
     }
 
     // ---------------------------------------------------------------------
-    // Income & Portfolio Tracker
+    // Launch automation (account sync, Auto-Tune, market scan)
     // ---------------------------------------------------------------------
-
-    private Task LoadCachedPortfolioOnStartupAsync() => ReloadLedgerForActiveAccountAsync();
-
-    private async Task ReloadLedgerForActiveAccountAsync()
-    {
-        ArchivedTransactions = Array.Empty<Gw2LedgerTransaction>();
-        _latestEquitySnapshot = null;
-        _latestDelivery = null;
-        _latestActiveOrders.Clear();
-        _activeOrderRows.Clear();
-        _openBuyCount = 0;
-        _openSellCount = 0;
-        _outbidBuyCount = 0;
-        _undercutSellCount = 0;
-
-        if (_ledgerStore is null)
-        {
-            RecomputeIncomeDashboard();
-            return;
-        }
-
-        try
-        {
-            await _ledgerStore.InitializeAsync();
-            var accountFilter = ResolveActiveSqlAccountName();
-            ArchivedTransactions = await _ledgerStore.GetTransactionsAsync(accountFilter);
-            var snapshots = await _ledgerStore.GetEquitySnapshotsAsync(null, accountFilter);
-            _equitySnapshots = snapshots;
-            _latestEquitySnapshot = snapshots.LastOrDefault();
-            if (ArchivedTransactions.Count > 0 || _latestEquitySnapshot is not null)
-            {
-                var acctLabel = _apiKeyVault.ActiveEntry?.DisplayLabel ?? "local archive";
-                IncomeSyncStatusText.Text =
-                    $"Loaded {ArchivedTransactions.Count:N0} archived transactions for {acctLabel}." +
-                    (_latestEquitySnapshot is not null
-                        ? $" Last equity snapshot: {_latestEquitySnapshot.CapturedAt.ToLocalTime():g}."
-                        : string.Empty);
-            }
-            else
-            {
-                IncomeSyncStatusText.Text = "No archived transactions for this account yet. Click 'Sync GW2 Account' after configuring your API key.";
-            }
-
-            RecomputeIncomeDashboard();
-        }
-        catch (Exception ex)
-        {
-            AddLog($"Note loading cached income ledger: {ex.Message}");
-        }
-    }
-
-    private async void SyncPortfolio_Click(object sender, RoutedEventArgs e) => await SyncPortfolioCoreAsync();
-
-    private async Task<bool> SyncPortfolioCoreAsync()
-    {
-        var key = ResolveConfiguredApiKey();
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            IncomeSyncStatusText.Text = "No GW2 API key configured. Open Settings, paste your key, and click Save & Verify Key.";
-            return false;
-        }
-
-        if (_ledgerStore is null)
-        {
-            IncomeSyncStatusText.Text = "Portfolio SQLite store is unavailable in this instance.";
-            return false;
-        }
-
-        var originalSyncContent = SyncPortfolioButton.Content;
-        SyncPortfolioButton.IsEnabled = false;
-        SyncPortfolioButton.Content = "Syncing...";
-        IncomeSyncStatusText.Text = "Syncing history, wallet, delivery box, and active orders from api.guildwars2.com...";
-        var syncSucceeded = false;
-        try
-        {
-            using var cts = CreateApiCancellationTokenSource();
-            var provider = new Gw2OfficialDataProvider(_gw2HttpClient, key);
-            var result = await provider.SyncPortfolioAsync(_ledgerStore, ResolveActiveSqlAccountName(), cts.Token);
-
-            var resolvedAccount = !string.IsNullOrWhiteSpace(result.AccountName)
-                ? result.AccountName
-                : ResolveActiveSqlAccountName();
-            if (!string.IsNullOrWhiteSpace(resolvedAccount) &&
-                _apiKeyVault.ActiveEntry is { } activeEntry &&
-                !string.Equals(activeEntry.AccountName, resolvedAccount, StringComparison.OrdinalIgnoreCase))
-            {
-                UpdateVaultEntry(activeEntry.Id, e => e with
-                {
-                    AccountName = resolvedAccount,
-                    Status = "VALID",
-                    LastWalletCopper = result.LatestSnapshot.WalletCopper,
-                    LastVerifiedAt = DateTimeOffset.UtcNow
-                });
-                HasVerifiedApiKey = true;
-                RebuildApiKeyViews();
-            }
-
-            ArchivedTransactions = await _ledgerStore.GetTransactionsAsync(resolvedAccount);
-            _latestEquitySnapshot = result.LatestSnapshot;
-            _equitySnapshots = await _ledgerStore.GetEquitySnapshotsAsync(null, resolvedAccount);
-            _latestDelivery = result.Delivery;
-
-            _latestActiveOrders.Clear();
-            _activeOrderRows.Clear();
-            _openBuyCount = 0;
-            _openSellCount = 0;
-            _outbidBuyCount = 0;
-            _undercutSellCount = 0;
-
-            foreach (var order in result.ActiveOrders)
-            {
-                _latestActiveOrders.Add(order);
-                _activeOrderRows.Add(new ActiveOrderViewRow(order));
-                if (order.Kind == TransactionType.Buy)
-                {
-                    _openBuyCount++;
-                    if (order.BookStatus == "Outbid") _outbidBuyCount++;
-                }
-                else
-                {
-                    _openSellCount++;
-                    if (order.BookStatus == "Undercut") _undercutSellCount++;
-                }
-            }
-
-            HasVerifiedApiKey = true;
-            syncSucceeded = true;
-            RecomputeIncomeDashboard();
-            RefreshReadinessChecklist();
-
-            IncomeSyncStatusText.Text =
-                $"Synced {resolvedAccount ?? "account"} at {DateTime.Now:T} — +{result.NewlyArchivedTransactions:N0} new fills ({result.TotalArchivedTransactions:N0} total archived).";
-            AddLog($"Portfolio Sync ({resolvedAccount ?? "Account"}): +{result.NewlyArchivedTransactions} new fills; equity {MarketScanItem.FormatCoins(result.LatestSnapshot.TotalEquityCopper)}.");
-        }
-        catch (Exception ex)
-        {
-            IncomeSyncStatusText.Text = $"Sync failed: {ex.Message}";
-            AddLog($"ERROR (Portfolio Sync): {ex.Message}");
-        }
-        finally
-        {
-            SyncPortfolioButton.IsEnabled = true;
-            SyncPortfolioButton.Content = originalSyncContent;
-            if (syncSucceeded)
-            {
-                await FlashButtonFeedbackAsync(SyncPortfolioButton, "✓ Synced");
-            }
-        }
-
-        return syncSucceeded;
-    }
 
     private enum LaunchStep { Waiting, Running, Done, Skipped, Failed }
 
@@ -1278,15 +1102,15 @@ public partial class MainWindow : Window
         {
             SetLaunchStep(LaunchSyncText, LaunchStep.Skipped, "Account sync off");
         }
-        else if (string.IsNullOrWhiteSpace(ResolveConfiguredApiKey()) || _ledgerStore is null)
+        else if (string.IsNullOrWhiteSpace(ResolveConfiguredApiKey()) || LedgerStore is null)
         {
             SetLaunchStep(LaunchSyncText, LaunchStep.Skipped, "No API key: account not synced");
         }
         else
         {
             SetLaunchStep(LaunchSyncText, LaunchStep.Running, "Syncing account…");
-            SetLaunchStep(LaunchSyncText, await SyncPortfolioCoreAsync() ? LaunchStep.Done : LaunchStep.Failed,
-                _latestEquitySnapshot is { } snap ? $"Account synced ({MarketScanItem.FormatCoins(snap.WalletCopper)} wallet)" : "Account sync failed");
+            SetLaunchStep(LaunchSyncText, await IncomePage.SyncPortfolioCoreAsync() ? LaunchStep.Done : LaunchStep.Failed,
+                IncomePage.LatestEquitySnapshot is { } snap ? $"Account synced ({MarketScanItem.FormatCoins(snap.WalletCopper)} wallet)" : "Account sync failed");
         }
 
         SetLaunchStep(LaunchTuneText, LaunchStep.Running, "Auto-Tuning…");
@@ -1319,14 +1143,14 @@ public partial class MainWindow : Window
 
     private async Task<(LaunchStep Step, string Text)> CheckAutoTuneOnLaunchAsync()
     {
-        var wallet = _latestEquitySnapshot?.WalletCopper ?? 0;
+        var wallet = IncomePage.LatestEquitySnapshot?.WalletCopper ?? 0;
         var key = ResolveConfiguredApiKey();
         if (wallet <= 0 && !string.IsNullOrWhiteSpace(key))
         {
             try
             {
                 using var cts = CreateApiCancellationTokenSource();
-                wallet = (await new Gw2OfficialDataProvider(_gw2HttpClient, key).GetBalanceAsync(cts.Token))?.Copper ?? 0;
+                wallet = (await new Gw2OfficialDataProvider(Gw2HttpClient, key).GetBalanceAsync(cts.Token))?.Copper ?? 0;
             }
             catch (Exception ex)
             {
@@ -1409,313 +1233,6 @@ public partial class MainWindow : Window
     private static string FormatAge(TimeSpan age) =>
         age == TimeSpan.MaxValue ? "missing" : age.TotalDays >= 1 ? $"{age.TotalDays:0.#} days" : $"{age.TotalHours:0.#} h";
 
-    private void UpdateLosingItemsPanel()
-    {
-        var guidance = PortfolioProfitAdvisor.BuildGuidance(ArchivedTransactions, Array.Empty<Transaction>(), DateTimeOffset.UtcNow);
-        var blacklisted = ListsPage.Blacklist.Select(ItemNameNormalizer.Normalize).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _losingItems = (guidance.LosingItems ?? Array.Empty<string>())
-            .Where(name => !blacklisted.Contains(ItemNameNormalizer.Normalize(name)))
-            .ToArray();
-        if (_losingItems.Count == 0)
-        {
-            LosingItemsPanel.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        const int shown = 8;
-        var names = string.Join(", ", _losingItems.Take(shown)) + (_losingItems.Count > shown ? $" +{_losingItems.Count - shown} more" : string.Empty);
-        LosingItemsText.Text = $"Skipped by the bot (lost money on 2+ flips in the last {PortfolioProfitAdvisor.HistoryWindowDays} days): {names}";
-        LosingItemsText.ToolTip = string.Join(Environment.NewLine, _losingItems);
-        LosingItemsPanel.Visibility = Visibility.Visible;
-    }
-
-    private void BlacklistLosingItems_Click(object sender, RoutedEventArgs e)
-    {
-        var items = _losingItems.ToArray();
-        foreach (var name in items)
-        {
-            ListsPage.AddBlacklistEntry(name);
-        }
-
-        UpdateLosingItemsPanel();
-        IncomeSyncStatusText.Text = $"Blacklisted {items.Length} item(s) that kept losing money.";
-        AddLog($"Blacklisted losing items: {string.Join(", ", items)}");
-    }
-
-    private void IncomeTimeframe_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (IsLoadingUi) return;
-        RecomputeIncomeDashboard();
-    }
-
-    private void IncomeSearchBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (IsLoadingUi) return;
-        ApplyItemPnlSearchFilter();
-    }
-
-    private void BlacklistSelectedPnlItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (ItemPnlGrid.SelectedItem is not ItemPnlRow selected)
-        {
-            IncomeSyncStatusText.Text = "Select an item row in the Item P&L table first.";
-            return;
-        }
-
-        ListsPage.AddBlacklistEntry(selected.ItemName);
-        IncomeSyncStatusText.Text = $"Added '{selected.ItemName}' to Blacklist.";
-        AddLog($"Blacklisted '{selected.ItemName}' from Income Leaderboard.");
-    }
-
-    private void ExportLedgerCsv_Click(object sender, RoutedEventArgs e)
-    {
-        if (ArchivedTransactions.Count == 0)
-        {
-            IncomeSyncStatusText.Text = "No archived transactions to export yet. Click Sync GW2 Account first.";
-            return;
-        }
-
-        var dialog = new SaveFileDialog
-        {
-            Title = "Export Synced GW2 Transaction Ledger CSV",
-            FileName = $"gw2_ledger_{DateTime.Now:yyyyMMdd}.csv",
-            Filter = "CSV (*.csv)|*.csv"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        TradingIncomeAnalytics.ExportLedgerCsv(dialog.FileName, ArchivedTransactions);
-        IncomeSyncStatusText.Text = $"Exported {ArchivedTransactions.Count:N0} transactions to {Path.GetFileName(dialog.FileName)}.";
-        AddLog($"Exported synced ledger ({ArchivedTransactions.Count} rows) to {dialog.FileName}.");
-    }
-
-    private void RecomputeIncomeDashboard()
-    {
-        var windowStart = ResolveSelectedTimeframeStartUtc();
-        var report = TradingIncomeAnalytics.Analyze(ArchivedTransactions, windowStart);
-        _lastIncomeReport = report;
-        _allTimeframePnlRows = report.ItemLeaderboard;
-
-        var nowUtc = DateTimeOffset.UtcNow;
-        IncomeMatchedProfitText.Text = MarketScanItem.FormatCoins(report.MatchedProfitCopper);
-        var fees = IncomeInsights.FeesPaid(ArchivedTransactions, windowStart);
-        IncomeMatchedSubText.Text =
-            $"ROI {report.MatchedRoiPercent:0.0}% · {report.MatchedUnitsSold:N0} sold · fees {MarketScanItem.FormatCoins(fees)}";
-        IncomeMatchedSubText.ToolTip = $"Return on cost {report.MatchedRoiPercent:0.0}%, {report.MatchedUnitsSold:N0} units sold, {MarketScanItem.FormatCoins(fees)} paid in listing and exchange fees.";
-        IncomeProfitNoteText.Text = report.UnmatchedSellRevenueCopper > 0
-            ? $"Not counted: {MarketScanItem.FormatCoins(report.UnmatchedSellRevenueCopper)} of sales with no recorded buy"
-            : string.Empty;
-
-        if (_latestEquitySnapshot is { } snap)
-        {
-            IncomeTotalEquityText.Text = MarketScanItem.FormatCoins(snap.TotalEquityCopper);
-            if (IncomeInsights.NetWorthChange(_equitySnapshots, windowStart) is { } change)
-            {
-                var delta = change.End.ValueCopper - change.Start.ValueCopper;
-                IncomeNetWorthChangeText.Text =
-                    $"{(delta >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(delta))} since {change.Start.At.ToLocalTime():MMM d, HH:mm}";
-                IncomeNetWorthChangeText.Foreground = delta >= 0
-                    ? ResolveBrush("SuccessBrush", Brushes.SeaGreen)
-                    : ResolveBrush("DangerBrush", Brushes.IndianRed);
-            }
-            else
-            {
-                IncomeNetWorthChangeText.Text = "Change shows after the next sync";
-                IncomeNetWorthChangeText.ClearValue(TextBlock.ForegroundProperty);
-            }
-
-            var deliveryTotal = snap.DeliveryCopper + snap.DeliveryItemsCopper;
-            IncomeEquityBreakdownText.Text =
-                $"Wallet {MarketScanItem.FormatCoins(snap.WalletCopper)} • Buy orders {MarketScanItem.FormatCoins(snap.ActiveBuysCopper)} • " +
-                $"Listings {MarketScanItem.FormatCoins(snap.ActiveSellsNetCopper)}" +
-                (deliveryTotal > 0 ? $" • Delivery {MarketScanItem.FormatCoins(deliveryTotal)}" : string.Empty);
-            IncomeEquityBreakdownText.ToolTip = IncomeEquityBreakdownText.Text;
-
-            var share = snap.TotalEquityCopper > 0 ? snap.ActiveBuysCopper * 100.0 / snap.TotalEquityCopper : 0;
-            IncomeOrdersHealthText.Text = MarketScanItem.FormatCoins(snap.ActiveBuysCopper);
-            IncomeOrdersSubText.Text = $"{share:0}% of net worth • {_openBuyCount} orders • {_outbidBuyCount} outbid (free to re-place)";
-        }
-        else
-        {
-            IncomeTotalEquityText.Text = "—";
-            IncomeNetWorthChangeText.Text = "Sync to start tracking";
-            IncomeEquityBreakdownText.Text = string.Empty;
-            IncomeOrdersHealthText.Text = "—";
-            IncomeOrdersSubText.Text = $"{_openBuyCount} orders • {_outbidBuyCount} outbid";
-        }
-
-        var shelf = IncomeInsights.Shelf(_latestActiveOrders, ArchivedTransactions, nowUtc);
-        IncomeDeliveryText.Text = shelf.Listings == 0 ? "—" : MarketScanItem.FormatCoins(shelf.ListedNetCopper);
-        IncomeUnmatchedText.Text = shelf.Listings == 0
-            ? "No listings"
-            : $"{shelf.Listings} listings • {shelf.Undercut} undercut" + (shelf.UndercutOver12h > 0 ? $" ({shelf.UndercutOver12h} for 12 h+)" : string.Empty);
-        IncomeShelfNoteText.Text = shelf.UnsoldCostCopper > 0
-            ? $"Bought, not sold yet: {MarketScanItem.FormatCoins(shelf.UnsoldCostCopper)} at cost"
-            : string.Empty;
-
-        var insight = PortfolioProfitAdvisor.BuildDashboardInsightSummary(report, _latestActiveOrders, nowUtc);
-        PortfolioInsightsText.Text = shelf.UndercutOver12h > 0
-            ? $"{insight}  •  {shelf.UndercutOver12h} listing(s) undercut for 12 h+"
-            : insight;
-        UpdateLosingItemsPanel();
-
-        ApplyItemPnlSearchFilter();
-
-        _ledgerRows.Clear();
-        var filteredLedger = ArchivedTransactions
-            .Where(t => !windowStart.HasValue || t.PurchasedAt >= windowStart.Value)
-            .OrderByDescending(t => t.PurchasedAt)
-            .ThenByDescending(t => t.Id)
-            .Take(500);
-        foreach (var tx in filteredLedger)
-        {
-            _ledgerRows.Add(new LedgerHistoryViewRow(tx));
-        }
-
-        RebuildIncomeCharts(report);
-    }
-
-    private void ApplyItemPnlSearchFilter()
-    {
-        var query = IncomeSearchBox.Text?.Trim();
-        _itemPnlRows.Clear();
-        foreach (var row in _allTimeframePnlRows)
-        {
-            if (!string.IsNullOrWhiteSpace(query) &&
-                !row.ItemName.Contains(query, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            _itemPnlRows.Add(row);
-        }
-    }
-
-    private void RebuildIncomeCharts(TradingIncomeReport report)
-    {
-        var successBrush = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
-        var dangerBrush = ResolveBrush("DangerBrush", Brushes.IndianRed);
-        var accentBrush = ResolveBrush("AccentBrush", Brushes.DodgerBlue);
-        var goldBrush = ResolveBrush("GoldAccentBrush", Brushes.Goldenrod);
-        var mutedBrush = ResolveBrush("BorderBrush", Brushes.Gray);
-
-        _dailyChartBars.Clear();
-        var chartMode = (IncomeChartModeSelector.SelectedItem as ComboBoxItem)?.Tag as string;
-        if (chartMode == "DailyProfit")
-        {
-            RebuildDailyProfitChart(report, successBrush, dangerBrush, mutedBrush);
-        }
-        else if (chartMode != "Hourly")
-        {
-            RebuildNetWorthChart(accentBrush);
-        }
-
-        _hourlyChartBars.Clear();
-        var hasProfitBars = report.HourlySeries.Any(h => h.RealizedProfitCopper != 0);
-        var bestHour = report.HourlySeries.OrderByDescending(h => h.RealizedProfitCopper).FirstOrDefault();
-
-        foreach (var hour in report.HourlySeries)
-        {
-            double ratio;
-            Brush brush;
-            if (hasProfitBars)
-            {
-                var maxAbsProf = Math.Max(1L, report.HourlySeries.Max(h => Math.Abs(h.RealizedProfitCopper)));
-                ratio = Math.Abs(hour.RealizedProfitCopper) / (double)maxAbsProf;
-                brush = hour.RealizedProfitCopper > 0 ? goldBrush : hour.RealizedProfitCopper < 0 ? dangerBrush : mutedBrush;
-            }
-            else
-            {
-                var count = hour.BuyFills + hour.SellFills;
-                var maxCount = Math.Max(1, report.HourlySeries.Max(h => h.BuyFills + h.SellFills));
-                ratio = count / (double)maxCount;
-                brush = count > 0 ? accentBrush : mutedBrush;
-            }
-
-            var hasActivity = hour.BuyFills + hour.SellFills > 0 || hour.RealizedProfitCopper != 0;
-            var height = hasActivity ? Math.Max(8.0, ratio * 84.0) : 4.0;
-            var label = hour.LocalHour % 3 == 0 ? hour.HourLabel : string.Empty;
-            _hourlyChartBars.Add(new ChartBarItem(label, height, brush, hour.Tooltip, string.Empty));
-        }
-
-        HourlyChartSummaryText.Text = bestHour is { RealizedProfitCopper: > 0 }
-            ? $"Best local hour: {bestHour.LocalHour:00}:00 ({MarketScanItem.FormatCoins(bestHour.RealizedProfitCopper)})"
-            : "Local timezone 00–23h";
-
-        if (chartMode == "Hourly")
-        {
-            foreach (var bar in _hourlyChartBars) _dailyChartBars.Add(bar);
-            DailyChartSummaryText.Text = HourlyChartSummaryText.Text;
-        }
-    }
-
-    private void IncomeChartMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (IsLoadingUi || _lastIncomeReport is null) return;
-        RebuildIncomeCharts(_lastIncomeReport);
-    }
-
-    /// <summary>Net worth bars scaled between the period's low and high, so a 10% move is visible.</summary>
-    private void RebuildNetWorthChart(Brush accentBrush)
-    {
-        var points = IncomeInsights.NetWorthSeries(_equitySnapshots, ResolveSelectedTimeframeStartUtc());
-        if (points.Count == 0)
-        {
-            DailyChartSummaryText.Text = "Sync the account to start tracking";
-            return;
-        }
-
-        var low = points.Min(p => p.ValueCopper);
-        var high = points.Max(p => p.ValueCopper);
-        var range = Math.Max(1L, high - low);
-        var labelEvery = Math.Max(1, (int)Math.Ceiling(points.Count / 8.0));
-        for (var i = 0; i < points.Count; i++)
-        {
-            var point = points[i];
-            var height = 14.0 + (point.ValueCopper - low) / (double)range * 70.0;
-            var tooltip = $"{point.At.ToLocalTime():g}: {MarketScanItem.FormatCoins(point.ValueCopper)}";
-            _dailyChartBars.Add(new ChartBarItem(i % labelEvery == 0 ? point.Label : string.Empty, height, accentBrush, tooltip, MarketScanItem.FormatCoins(point.ValueCopper)));
-        }
-
-        var delta = points[^1].ValueCopper - points[0].ValueCopper;
-        DailyChartSummaryText.Text = $"{(delta >= 0 ? "+" : "−")}{MarketScanItem.FormatCoins(Math.Abs(delta))} • low {MarketScanItem.FormatCoins(low)} • high {MarketScanItem.FormatCoins(high)}";
-    }
-
-    private void RebuildDailyProfitChart(TradingIncomeReport report, Brush successBrush, Brush dangerBrush, Brush mutedBrush)
-    {
-        var recentDays = report.DailySeries.TakeLast(24).ToArray();
-        var maxDailyAbs = recentDays.Length > 0
-            ? Math.Max(1L, recentDays.Max(d => Math.Abs(d.ProfitCopper)))
-            : 1L;
-        foreach (var day in recentDays)
-        {
-            var ratio = Math.Abs(day.ProfitCopper) / (double)maxDailyAbs;
-            var height = day.ProfitCopper == 0 ? 4.0 : Math.Max(8.0, ratio * 84.0);
-            var brush = day.ProfitCopper > 0 ? successBrush : day.ProfitCopper < 0 ? dangerBrush : mutedBrush;
-            _dailyChartBars.Add(new ChartBarItem(day.Label, height, brush, day.Tooltip, MarketScanItem.FormatCoins(day.ProfitCopper)));
-        }
-
-        DailyChartSummaryText.Text = recentDays.Length > 0
-            ? $"{recentDays.Length} day(s) • Total {MarketScanItem.FormatCoins(report.MatchedProfitCopper)}"
-            : "No closed flips in timeframe";
-    }
-
-    private DateTimeOffset? ResolveSelectedTimeframeStartUtc()
-    {
-        var daysTag = (IncomeTimeframeSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        if (!int.TryParse(daysTag, out var days) || days <= 0)
-        {
-            return null;
-        }
-
-        if (days == 1)
-        {
-            var localStart = new DateTimeOffset(DateTime.Now.Date, TimeZoneInfo.Local.GetUtcOffset(DateTime.Now));
-            return localStart.ToUniversalTime();
-        }
-
-        return DateTimeOffset.UtcNow.AddDays(-days);
-    }
-
     // ---------------------------------------------------------------------
     // Auto-Tune (trading values from the wallet and recent results)
     // ---------------------------------------------------------------------
@@ -1738,7 +1255,7 @@ public partial class MainWindow : Window
 
     private async Task<AutoTuneResult> RunAutoTuneAsync(Button? feedbackButton)
     {
-        long capitalCopper = _latestEquitySnapshot?.WalletCopper ?? 0;
+        long capitalCopper = IncomePage.LatestEquitySnapshot?.WalletCopper ?? 0;
         var sourceLabel = "cached snapshot";
 
         var key = ResolveConfiguredApiKey();
@@ -1747,7 +1264,7 @@ public partial class MainWindow : Window
             try
             {
                 using var cts = CreateApiCancellationTokenSource();
-                var provider = new Gw2OfficialDataProvider(_gw2HttpClient, key);
+                var provider = new Gw2OfficialDataProvider(Gw2HttpClient, key);
                 var balance = await provider.GetBalanceAsync(cts.Token);
                 if (balance is not null)
                 {
@@ -1784,10 +1301,10 @@ public partial class MainWindow : Window
     /// <summary>Smart Auto-Tune: capital (wallet + gold in orders) plus the last 14 days of your own flips.</summary>
     private AutoTuneResult ApplySmartAutoTune(long walletCopper)
     {
-        var snapshot = _latestEquitySnapshot;
-        var recent = ArchivedTransactions.Count == 0
+        var snapshot = IncomePage.LatestEquitySnapshot;
+        var recent = IncomePage.ArchivedTransactions.Count == 0
             ? null
-            : TradingIncomeAnalytics.Analyze(ArchivedTransactions, DateTimeOffset.UtcNow.AddDays(-SmartAutoTuner.ResultsWindowDays));
+            : TradingIncomeAnalytics.Analyze(IncomePage.ArchivedTransactions, DateTimeOffset.UtcNow.AddDays(-SmartAutoTuner.ResultsWindowDays));
         var tune = SmartAutoTuner.Tune(new AutoTuneInputs(
             walletCopper,
             snapshot?.ActiveBuysCopper ?? 0,
@@ -1813,7 +1330,7 @@ public partial class MainWindow : Window
     /// <summary>Re-tune right before a session from the last synced wallet and orders (no network call).</summary>
     private void TuneBeforeSession()
     {
-        if (AutoTuneEachSessionCheckBox.IsChecked != true || _latestEquitySnapshot is not { WalletCopper: > 0 } snapshot)
+        if (AutoTuneEachSessionCheckBox.IsChecked != true || IncomePage.LatestEquitySnapshot is not { WalletCopper: > 0 } snapshot)
         {
             return;
         }
@@ -1945,7 +1462,7 @@ public partial class MainWindow : Window
     private async void CopyApiKey_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.CommandParameter is not string keyId) return;
-        var entry = _apiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase));
+        var entry = ApiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase));
         if (entry is null) return;
 
         try
@@ -1990,20 +1507,20 @@ public partial class MainWindow : Window
         }
 
         var name = box.Text?.Trim() ?? string.Empty;
-        var entry = _apiKeyVault.Entries.FirstOrDefault(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase));
+        var entry = ApiKeyVault.Entries.FirstOrDefault(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase));
         if (entry is null || string.Equals(entry.CustomName ?? string.Empty, name, StringComparison.Ordinal))
         {
             return;
         }
 
         row.CustomName = name;
-        _apiKeyVault = _apiKeyVault with
+        ApiKeyVault = ApiKeyVault with
         {
-            Entries = _apiKeyVault.Entries
+            Entries = ApiKeyVault.Entries
                 .Select(e => string.Equals(e.Id, row.Id, StringComparison.OrdinalIgnoreCase) ? e with { CustomName = name } : e)
                 .ToArray()
         };
-        _saveApiKeyVault(_apiKeyVault);
+        _saveApiKeyVault(ApiKeyVault);
         ApiKeyStatusText.Text = string.IsNullOrEmpty(name)
             ? $"Removed the name of {entry.AccountName}."
             : $"Saved the name '{name}' for {entry.AccountName}.";
@@ -2013,7 +1530,7 @@ public partial class MainWindow : Window
 
     private async void ReverifyApiKeys_Click(object sender, RoutedEventArgs e)
     {
-        if (_apiKeyVault.Entries.Count == 0)
+        if (ApiKeyVault.Entries.Count == 0)
         {
             ApiKeyStatusText.Text = "No API keys to verify yet.";
             return;
@@ -2025,13 +1542,13 @@ public partial class MainWindow : Window
         var verifiedCount = 0;
         try
         {
-            var refreshed = new List<Gw2ApiKeyEntry>(_apiKeyVault.Entries.Count);
-            foreach (var entry in _apiKeyVault.Entries)
+            var refreshed = new List<Gw2ApiKeyEntry>(ApiKeyVault.Entries.Count);
+            foreach (var entry in ApiKeyVault.Entries)
             {
                 try
                 {
                     using var cts = CreateApiCancellationTokenSource();
-                    var provider = new Gw2OfficialDataProvider(_gw2HttpClient, entry.ApiKey);
+                    var provider = new Gw2OfficialDataProvider(Gw2HttpClient, entry.ApiKey);
                     var validation = await provider.ValidateApiKeyAsync(cts.Token);
                     var accountName = !string.IsNullOrWhiteSpace(validation.AccountName)
                         ? validation.AccountName!
@@ -2054,13 +1571,13 @@ public partial class MainWindow : Window
                 }
             }
 
-            _apiKeyVault = _apiKeyVault with { Entries = refreshed.ToArray() };
-            _saveApiKeyVault(_apiKeyVault);
-            HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+            ApiKeyVault = ApiKeyVault with { Entries = refreshed.ToArray() };
+            _saveApiKeyVault(ApiKeyVault);
+            HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
             RebuildApiKeyViews();
             RefreshReadinessChecklist();
-            ApiKeyStatusText.Text = $"Re-verified {_apiKeyVault.Entries.Count} key(s): {verifiedCount} valid.";
-            AddLog($"Re-verified API vault ({verifiedCount}/{_apiKeyVault.Entries.Count} valid).");
+            ApiKeyStatusText.Text = $"Re-verified {ApiKeyVault.Entries.Count} key(s): {verifiedCount} valid.";
+            AddLog($"Re-verified API vault ({verifiedCount}/{ApiKeyVault.Entries.Count} valid).");
         }
         finally
         {
@@ -2086,7 +1603,7 @@ public partial class MainWindow : Window
         var saved = false;
         try
         {
-            var existing = _apiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.ApiKey, raw, StringComparison.OrdinalIgnoreCase));
+            var existing = ApiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.ApiKey, raw, StringComparison.OrdinalIgnoreCase));
             var entryId = existing?.Id ?? Guid.NewGuid().ToString("N");
             var accountName = existing?.AccountName ?? "Default Account";
             var status = "UNVERIFIED";
@@ -2098,7 +1615,7 @@ public partial class MainWindow : Window
             try
             {
                 using var cts = CreateApiCancellationTokenSource();
-                var provider = new Gw2OfficialDataProvider(_gw2HttpClient, raw);
+                var provider = new Gw2OfficialDataProvider(Gw2HttpClient, raw);
                 var result = await provider.ValidateApiKeyAsync(cts.Token);
                 if (!string.IsNullOrWhiteSpace(result.AccountName))
                 {
@@ -2140,7 +1657,7 @@ public partial class MainWindow : Window
                 LastWalletCopper: walletCopper,
                 LastVerifiedAt: verifiedAt);
 
-            var updatedEntries = _apiKeyVault.Entries
+            var updatedEntries = ApiKeyVault.Entries
                 .Select(item => string.Equals(item.Id, entryId, StringComparison.OrdinalIgnoreCase) ? newEntry : item)
                 .ToList();
             if (existing is null)
@@ -2148,8 +1665,8 @@ public partial class MainWindow : Window
                 updatedEntries.Add(newEntry);
             }
 
-            _apiKeyVault = new Gw2ApiKeyVaultData(entryId, updatedEntries.ToArray());
-            _saveApiKeyVault(_apiKeyVault);
+            ApiKeyVault = new Gw2ApiKeyVaultData(entryId, updatedEntries.ToArray());
+            _saveApiKeyVault(ApiKeyVault);
 
             ApiKeyPasswordBox.Clear();
             ApiKeyCustomNameBox.Clear();
@@ -2159,7 +1676,7 @@ public partial class MainWindow : Window
             AddLog($"Saved DPAPI API key for {newEntry.DisplayLabel} ({status}).");
             saved = true;
 
-            await ReloadLedgerForActiveAccountAsync();
+            await IncomePage.ReloadLedgerForActiveAccountAsync();
             await ReportsPage.LoadSessionReportsAsync();
             if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
             {
@@ -2186,7 +1703,7 @@ public partial class MainWindow : Window
         var typedKey = !string.IsNullOrWhiteSpace(ApiKeyPasswordBox.Password)
             ? ApiKeyPasswordBox.Password.Trim()
             : null;
-        var activeEntry = _apiKeyVault.ActiveEntry;
+        var activeEntry = ApiKeyVault.ActiveEntry;
         var key = typedKey ?? ResolveConfiguredApiKey();
 
         if (string.IsNullOrWhiteSpace(key))
@@ -2203,7 +1720,7 @@ public partial class MainWindow : Window
         try
         {
             using var cts = CreateApiCancellationTokenSource();
-            var provider = new Gw2OfficialDataProvider(_gw2HttpClient, key);
+            var provider = new Gw2OfficialDataProvider(Gw2HttpClient, key);
             var result = await provider.ValidateApiKeyAsync(cts.Token);
             isValid = result.IsValid;
 
@@ -2248,7 +1765,7 @@ public partial class MainWindow : Window
     {
         ApiKeyPasswordBox.Clear();
         ApiKeyCustomNameBox.Clear();
-        if (_apiKeyVault.ActiveEntry is { } active)
+        if (ApiKeyVault.ActiveEntry is { } active)
         {
             await RemoveVaultEntryAsync(active.Id);
             return;
@@ -2690,17 +2207,17 @@ public partial class MainWindow : Window
             ? Math.Clamp(parsed, 15, 120)
             : 60;
 
-    private CancellationTokenSource CreateApiCancellationTokenSource() =>
+    internal CancellationTokenSource CreateApiCancellationTokenSource() =>
         new(TimeSpan.FromSeconds(GetConfiguredApiTimeoutSeconds()));
 
     internal string? ResolveConfiguredApiKey() =>
-        _apiKeyVault.ActiveEntry?.ApiKey?.Trim() is { Length: > 0 } vaultKey
+        ApiKeyVault.ActiveEntry?.ApiKey?.Trim() is { Length: > 0 } vaultKey
             ? vaultKey
             : Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey");
 
     internal string? ResolveActiveSqlAccountName()
     {
-        var name = _apiKeyVault.ActiveEntry?.AccountName?.Trim();
+        var name = ApiKeyVault.ActiveEntry?.AccountName?.Trim();
         if (string.IsNullOrWhiteSpace(name) || string.Equals(name, "Default Account", StringComparison.OrdinalIgnoreCase))
         {
             return null;
@@ -2711,30 +2228,30 @@ public partial class MainWindow : Window
 
     private void LoadApiKeyVault()
     {
-        _apiKeyVault = _loadApiKeyVault();
-        HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
-        if (!string.IsNullOrWhiteSpace(_apiKeyVault.ActiveEntry?.LaunchPlatform))
+        ApiKeyVault = _loadApiKeyVault();
+        HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        if (!string.IsNullOrWhiteSpace(ApiKeyVault.ActiveEntry?.LaunchPlatform))
         {
             var wasLoading = IsLoadingUi;
             IsLoadingUi = true;
-            SelectComboByTag(LaunchPlatformSelector, _apiKeyVault.ActiveEntry.LaunchPlatform);
+            SelectComboByTag(LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
             IsLoadingUi = wasLoading;
         }
 
         RebuildApiKeyViews();
     }
 
-    private void RebuildApiKeyViews()
+    internal void RebuildApiKeyViews()
     {
         var passBrush = ResolveBrush("SuccessBrush", Brushes.SeaGreen);
         var warnBrush = ResolveBrush("WarningBrush", Brushes.DarkOrange);
         var dangerBrush = ResolveBrush("DangerBrush", Brushes.IndianRed);
 
-        var activeId = _apiKeyVault.ActiveEntry?.Id;
+        var activeId = ApiKeyVault.ActiveEntry?.Id;
         _apiKeyRows.Clear();
-        for (var i = 0; i < _apiKeyVault.Entries.Count; i++)
+        for (var i = 0; i < ApiKeyVault.Entries.Count; i++)
         {
-            var entry = _apiKeyVault.Entries[i];
+            var entry = ApiKeyVault.Entries[i];
             var isActive = string.Equals(entry.Id, activeId, StringComparison.OrdinalIgnoreCase);
             var statusUpper = string.IsNullOrWhiteSpace(entry.Status) ? "UNVERIFIED" : entry.Status.ToUpperInvariant();
             var statusBrush = statusUpper switch
@@ -2748,7 +2265,7 @@ public partial class MainWindow : Window
                 entry.Id,
                 isActive,
                 canMoveUp: i > 0,
-                canMoveDown: i < _apiKeyVault.Entries.Count - 1,
+                canMoveDown: i < ApiKeyVault.Entries.Count - 1,
                 statusUpper,
                 statusBrush,
                 string.IsNullOrWhiteSpace(entry.AccountName) ? "Default Account" : entry.AccountName,
@@ -2762,7 +2279,7 @@ public partial class MainWindow : Window
         try
         {
             SidebarAccountSelector.Items.Clear();
-            if (_apiKeyVault.Entries.Count == 0)
+            if (ApiKeyVault.Entries.Count == 0)
             {
                 SidebarAccountSelector.Items.Add(new ComboBoxItem { Content = "No account added" });
                 SidebarAccountSelector.SelectedIndex = 0;
@@ -2772,9 +2289,9 @@ public partial class MainWindow : Window
             {
                 SidebarAccountSelector.IsEnabled = true;
                 var selectedIdx = 0;
-                for (var i = 0; i < _apiKeyVault.Entries.Count; i++)
+                for (var i = 0; i < ApiKeyVault.Entries.Count; i++)
                 {
-                    var entry = _apiKeyVault.Entries[i];
+                    var entry = ApiKeyVault.Entries[i];
                     SidebarAccountSelector.Items.Add(new ComboBoxItem
                     {
                         Content = entry.DisplayLabel,
@@ -2794,7 +2311,7 @@ public partial class MainWindow : Window
             IsLoadingUi = wasLoading;
         }
 
-        IncomeActiveAccountText.Text = _apiKeyVault.ActiveEntry is { } active
+        IncomePage.IncomeActiveAccountText.Text = ApiKeyVault.ActiveEntry is { } active
             ? $"Account: {active.DisplayLabel}"
             : "No active account";
 
@@ -2805,24 +2322,24 @@ public partial class MainWindow : Window
 
     private async Task SwitchActiveAccountAsync(string keyId)
     {
-        if (string.Equals(_apiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(ApiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        if (!_apiKeyVault.Entries.Any(e => string.Equals(e.Id, keyId, StringComparison.OrdinalIgnoreCase)))
+        if (!ApiKeyVault.Entries.Any(e => string.Equals(e.Id, keyId, StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
 
-        _apiKeyVault = _apiKeyVault with { ActiveKeyId = keyId };
-        _saveApiKeyVault(_apiKeyVault);
-        HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
-        if (!string.IsNullOrWhiteSpace(_apiKeyVault.ActiveEntry?.LaunchPlatform))
+        ApiKeyVault = ApiKeyVault with { ActiveKeyId = keyId };
+        _saveApiKeyVault(ApiKeyVault);
+        HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        if (!string.IsNullOrWhiteSpace(ApiKeyVault.ActiveEntry?.LaunchPlatform))
         {
             var wasLoading = IsLoadingUi;
             IsLoadingUi = true;
-            SelectComboByTag(LaunchPlatformSelector, _apiKeyVault.ActiveEntry.LaunchPlatform);
+            SelectComboByTag(LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
             IsLoadingUi = wasLoading;
         }
 
@@ -2830,9 +2347,9 @@ public partial class MainWindow : Window
         RefreshReadinessChecklist();
         SaveAllSettingsSilently();
 
-        var activeLabel = _apiKeyVault.ActiveEntry?.DisplayLabel ?? "Account";
+        var activeLabel = ApiKeyVault.ActiveEntry?.DisplayLabel ?? "Account";
         AddLog($"Switched active account to {activeLabel}.");
-        await ReloadLedgerForActiveAccountAsync();
+        await IncomePage.ReloadLedgerForActiveAccountAsync();
         await ReportsPage.LoadSessionReportsAsync();
 
         if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
@@ -2843,44 +2360,44 @@ public partial class MainWindow : Window
 
     private void MoveApiKeyEntry(string keyId, int delta)
     {
-        var list = _apiKeyVault.Entries.ToList();
+        var list = ApiKeyVault.Entries.ToList();
         var index = list.FindIndex(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase));
         if (index < 0) return;
         var targetIndex = index + delta;
         if (targetIndex < 0 || targetIndex >= list.Count) return;
 
         (list[index], list[targetIndex]) = (list[targetIndex], list[index]);
-        _apiKeyVault = _apiKeyVault with { Entries = list.ToArray() };
-        _saveApiKeyVault(_apiKeyVault);
+        ApiKeyVault = ApiKeyVault with { Entries = list.ToArray() };
+        _saveApiKeyVault(ApiKeyVault);
         RebuildApiKeyViews();
     }
 
-    private void UpdateVaultEntry(string keyId, Func<Gw2ApiKeyEntry, Gw2ApiKeyEntry> transform)
+    internal void UpdateVaultEntry(string keyId, Func<Gw2ApiKeyEntry, Gw2ApiKeyEntry> transform)
     {
-        var updated = _apiKeyVault.Entries
+        var updated = ApiKeyVault.Entries
             .Select(item => string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase) ? transform(item) : item)
             .ToArray();
-        _apiKeyVault = _apiKeyVault with { Entries = updated };
-        _saveApiKeyVault(_apiKeyVault);
+        ApiKeyVault = ApiKeyVault with { Entries = updated };
+        _saveApiKeyVault(ApiKeyVault);
     }
 
     private async Task RemoveVaultEntryAsync(string keyId)
     {
-        var remaining = _apiKeyVault.Entries
+        var remaining = ApiKeyVault.Entries
             .Where(item => !string.Equals(item.Id, keyId, StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        var nextActiveId = string.Equals(_apiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase)
+        var nextActiveId = string.Equals(ApiKeyVault.ActiveKeyId, keyId, StringComparison.OrdinalIgnoreCase)
             ? remaining.FirstOrDefault()?.Id
-            : _apiKeyVault.ActiveKeyId;
+            : ApiKeyVault.ActiveKeyId;
 
-        _apiKeyVault = new Gw2ApiKeyVaultData(nextActiveId, remaining);
-        _saveApiKeyVault(_apiKeyVault);
-        HasVerifiedApiKey = _apiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
+        ApiKeyVault = new Gw2ApiKeyVaultData(nextActiveId, remaining);
+        _saveApiKeyVault(ApiKeyVault);
+        HasVerifiedApiKey = ApiKeyVault.ActiveEntry?.Status.Equals("VALID", StringComparison.OrdinalIgnoreCase) == true;
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         AddLog("Removed API key from DPAPI vault.");
 
-        await ReloadLedgerForActiveAccountAsync();
+        await IncomePage.ReloadLedgerForActiveAccountAsync();
         await ReportsPage.LoadSessionReportsAsync();
         if (_supervisor is DesktopWorkerSupervisor concreteSupervisor && _lastWorkerState is WorkerState.Idle or WorkerState.Stopped)
         {
@@ -2950,7 +2467,7 @@ public partial class MainWindow : Window
 
         var statusLabel = SidebarStatusLabel.Text ?? "Ready";
         var clockText = SessionClockText?.Text ?? "00:00:00";
-        var accountLabel = _apiKeyVault.ActiveEntry?.DisplayLabel ?? "None";
+        var accountLabel = ApiKeyVault.ActiveEntry?.DisplayLabel ?? "None";
         var hotkeys = SidebarHotkeyHint?.Text ?? string.Empty;
         SidebarStatusBorder.ToolTip = string.IsNullOrWhiteSpace(hotkeys)
             ? $"Status: {statusLabel}\nClock: {clockText}\nAccount: {accountLabel}"
@@ -3055,9 +2572,9 @@ public partial class MainWindow : Window
 
     private void RefreshApiKeyIndicator()
     {
-        if (_apiKeyVault.ActiveEntry is { } active)
+        if (ApiKeyVault.ActiveEntry is { } active)
         {
-            var countNote = _apiKeyVault.Entries.Count > 1 ? $" ({_apiKeyVault.Entries.Count} accounts saved)" : string.Empty;
+            var countNote = ApiKeyVault.Entries.Count > 1 ? $" ({ApiKeyVault.Entries.Count} accounts saved)" : string.Empty;
             ApiKeyStatusText.Text = $"Active account: {active.DisplayLabel} [{active.Status}]{countNote}. Stored securely via Windows DPAPI.";
         }
         else if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MMOPAL_Native__Gw2ApiKey")))
@@ -3381,37 +2898,6 @@ public partial class MainWindow : Window
         }
 
         SaveOperatorSettingsIfValid();
-    }
-
-    private sealed record ChartBarItem(
-        string Label,
-        double BarHeight,
-        Brush BarBrush,
-        string Tooltip,
-        string ValueLabel);
-
-    private sealed class ActiveOrderViewRow(Gw2ActiveOrder order)
-    {
-        public string Side => order.Kind.ToString();
-        public string ItemName => order.ItemName;
-        public long Quantity => order.Quantity;
-        public string YourPriceFormatted => MarketScanItem.FormatCoins(order.UnitPriceCopper);
-        public string MarketTopFormatted => order.Kind == TransactionType.Buy
-            ? (order.MarketHighestBuyCopper is { } b ? MarketScanItem.FormatCoins(b) : "—")
-            : (order.MarketLowestSellCopper is { } s ? MarketScanItem.FormatCoins(s) : "—");
-        public string BookStatus => order.BookStatus;
-        public string CreatedFormatted => order.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
-        public string AgeFormatted => IncomeInsights.FormatAge(DateTimeOffset.UtcNow - order.CreatedAt);
-    }
-
-    private sealed class LedgerHistoryViewRow(Gw2LedgerTransaction tx)
-    {
-        public string PurchasedFormatted => tx.PurchasedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
-        public string Side => tx.Kind.ToString();
-        public string ItemName => tx.ItemName;
-        public long Quantity => tx.Quantity;
-        public string UnitPriceFormatted => MarketScanItem.FormatCoins(tx.UnitPriceCopper);
-        public string GrossTotalFormatted => MarketScanItem.FormatCoins(tx.UnitPriceCopper * tx.Quantity);
     }
 
     private sealed class ApiKeyRowViewModel(
