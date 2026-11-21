@@ -1,3 +1,4 @@
+using System.Globalization;
 using Mmopal.Contracts;
 
 namespace Mmopal.Gw2;
@@ -8,11 +9,22 @@ public sealed record PortfolioItemAdvice(
     string? Reason)
 {
     /// <summary>Short label for tables: "Skipped: …", "Boost ×1.4", "Slow ×0.55".</summary>
-    public string ShortLabel => ShouldSkip
-        ? Reason?.Contains("sell stack", StringComparison.OrdinalIgnoreCase) == true ? "Skipped: stack listed" : "Skipped: lost money"
-        : ScoreMultiplier >= 1.0
-            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Boost ×{ScoreMultiplier:0.##}")
-            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Slow ×{ScoreMultiplier:0.##}");
+    public string ShortLabel
+    {
+        get
+        {
+            if (ShouldSkip)
+            {
+                return Reason?.Contains("sell stack", StringComparison.OrdinalIgnoreCase) == true
+                    ? "Skipped: stack listed"
+                    : "Skipped: lost money";
+            }
+
+            return ScoreMultiplier >= 1.0
+                ? string.Create(CultureInfo.InvariantCulture, $"Boost ×{ScoreMultiplier:0.##}")
+                : string.Create(CultureInfo.InvariantCulture, $"Slow ×{ScoreMultiplier:0.##}");
+        }
+    }
 }
 
 public sealed record PortfolioGuidance(
@@ -87,31 +99,20 @@ public static class PortfolioProfitAdvisor
                     nameToId[norm] = row.ItemId;
                 }
 
-                PortfolioItemAdvice? advice = null;
-                if (IsChronicLoser(row))
-                {
-                    advice = new PortfolioItemAdvice(0.0, ShouldSkip: true, $"Lost money on {row.UnitsFlipped} flips in the last {HistoryWindowDays} days");
-                    guarded++;
-                    losingItems.Add(row.ItemName);
-                }
-                else if (row.AvgHoldHours >= 72.0)
-                {
-                    advice = new PortfolioItemAdvice(0.55, ShouldSkip: false, "Slow turnover (72h+ avg hold)");
-                }
-                else if (row.UnitsFlipped >= 2 && row.NetProfitCopper > 0 && row.AvgHoldHours <= 24.0 && row.RoiPercent >= 12m)
-                {
-                    advice = new PortfolioItemAdvice(1.40, ShouldSkip: false, "Fast proven FIFO winner");
-                    winners++;
-                }
-                else if (row.UnitsFlipped >= 2 && row.NetProfitCopper > 0 && row.AvgHoldHours <= 48.0)
-                {
-                    advice = new PortfolioItemAdvice(1.22, ShouldSkip: false, "Proven FIFO winner");
-                    winners++;
-                }
-
+                var advice = AdviceFromHistory(row);
                 if (advice is null)
                 {
                     continue;
+                }
+
+                if (advice.ShouldSkip)
+                {
+                    guarded++;
+                    losingItems.Add(row.ItemName);
+                }
+                else if (advice.ScoreMultiplier > 1.0)
+                {
+                    winners++;
                 }
 
                 if (row.ItemId > 0)
@@ -156,6 +157,33 @@ public static class PortfolioProfitAdvisor
         var summary = $"{cycle.PhaseName} • {winners} winner boost(s), {guarded} loss guard(s), {exposureSkipped} stacked-sell guard(s)";
 
         return new PortfolioGuidance(byId, byName, cycle.PhaseName, isOffPeak, summary, losingItems);
+    }
+
+    /// <summary>Loss guard, slow-turnover penalty or winner boost from an item's recent FIFO results; null when neutral.</summary>
+    private static PortfolioItemAdvice? AdviceFromHistory(ItemPnlRow row)
+    {
+        if (IsChronicLoser(row))
+        {
+            return new PortfolioItemAdvice(0.0, ShouldSkip: true, $"Lost money on {row.UnitsFlipped} flips in the last {HistoryWindowDays} days");
+        }
+
+        if (row.AvgHoldHours >= 72.0)
+        {
+            return new PortfolioItemAdvice(0.55, ShouldSkip: false, "Slow turnover (72h+ avg hold)");
+        }
+
+        var provenWinner = row.UnitsFlipped >= 2 && row.NetProfitCopper > 0;
+        if (provenWinner && row.AvgHoldHours <= 24.0 && row.RoiPercent >= 12m)
+        {
+            return new PortfolioItemAdvice(1.40, ShouldSkip: false, "Fast proven FIFO winner");
+        }
+
+        if (provenWinner && row.AvgHoldHours <= 48.0)
+        {
+            return new PortfolioItemAdvice(1.22, ShouldSkip: false, "Proven FIFO winner");
+        }
+
+        return null;
     }
 
     public static string BuildDashboardInsightSummary(

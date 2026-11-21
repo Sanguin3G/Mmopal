@@ -122,16 +122,15 @@ public sealed class LiveCandidateProfitRefresher
             .ToArray();
 
         var combined = new List<ItemCandidate>(ordered.Length + unquoted.Count);
-        foreach (var entry in ordered)
-        {
-            combined.Add(entry.Candidate);
-        }
-
+        combined.AddRange(ordered.Select(entry => entry.Candidate));
         combined.AddRange(unquoted);
 
-        var topSummary = ordered.Length > 0
-            ? $"Top: {ordered[0].Candidate.ItemName} ({ordered[0].Profit.ProfitPercentage:0.0}% ROI, {ordered[0].Quote.BuyQuantity} buy / {ordered[0].Quote.SellQuantity} sell)"
-            : string.Empty;
+        var topSummary = string.Empty;
+        if (ordered.Length > 0)
+        {
+            var top = ordered[0];
+            topSummary = $"Top: {top.Candidate.ItemName} ({top.Profit.ProfitPercentage:0.0}% ROI, {top.Quote.BuyQuantity} buy / {top.Quote.SellQuantity} sell)";
+        }
 
         return new LiveCandidateRefreshResult(
             combined,

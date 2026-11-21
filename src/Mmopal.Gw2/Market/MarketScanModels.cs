@@ -1,8 +1,4 @@
-using System.Collections.Concurrent;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Mmopal.Contracts;
-using Mmopal.Infrastructure;
 
 namespace Mmopal.Gw2;
 
@@ -90,13 +86,16 @@ public sealed record MarketScanItem(
     {
         var negative = totalCopper < 0;
         var abs = Math.Abs(totalCopper);
-        var (gold, silver, copper) = CurrencyMath.FromCopper(abs);
-        var text = gold > 0
-            ? $"{gold}g {silver:00}s {copper:00}c"
-            : silver > 0
-                ? $"{silver}s {copper:00}c"
-                : $"{copper}c";
+        var text = FormatPositiveCoins(abs);
         return negative ? "-" + text : text;
+    }
+
+    private static string FormatPositiveCoins(long copperAmount)
+    {
+        var (gold, silver, copper) = CurrencyMath.FromCopper(copperAmount);
+        if (gold > 0) return $"{gold}g {silver:00}s {copper:00}c";
+        if (silver > 0) return $"{silver}s {copper:00}c";
+        return $"{copper}c";
     }
 }
 

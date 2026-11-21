@@ -94,19 +94,19 @@ public sealed class ScreenTradingPostObservationReader : ITradingPostObservation
         apiTimer.Stop();
         timings["api"] = apiTimer.ElapsedMilliseconds;
 
+        var probeOptions = new TradingPostUiProbeOptions(
+            request.TemplateRoot,
+            request.EffectiveCaptureRegion,
+            request.MaxWaitMilliseconds,
+            request.MatchScore,
+            request.ReadVisiblePrice,
+            request.VisibleItemName);
+
         TradingPostUiSnapshot ui;
         var uiTimer = Stopwatch.StartNew();
         try
         {
-            ui = await _uiProbe.ProbeAsync(
-                new TradingPostUiProbeOptions(
-                    request.TemplateRoot,
-                    request.EffectiveCaptureRegion,
-                    request.MaxWaitMilliseconds,
-                    request.MatchScore,
-                    request.ReadVisiblePrice,
-                    request.VisibleItemName),
-                cancellationToken);
+            ui = await _uiProbe.ProbeAsync(probeOptions, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -127,15 +127,7 @@ public sealed class ScreenTradingPostObservationReader : ITradingPostObservation
             var ocrTimer = Stopwatch.StartNew();
             try
             {
-                visiblePrice = await _uiProbe.ReadVisiblePriceAsync(
-                    new TradingPostUiProbeOptions(
-                        request.TemplateRoot,
-                        request.EffectiveCaptureRegion,
-                        request.MaxWaitMilliseconds,
-                        request.MatchScore,
-                        request.ReadVisiblePrice,
-                        request.VisibleItemName),
-                    cancellationToken);
+                visiblePrice = await _uiProbe.ReadVisiblePriceAsync(probeOptions, cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -149,23 +141,24 @@ public sealed class ScreenTradingPostObservationReader : ITradingPostObservation
 
         var frame = await captureTask;
         var market = new MarketSnapshot(transactions, balance, observedAt, _source);
-        var status = transactionError is not null || balanceError is not null
-            ? TradingPostObservationStatus.Partial
-            : !ui.TradingPostOpen
-                ? TradingPostObservationStatus.NotReady
-                : TradingPostObservationStatus.Ready;
         var error = transactionError?.Message ?? balanceError?.Message;
         var observation = new TradingPostObservation(
             _source,
             observedAt,
             market,
-            status,
+            ObservationStatus(apiFailed: transactionError is not null || balanceError is not null, ui),
             ui,
             visiblePrice,
             timings,
             diagnostics,
             error);
         return new TradingPostObservationReadResult(observation, frame);
+    }
+
+    private static TradingPostObservationStatus ObservationStatus(bool apiFailed, TradingPostUiSnapshot ui)
+    {
+        if (apiFailed) return TradingPostObservationStatus.Partial;
+        return ui.TradingPostOpen ? TradingPostObservationStatus.Ready : TradingPostObservationStatus.NotReady;
     }
 
     private async Task<AutomationFrame?> CaptureFrameAsync(
@@ -294,6 +287,7 @@ public sealed class FileTradingObservationRecorder : ITradingPostObservationReco
 
 public sealed class ReplayTradingPostObservationReader : ITradingPostObservationReader
 {
+    private static readonly JsonSerializerOptions FixtureJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IReadOnlyList<TradingPostObservation> _observations;
     private int _index;
 
@@ -316,7 +310,7 @@ public sealed class ReplayTradingPostObservationReader : ITradingPostObservation
         while (await reader.ReadLineAsync(cancellationToken) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
-            var record = JsonSerializer.Deserialize<TradingObservationFixtureRecord>(line, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var record = JsonSerializer.Deserialize<TradingObservationFixtureRecord>(line, FixtureJsonOptions);
             if (record is null || record.SchemaVersion != 1) throw new InvalidDataException("Unsupported trading observation fixture record.");
             observations.Add(record.Observation);
         }

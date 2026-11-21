@@ -85,41 +85,31 @@ public sealed record TradingLimits(decimal MinimumProfitPercentage, decimal? Max
 
         if (hasDot && hasComma)
         {
-            var lastDot = trimmed.LastIndexOf('.');
-            var lastComma = trimmed.LastIndexOf(',');
-            if (lastDot > lastComma)
-            {
-                var integerPart = trimmed[..lastDot];
-                var fractionPart = trimmed[(lastDot + 1)..];
-                if (!IsGroupedNumber(integerPart, ',') || fractionPart.Length == 0 || !fractionPart.All(char.IsDigit))
-                {
-                    value = 0;
-                    return false;
-                }
-
-                return decimal.TryParse(
-                    integerPart.Replace(",", string.Empty) + "." + fractionPart,
-                    NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
-                    CultureInfo.InvariantCulture,
-                    out value);
-            }
-
-            var euIntegerPart = trimmed[..lastComma];
-            var euFractionPart = trimmed[(lastComma + 1)..];
-            if (!IsGroupedNumber(euIntegerPart, '.') || euFractionPart.Length == 0 || !euFractionPart.All(char.IsDigit))
-            {
-                value = 0;
-                return false;
-            }
-
-            return decimal.TryParse(
-                euIntegerPart.Replace(".", string.Empty) + "." + euFractionPart,
-                NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
-                CultureInfo.InvariantCulture,
-                out value);
+            // Whichever separator comes last is the decimal point: "1,234.5" (US) or "1.234,5" (EU).
+            return trimmed.LastIndexOf('.') > trimmed.LastIndexOf(',')
+                ? TryParseGroupedWithFraction(trimmed, decimalSeparator: '.', groupSeparator: ',', out value)
+                : TryParseGroupedWithFraction(trimmed, decimalSeparator: ',', groupSeparator: '.', out value);
         }
 
         return decimal.TryParse(trimmed, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryParseGroupedWithFraction(string text, char decimalSeparator, char groupSeparator, out decimal value)
+    {
+        var decimalIndex = text.LastIndexOf(decimalSeparator);
+        var integerPart = text[..decimalIndex];
+        var fractionPart = text[(decimalIndex + 1)..];
+        if (!IsGroupedNumber(integerPart, groupSeparator) || fractionPart.Length == 0 || !fractionPart.All(char.IsDigit))
+        {
+            value = 0;
+            return false;
+        }
+
+        return decimal.TryParse(
+            integerPart.Replace(groupSeparator.ToString(), string.Empty) + "." + fractionPart,
+            NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+            CultureInfo.InvariantCulture,
+            out value);
     }
 
     private static bool IsGroupedNumber(string text, char separator)
@@ -146,29 +136,15 @@ public static class TradingLimitsFile
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public static TradingLimits LoadOrDefault(string path)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return new TradingLimits(0, null);
-            return JsonSerializer.Deserialize<TradingLimits>(File.ReadAllText(path), JsonOptions) ?? new TradingLimits(0, null);
-        }
-        catch (JsonException)
-        {
-            return new TradingLimits(0, null);
-        }
-        catch (IOException)
-        {
-            return new TradingLimits(0, null);
-        }
-    }
+    public static TradingLimits LoadOrDefault(string path) =>
+        SettingsFileIo.TryReadJson<TradingLimits>(path, JsonOptions, out var limits) && limits is not null
+            ? limits
+            : new TradingLimits(0, null);
 
     public static void Save(string path, TradingLimits limits)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(limits);
-        var full = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, JsonSerializer.Serialize(limits, JsonOptions));
+        SettingsFileIo.WriteAllText(path, JsonSerializer.Serialize(limits, JsonOptions));
     }
 }

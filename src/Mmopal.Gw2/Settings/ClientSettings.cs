@@ -78,8 +78,7 @@ public sealed record Gw2ClientSettings(
             return true;
         }
 
-        var normalized = hoursText.Trim().Replace(',', '.');
-        if (!decimal.TryParse(normalized, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var hours) || hours < 0)
+        if (!TryParseNonNegativeHours(hoursText, out var hours))
         {
             error = "Character swap interval must be a number of hours zero or greater, or blank.";
             return false;
@@ -101,10 +100,7 @@ public sealed record Gw2ClientSettings(
         return true;
     }
 
-    public string FormatSwapHours() =>
-        SwapCharacterIntervalMinutes is > 0
-            ? (SwapCharacterIntervalMinutes.Value / 60m).ToString("0.##", CultureInfo.InvariantCulture)
-            : string.Empty;
+    public string FormatSwapHours() => FormatMinutesAsHours(SwapCharacterIntervalMinutes);
 
     public static bool TryParseMaxSessionHours(string? hoursText, out int? durationMinutes, out string? error)
     {
@@ -115,8 +111,7 @@ public sealed record Gw2ClientSettings(
             return true;
         }
 
-        var normalized = hoursText.Trim().Replace(',', '.');
-        if (!decimal.TryParse(normalized, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var hours) || hours < 0)
+        if (!TryParseNonNegativeHours(hoursText, out var hours))
         {
             error = "Max session duration must be a number of hours zero or greater, or blank.";
             return false;
@@ -137,9 +132,19 @@ public sealed record Gw2ClientSettings(
         return true;
     }
 
-    public string FormatMaxSessionHours() =>
-        MaxSessionDurationMinutes is > 0
-            ? (MaxSessionDurationMinutes.Value / 60m).ToString("0.##", CultureInfo.InvariantCulture)
+    public string FormatMaxSessionHours() => FormatMinutesAsHours(MaxSessionDurationMinutes);
+
+    /// <summary>Hours typed in a settings box; a comma is accepted as the decimal separator.</summary>
+    private static bool TryParseNonNegativeHours(string hoursText, out decimal hours)
+    {
+        var normalized = hoursText.Trim().Replace(',', '.');
+        return decimal.TryParse(normalized, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out hours)
+               && hours >= 0;
+    }
+
+    private static string FormatMinutesAsHours(int? minutes) =>
+        minutes is > 0
+            ? (minutes.Value / 60m).ToString("0.##", CultureInfo.InvariantCulture)
             : string.Empty;
 }
 
@@ -150,35 +155,16 @@ public static class Gw2ClientSettingsFile
         WriteIndented = true
     };
 
-    public static Gw2ClientSettings LoadOrDefault(string path)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            {
-                return new Gw2ClientSettings();
-            }
-
-            return JsonSerializer.Deserialize<Gw2ClientSettings>(File.ReadAllText(path), JsonOptions)
-                   ?? new Gw2ClientSettings();
-        }
-        catch (JsonException)
-        {
-            return new Gw2ClientSettings();
-        }
-        catch (IOException)
-        {
-            return new Gw2ClientSettings();
-        }
-    }
+    public static Gw2ClientSettings LoadOrDefault(string path) =>
+        SettingsFileIo.TryReadJson<Gw2ClientSettings>(path, JsonOptions, out var settings) && settings is not null
+            ? settings
+            : new Gw2ClientSettings();
 
     public static void Save(string path, Gw2ClientSettings settings)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(settings);
-        var full = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, JsonSerializer.Serialize(settings, JsonOptions));
+        SettingsFileIo.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
     }
 }
 
@@ -224,8 +210,7 @@ public sealed class AfkCharacterSwapSchedule
         _jitterMinutes = Math.Max(0, jitterMinutes);
         _randomizeCharacter = randomizeCharacter;
         _nextRandom = nextRandom ?? Random.Shared.Next;
-        var origin = startedAt ?? DateTimeOffset.UtcNow;
-        NextSwapAt = ComputeNextSwap(origin);
+        NextSwapAt = ComputeNextSwap(startedAt ?? DateTimeOffset.UtcNow);
     }
 
     public bool IsEnabled => _intervalMinutes.HasValue;

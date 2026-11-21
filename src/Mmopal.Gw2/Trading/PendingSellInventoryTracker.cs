@@ -162,38 +162,43 @@ public sealed class PendingSellInventoryTracker
                     break;
 
                 case SellPassItemOutcome.NotFoundInBags:
-                    if (!_entries.TryGetValue(name, out var entry))
-                    {
-                        break;
-                    }
-
-                    entry.MissCount++;
-                    if (entry.MissCount == 1)
-                    {
-                        entry.NextEligibleAttemptUtc = nowUtc + NotFoundRetryBackoff;
-                    }
-                    else
-                    {
-                        _entries.Remove(name);
-                        _suppressedUntilUtc[name] = nowUtc + DoubleMissSuppression;
-                    }
-
+                    RecordMiss(name, nowUtc);
                     break;
 
                 case SellPassItemOutcome.SkippedError:
-                    if (_entries.TryGetValue(name, out var errEntry))
-                    {
-                        errEntry.NextEligibleAttemptUtc = nowUtc + ErrorRetryBackoff;
-                    }
-
+                    DelayNextAttempt(name, nowUtc + ErrorRetryBackoff);
                     break;
+
                 case SellPassItemOutcome.Held:
-                    if (_entries.TryGetValue(name, out var heldEntry))
-                    {
-                        heldEntry.NextEligibleAttemptUtc = nowUtc + HeldRetryBackoff;
-                    }
+                    DelayNextAttempt(name, nowUtc + HeldRetryBackoff);
                     break;
             }
+        }
+    }
+
+    private void RecordMiss(string name, DateTimeOffset nowUtc)
+    {
+        if (!_entries.TryGetValue(name, out var entry))
+        {
+            return;
+        }
+
+        entry.MissCount++;
+        if (entry.MissCount == 1)
+        {
+            entry.NextEligibleAttemptUtc = nowUtc + NotFoundRetryBackoff;
+            return;
+        }
+
+        _entries.Remove(name);
+        _suppressedUntilUtc[name] = nowUtc + DoubleMissSuppression;
+    }
+
+    private void DelayNextAttempt(string name, DateTimeOffset nextAttemptUtc)
+    {
+        if (_entries.TryGetValue(name, out var entry))
+        {
+            entry.NextEligibleAttemptUtc = nextAttemptUtc;
         }
     }
 

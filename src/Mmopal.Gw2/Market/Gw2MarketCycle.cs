@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-using Mmopal.Contracts;
 
 namespace Mmopal.Gw2;
 

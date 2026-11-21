@@ -19,14 +19,7 @@ public static class CandidatesLoader
         string path,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
-        if (!File.Exists(fullPath))
-        {
-            throw new FileNotFoundException("Candidates file was not found.", fullPath);
-        }
-
-        var text = await File.ReadAllTextAsync(fullPath, cancellationToken);
+        var text = await ReadExistingFileAsync(path, "Candidates file was not found.", cancellationToken);
         var trimmed = text.TrimStart();
         if (trimmed.Length == 0)
         {
@@ -77,14 +70,7 @@ public static class CandidatesLoader
         string path,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
-        if (!File.Exists(fullPath))
-        {
-            throw new FileNotFoundException("Blacklist file was not found.", fullPath);
-        }
-
-        var text = await File.ReadAllTextAsync(fullPath, cancellationToken);
+        var text = await ReadExistingFileAsync(path, "Blacklist file was not found.", cancellationToken);
         var trimmed = text.TrimStart();
         if (trimmed.Length == 0)
         {
@@ -117,6 +103,18 @@ public static class CandidatesLoader
         }
 
         return entries;
+    }
+
+    private static async Task<string> ReadExistingFileAsync(string path, string notFoundMessage, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException(notFoundMessage, fullPath);
+        }
+
+        return await File.ReadAllTextAsync(fullPath, cancellationToken);
     }
 
     private static char DetectDelimiter(string text)
@@ -155,17 +153,26 @@ public static class CandidatesLoader
         var matchedAny = false;
         foreach (var token in trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
-            var suffix = char.ToLowerInvariant(token[^1]);
             var numberPart = token[..^1].Replace(",", string.Empty);
             if (!long.TryParse(numberPart, NumberStyles.Integer, CultureInfo.InvariantCulture, out var component) || component < 0)
             {
                 return null;
             }
 
-            if (suffix == 'g') { total += component * 10_000; matchedAny = true; }
-            else if (suffix == 's') { total += component * 100; matchedAny = true; }
-            else if (suffix == 'c') { total += component; matchedAny = true; }
-            else return null;
+            long? copperPerUnit = char.ToLowerInvariant(token[^1]) switch
+            {
+                'g' => 10_000,
+                's' => 100,
+                'c' => 1,
+                _ => null
+            };
+            if (copperPerUnit is null)
+            {
+                return null;
+            }
+
+            total += component * copperPerUnit.Value;
+            matchedAny = true;
         }
 
         return matchedAny ? total : null;

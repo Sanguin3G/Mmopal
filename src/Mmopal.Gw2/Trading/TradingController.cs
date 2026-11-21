@@ -97,30 +97,15 @@ public sealed class TradingCycleController
             machine.TransitionTo(TradingState.ProcessCandidates);
             decisions = _candidatePlanner.Evaluate(candidates, transactionIndex, blacklistMatcher, policy).ToArray();
 
-            if (market.Balance is null)
+            if (BuyPauseReason(market.Balance) is { } buyPauseReason)
             {
                 decisions = decisions
                     .Select(decision => decision.Action?.Kind != TradingActionKind.PlaceBuyOrder
                         ? decision
-                        : CandidateDecision.Skip(decision.Candidate, "Balance is unavailable; no action is safe.", decision.Profitability))
+                        : CandidateDecision.Skip(decision.Candidate, buyPauseReason, decision.Profitability))
                     .ToArray();
             }
-            else if (market.Balance.Copper <= 0)
-            {
-                decisions = decisions
-                    .Select(decision => decision.Action?.Kind != TradingActionKind.PlaceBuyOrder
-                        ? decision
-                        : CandidateDecision.Skip(decision.Candidate, "Wallet balance is 0g; buy orders paused (sell/collect only).", decision.Profitability))
-                    .ToArray();
-            }
-            else if (_options.MinimumBalanceCopper > 0 && market.Balance.Copper <= _options.MinimumBalanceCopper)
-            {
-                decisions = decisions
-                    .Select(decision => decision.Action?.Kind != TradingActionKind.PlaceBuyOrder
-                        ? decision
-                        : CandidateDecision.Skip(decision.Candidate, "Balance is at or below the configured gold reserve floor; buy orders paused (sell/collect only).", decision.Profitability))
-                    .ToArray();
-            }
+
             long? remainingSpendable = market.Balance is { Copper: > 0 } balance
                 ? Math.Max(0L, balance.Copper - Math.Max(0L, _options.MinimumBalanceCopper))
                 : null;
@@ -139,6 +124,8 @@ public sealed class TradingCycleController
                     decision.Reason);
             }
 
+            var acceptedCount = decisions.Count(decision => decision.Action is not null);
+            var skippedCount = decisions.Count - acceptedCount;
             var skippedSummary = decisions
                 .Where(decision => decision.Action is null)
                 .GroupBy(decision => SummarizeReason(decision.Reason))
@@ -148,8 +135,8 @@ public sealed class TradingCycleController
                 .ToArray();
             _logger.LogInformation(
                 "GW2 cycle plan: {Accepted} accepted, {Skipped} skipped ({Reasons}).",
-                decisions.Count(decision => decision.Action is not null),
-                decisions.Count(decision => decision.Action is null),
+                acceptedCount,
+                skippedCount,
                 skippedSummary.Length == 0 ? "none" : string.Join("; ", skippedSummary));
 
             machine.TransitionTo(TradingState.Checkpoint);
@@ -161,8 +148,8 @@ public sealed class TradingCycleController
                     market.Source,
                     market.ObservedAt,
                     candidateCount = candidates.Count,
-                    acceptedCount = decisions.Count(decision => decision.Action is not null),
-                    skippedCount = decisions.Count(decision => decision.Action is null)
+                    acceptedCount,
+                    skippedCount
                 },
                 cancellationToken);
 
@@ -196,12 +183,13 @@ public sealed class TradingCycleController
                     _recentActions[GetCooldownKey(runId, action)] = _options.UtcNow();
                 }
 
+                var itemKey = GetItemKey(runId, action.ItemName);
                 if (result.Status == TradingActionStatus.Completed && action.Kind == TradingActionKind.PlaceBuyOrder)
                 {
-                    _boughtItems[GetItemKey(runId, action.ItemName)] = action.ItemName.Trim();
+                    _boughtItems[itemKey] = action.ItemName.Trim();
                     if (result.PlacedUnitPriceCopper is { } placedPrice)
                     {
-                        _placedPrices[GetItemKey(runId, action.ItemName)] = (action.ItemName.Trim(), placedPrice, _options.UtcNow());
+                        _placedPrices[itemKey] = (action.ItemName.Trim(), placedPrice, _options.UtcNow());
                     }
                 }
 
@@ -209,9 +197,9 @@ public sealed class TradingCycleController
                 {
                     // The same dialog shows the same wrong price / wrong item next cycle too (Pyre Dye was aborted
                     // four cycles in a row); give the slot to other items for a while.
-                    _blockedUntil[GetItemKey(runId, action.ItemName)] = _options.UtcNow() + FailedItemCooldown;
+                    _blockedUntil[itemKey] = _options.UtcNow() + FailedItemCooldown;
                     if (result.Message!.Contains("price boxes did not take", StringComparison.Ordinal) &&
-                        _typingRefusals.AddOrUpdate(GetItemKey(runId, action.ItemName), 1, (_, count) => count + 1) == TypingRefusalsBeforeSkip)
+                        _typingRefusals.AddOrUpdate(itemKey, 1, (_, count) => count + 1) == TypingRefusalsBeforeSkip)
                     {
                         _logger.LogInformation(
                             "Skipping {Item} for the rest of this session: its order dialog refused the typed price on {Count} attempts.",
@@ -220,24 +208,13 @@ public sealed class TradingCycleController
                     }
                 }
 
-                if (result.Status == TradingActionStatus.Failed)
-                {
-                    _logger.LogWarning(
-                        "GW2 action {Kind} {Status} for {Item}: {Message}",
-                        action.Kind,
-                        result.Status,
-                        action.ItemName,
-                        result.Message);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "GW2 action {Kind} {Status} for {Item}: {Message}",
-                        action.Kind,
-                        result.Status,
-                        action.ItemName,
-                        result.Message);
-                }
+                _logger.Log(
+                    result.Status == TradingActionStatus.Failed ? LogLevel.Warning : LogLevel.Information,
+                    "GW2 action {Kind} {Status} for {Item}: {Message}",
+                    action.Kind,
+                    result.Status,
+                    action.ItemName,
+                    result.Message);
 
                 actionResults.Add(result);
                 try
@@ -304,11 +281,27 @@ public sealed class TradingCycleController
         await Task.Delay(delay, cancellationToken);
     }
 
-    /// <summary>
-    /// Walks the ranked decisions once, in order: items still on cooldown are skipped first, then the
-    /// per-cycle cap and the gold budget only count actions that will actually run. Doing the cooldown
-    /// check before the cap keeps recently-ordered items from occupying all slots and starving the list.
-    /// </summary>
+    /// <summary>Why new buy orders are paused this cycle (no balance, empty wallet, at the reserve floor); null when they are allowed.</summary>
+    private string? BuyPauseReason(AccountBalance? balance)
+    {
+        if (balance is null)
+        {
+            return "Balance is unavailable; no action is safe.";
+        }
+
+        if (balance.Copper <= 0)
+        {
+            return "Wallet balance is 0g; buy orders paused (sell/collect only).";
+        }
+
+        if (_options.MinimumBalanceCopper > 0 && balance.Copper <= _options.MinimumBalanceCopper)
+        {
+            return "Balance is at or below the configured gold reserve floor; buy orders paused (sell/collect only).";
+        }
+
+        return null;
+    }
+
     /// <summary>Gold still allowed into new buy orders under the share limit, with the figures for the skip reason.</summary>
     public static (long Remaining, long InBuyOrders, long TotalGold, int Percent)? BuyOrderBudget(MarketSnapshot market, int sharePercent)
     {
@@ -331,6 +324,11 @@ public sealed class TradingCycleController
         return (Math.Max(0, allowed - inBuys), inBuys, total, sharePercent);
     }
 
+    /// <summary>
+    /// Walks the ranked decisions once, in order: items still on cooldown are skipped first, then the
+    /// per-cycle cap and the gold budget only count actions that will actually run. Doing the cooldown
+    /// check before the cap keeps recently-ordered items from occupying all slots and starving the list.
+    /// </summary>
     private IReadOnlyList<CandidateDecision> SelectActionsForCycle(
         string runId,
         IReadOnlyList<CandidateDecision> decisions,
@@ -349,8 +347,9 @@ public sealed class TradingCycleController
                 continue;
             }
 
+            var itemKey = GetItemKey(runId, action.ItemName);
             if (action.Kind == TradingActionKind.PlaceBuyOrder &&
-                _searchMismatches.TryGetValue(GetItemKey(runId, action.ItemName), out var orderedInstead))
+                _searchMismatches.TryGetValue(itemKey, out var orderedInstead))
             {
                 selected.Add(CandidateDecision.Skip(
                     decision.Candidate,
@@ -359,7 +358,7 @@ public sealed class TradingCycleController
                 continue;
             }
 
-            if (_typingRefusals.TryGetValue(GetItemKey(runId, action.ItemName), out var refusals) && refusals >= TypingRefusalsBeforeSkip)
+            if (_typingRefusals.TryGetValue(itemKey, out var refusals) && refusals >= TypingRefusalsBeforeSkip)
             {
                 selected.Add(CandidateDecision.Skip(
                     decision.Candidate,
@@ -368,7 +367,7 @@ public sealed class TradingCycleController
                 continue;
             }
 
-            if (_blockedUntil.TryGetValue(GetItemKey(runId, action.ItemName), out var blockedUntil) && blockedUntil > now)
+            if (_blockedUntil.TryGetValue(itemKey, out var blockedUntil) && blockedUntil > now)
             {
                 selected.Add(CandidateDecision.Skip(
                     decision.Candidate,

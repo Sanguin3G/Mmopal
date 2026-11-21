@@ -1,7 +1,3 @@
-using System.Globalization;
-using System.Text;
-using Mmopal.Contracts;
-
 namespace Mmopal.Gw2;
 
 // Rows and totals of the Income & Portfolio report.
@@ -36,11 +32,15 @@ public sealed record ItemPnlRow(
     public string AvgSellFormatted => MarketScanItem.FormatCoins(AvgSellCopper);
     public string NetProfitFormatted => MarketScanItem.FormatCoins(NetProfitCopper);
     public string RoiFormatted => $"{RoiPercent:0.0}%";
-    public string AvgHoldFormatted => AvgHoldHours < 1.0
-        ? $"{Math.Round(AvgHoldHours * 60):0}m"
-        : AvgHoldHours < 48.0
-            ? $"{AvgHoldHours:0.0}h"
-            : $"{AvgHoldHours / 24.0:0.0}d";
+    public string AvgHoldFormatted
+    {
+        get
+        {
+            if (AvgHoldHours < 1.0) return $"{Math.Round(AvgHoldHours * 60):0}m";
+            if (AvgHoldHours < 48.0) return $"{AvgHoldHours:0.0}h";
+            return $"{AvgHoldHours / 24.0:0.0}d";
+        }
+    }
 }
 
 public sealed record TradingIncomeReport(
