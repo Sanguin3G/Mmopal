@@ -92,10 +92,11 @@ public sealed partial class Gw2TradingPostUiDriver
                 (int)MinOrderAgeBeforeOutbidCancel.TotalMinutes);
         }
 
-        foreach (var name in ambiguousNames)
+        // Once per item per session: Slice of Allspice Cake repeated this line in 143 of 272 cycles.
+        foreach (var name in ambiguousNames.Where(name => _ambiguousOutbidLogged.Add(name)))
         {
             _logger.LogInformation(
-                "Outbid Refresh skipped {Item}: searching it would list more than one of your buy orders, so the first Cancel button might not be the outbid one.",
+                "Outbid Refresh skips {Item} this session: searching it would list more than one of your buy orders, so the first Cancel button might not be the outbid one. Cancel the extra order in game so Outbid Refresh can manage it.",
                 name);
         }
 

@@ -196,6 +196,45 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
+    public async Task TryAdvanceLauncherOrCharacterSelectAsync_on_launch_enters_the_character_holding_the_most_stock()
+    {
+        // Bags were read through the API before launch: Johanne (slot #3) holds the most unsold items. The slot rule
+        // ("next", 5 parked) would enter slot #5.
+        var input = new FakeInputController();
+        var names = new[] { "Janetta Shepard", "Big Cheetos", "Johanne Shepard", "Calanthe F Riannon", "Mesmerising Rizzo" };
+        var johanne = (258 + 2 * 122, 640);
+        var templates = new FakeTemplateMatcher();
+        templates.DynamicMatches["charscreen_play.png"] = () =>
+            input.Clicks.Contains((785, 734)) ? null : new TemplateMatch(750, 718, 71, 33, 0.97m);
+        templates.DynamicMatches["ingame_1.png"] = () =>
+            input.Clicks.Contains((785, 734)) ? new TemplateMatch(48, 54, 16, 16, 0.85m) : null;
+        var locator = new FakeUiTextLocator(region =>
+            region is { X: 40, Y: 375 } && input.Clicks.LastOrDefault(c => c.Y == 640) is { X: > 0 } portrait
+                ? [new OcrTextBox(names[(portrait.X - 258) / 122], 57, 380, 220, 30)]
+                : []);
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = region => new AutomationFrame(DateTimeOffset.UtcNow, region, new byte[4], "Bgra32", 4) },
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0, ParkedCharacterCount: 5, RandomizeCharacterSelection: false),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator)
+        {
+            PreferredCharacterNames = ["Johanne Shepard", "Mesmerising Rizzo"]
+        };
+
+        Assert.True(await driver.TryAdvanceLauncherOrCharacterSelectAsync());
+
+        Assert.Equal(johanne, input.Clicks.Last(c => c.Y == 640)); // last portrait selected before Play
+        Assert.True(input.Clicks.LastIndexOf(johanne) < input.Clicks.IndexOf((785, 734)));
+        Assert.Equal("Johanne Shepard", driver.CurrentCharacterName);
+    }
+
+    [Fact]
     public async Task TryAdvanceLauncherOrCharacterSelectAsync_ignores_a_play_lookalike_outside_the_play_corner()
     {
         // Live 21-22 Nov: a red dialog button mid-screen matched charscreen_play.png on a whole-screen search;

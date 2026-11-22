@@ -235,19 +235,31 @@ public sealed partial class Gw2TradingPostUiDriver
             // Character Select lists the last played character first. On a fresh launch, a game restart or a
             // disconnect, that is the character the previous run ended on (possibly the one that could not open the
             // TP), so with several parked characters enter a different one, using the same rule as the AFK swap.
-            var slotOffset = _pendingSlot is { } pending && _utcNow() - pending.At < TimeSpan.FromMinutes(3)
+            // A swap already chose its slot; otherwise prefer the parked character holding the most unsold stock
+            // (never the one the game just left, which may be the one that failed).
+            int? chosen = _pendingSlot is { } pending && _utcNow() - pending.At < TimeSpan.FromMinutes(3)
                 ? pending.Offset
-                : PickParkedSlotOffset(_settings.RandomizeCharacterSelection, _settings.ParkedCharacterCount);
+                : null;
             _pendingSlot = null;
+            var byStock = false;
+            if (chosen is null && _settings.ParkedCharacterCount > 1 &&
+                PreferredCharacterNames.Where(name => !CharacterStock.NamesMatch(name, CurrentCharacterName)).ToArray() is { Length: > 0 } preferred)
+            {
+                chosen = (await FindPortraitByNameAsync(preferred, _settings.ParkedCharacterCount, cancellationToken).ConfigureAwait(false))?.Offset;
+                byStock = chosen is not null;
+            }
+
+            var slotOffset = chosen ?? PickParkedSlotOffset(_settings.RandomizeCharacterSelection, _settings.ParkedCharacterCount);
             var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
             var portraitY = DeterministicCharSlotOnePoint.Y;
-            var previousName = slotOffset > 0 ? await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) : null;
+            var previousName = slotOffset > 0 && !byStock ? await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) : null;
             _logger.LogInformation(
                 "Character Select detected; entering parked slot #{Slot} via Play at ({X}, {Y}){Detail}.",
                 slotOffset + 1,
                 CenterX(charPlay),
                 CenterY(charPlay),
-                slotOffset > 0 ? $" instead of the last played character '{previousName ?? "?"}'" : string.Empty);
+                byStock ? " (it holds the most unsold stock)"
+                : slotOffset > 0 ? $" instead of the last played character '{previousName ?? "?"}'" : string.Empty);
             if (_requireTemplateFilesOnDisk || slotOffset > 0)
             {
                 // Select the portrait first (also focuses it on slow fades) before clicking Play.

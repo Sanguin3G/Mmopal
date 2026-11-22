@@ -31,6 +31,11 @@ public sealed class TradingCycleController
     // total whatever was typed, three tries in 2 h): skipped for the rest of the run.
     private readonly ConcurrentDictionary<string, int> _typingRefusals = new(StringComparer.Ordinal);
     private const int TypingRefusalsBeforeSkip = 2;
+    // Items no search row opens (the game cuts "Soldier's Benthic Waterbreather of the Afflicted" to "... of the", so
+    // it cannot be told from the Aquabreather/Hydrobreather): 14 refused attempts, ~9 min, in one 10 h session.
+    // Skipped for the rest of the run after two.
+    private readonly ConcurrentDictionary<string, int> _unreachableItems = new(StringComparer.Ordinal);
+    private const int UnreachableAttemptsBeforeSkip = 2;
 
     private static bool IsItemSpecificBuyFailure(string? message) =>
         message is not null &&
@@ -206,6 +211,15 @@ public sealed class TradingCycleController
                             action.ItemName,
                             TypingRefusalsBeforeSkip);
                     }
+
+                    if (result.Message!.StartsWith("None of the search rows opened", StringComparison.Ordinal) &&
+                        _unreachableItems.AddOrUpdate(itemKey, 1, (_, count) => count + 1) == UnreachableAttemptsBeforeSkip)
+                    {
+                        _logger.LogWarning(
+                            "Skipping {Item} for the rest of this session: none of its search rows opened it on {Count} attempts (the name may be cut off or shared with other items). Consider blacklisting it.",
+                            action.ItemName,
+                            UnreachableAttemptsBeforeSkip);
+                    }
                 }
 
                 _logger.Log(
@@ -354,6 +368,15 @@ public sealed class TradingCycleController
                 selected.Add(CandidateDecision.Skip(
                     decision.Candidate,
                     $"Trading Post search for '{action.ItemName}' opens '{orderedInstead}' first (that is the order that appeared); skipped for this run so the wrong item is not bought again.",
+                    decision.Profitability));
+                continue;
+            }
+
+            if (_unreachableItems.TryGetValue(itemKey, out var unreachable) && unreachable >= UnreachableAttemptsBeforeSkip)
+            {
+                selected.Add(CandidateDecision.Skip(
+                    decision.Candidate,
+                    "No search row opened it twice (name cut off or shared); skipped for this session. Consider blacklisting it.",
                     decision.Profitability));
                 continue;
             }

@@ -21,6 +21,15 @@ public sealed class CharacterStockTests
         Assert.Equal(2, held.Count); // item 99 is not a flip item
     }
 
+    [Theory]
+    [InlineData("Buy order aborted: live top bid 61s 20c (API 60s 02c) + 1c = 61s 21c is above the profitable ceiling 60s 50c; someone outbid past the margin.", true)]
+    [InlineData("Buy order aborted: typed 81s 98c twice but the dialog total shows 27s 87c; the price boxes did not take the typed value.", false)]
+    public void Outbid_past_the_ceiling_counts_toward_the_bot_war_pause(string message, bool expected)
+    {
+        var action = new TradingAction(TradingActionKind.PlaceBuyOrder, "Berserker's Ring", 6_050, 1, "test");
+        Assert.Equal(expected, BuyCompetitionTracker.IsOutbidPastCeiling(new TradingActionResult(action, TradingActionStatus.Failed, message)));
+    }
+
     [Fact]
     public void WithoutHeldStock_skips_items_holding_an_order_worth_of_unsold_units()
     {

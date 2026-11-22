@@ -101,8 +101,10 @@ public sealed class AdaptiveTradingTests
     [InlineData(0, 0, false)]
     [InlineData(0, 1, false)]
     [InlineData(0, 2, true)]   // never confirmed twice: wait 2 s, not 7.5 s
-    [InlineData(1, 5, false)]  // it did confirm once: keep the full wait
-    public void Search_wait_shortens_only_for_names_that_never_confirm(int seen, int missed, bool expected)
+    [InlineData(1, 2, false)]  // as often seen as missed: keep the full wait
+    [InlineData(1, 5, true)]   // read once in six searches: a short wait still catches the odd confirmation
+    [InlineData(4, 6, false)]
+    public void Search_wait_shortens_for_names_that_mostly_never_confirm(int seen, int missed, bool expected)
     {
         Assert.Equal(expected, Gw2TradingPostUiDriver.UsesShortSearchWait(seen, missed));
     }

@@ -42,6 +42,15 @@ public sealed class BuyCompetitionTracker
         return newlyPaused;
     }
 
+    /// <summary>
+    /// True for a buy aborted because the live top bid had already passed our profitable ceiling: the same bot war as
+    /// an outbid cancel, caught one step earlier. Berserker's Ring was aborted this way 10 times in one 10 h session
+    /// without ever counting toward the pause.
+    /// </summary>
+    public static bool IsOutbidPastCeiling(TradingActionResult result) =>
+        result is { Status: TradingActionStatus.Failed, Action.Kind: TradingActionKind.PlaceBuyOrder } &&
+        result.Message?.Contains("is above the profitable ceiling", StringComparison.Ordinal) == true;
+
     public void RecordFills(IEnumerable<string> itemNames)
     {
         ArgumentNullException.ThrowIfNull(itemNames);

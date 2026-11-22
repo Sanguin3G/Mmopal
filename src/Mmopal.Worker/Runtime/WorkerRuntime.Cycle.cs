@@ -52,6 +52,8 @@ public sealed partial class WorkerRuntime
             return;
         }
 
+        await ReadFlipStockBeforeLaunchAsync(session, cancellationToken);
+
         // A sleeping PC, display power-off or lock screen stops capture and input to the game.
         using var keepAwake = session.LiveDriver is not null && _liveTemplateMatcher is null ? new KeepAwake() : null;
 
@@ -391,6 +393,16 @@ public sealed partial class WorkerRuntime
                     $"{actionResult.Action.ItemName}: {actionResult.Message}",
                     recovered: false);
             }
+        }
+
+        var outbidPastCeiling = result.Actions.Where(BuyCompetitionTracker.IsOutbidPastCeiling).Select(a => a.Action.ItemName).ToArray();
+        foreach (var paused in _buyCompetition.RecordOutbidCancels(outbidPastCeiling, _utcNow()))
+        {
+            _logger.LogInformation(
+                "Pausing buys of {Item} for {Hours} h: outbid past our profitable price {Count} times without a single fill (another bot is camping it).",
+                paused,
+                (int)BuyCompetitionTracker.PauseDuration.TotalHours,
+                BuyCompetitionTracker.OutbidCancelsBeforePause);
         }
 
         if (result.Market?.Transactions is { Count: > 0 } marketTransactions)

@@ -54,6 +54,7 @@ public sealed partial class Gw2TradingPostUiDriver
     // Slot the last swap picked: if Character Select shows up again right after, enter the same slot instead of a new
     // random one (a swap picked slot #3, then the follow-up picked slot #4 and logged in twice).
     private (int Offset, DateTimeOffset At)? _pendingSlot;
+    private readonly HashSet<string> _ambiguousOutbidLogged = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The character entered last ("'Name' (slot #3)" or "slot #3"), for messages; null before any swap.</summary>
     public string? CurrentCharacterLabel { get; private set; }
@@ -66,6 +67,12 @@ public sealed partial class Gw2TradingPostUiDriver
     /// beyond them are never entered, so their stock is not a reason to swap.
     /// </summary>
     public IReadOnlyList<string> ParkedCharacterNames { get; private set; } = [];
+
+    /// <summary>
+    /// Characters holding unsold stock, most first (set by the session from the bag sync). A launch, game restart or
+    /// disconnect that reaches Character Select enters the first of these found on the parked portraits.
+    /// </summary>
+    public IReadOnlyList<string> PreferredCharacterNames { get; set; } = [];
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     // Black Lion sidebar scales icon measured at (14..53, 215..234) on 1024x768 (Gem Store and TP tabs alike).
     private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 195, 80, 80);

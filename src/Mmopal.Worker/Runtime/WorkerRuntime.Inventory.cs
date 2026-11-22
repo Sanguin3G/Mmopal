@@ -286,6 +286,106 @@ public sealed partial class WorkerRuntime
         }
     }
 
+    /// <summary>
+    /// Only the shopping list and items Mmopal itself ordered count as flip items. The synced buy history holds every
+    /// TP purchase on the account, including personal ones (an old "Holographic Super Cheese" was being put up for sale).
+    /// </summary>
+    private async Task<HashSet<string>> FlipItemNamesAsync(TradingSession session, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var allowedFlipNames = new HashSet<string>(session.CandidateNames, StringComparer.OrdinalIgnoreCase);
+
+        // Items Mmopal itself ordered are flip items even after a re-scan drops them from the shopping list and
+        // before the buy history is synced; without this, fills from an older list were never listed.
+        try
+        {
+            foreach (var name in await _store.GetOrderedItemNamesAsync(now.AddDays(-30), cancellationToken).ConfigureAwait(false))
+            {
+                allowedFlipNames.Add(name.Trim());
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not read previously ordered items.");
+        }
+
+        return allowedFlipNames;
+    }
+
+    /// <summary>
+    /// Reads every character's bags and records which flip items are unsold and on which character (stock ranking,
+    /// units per item, and the driver's preferred characters for the next Character Select). Returns the flip item
+    /// names found, or null when the bags could not be read.
+    /// </summary>
+    private async Task<string[]?> ReadFlipStockAsync(
+        TradingSession session,
+        Gw2OfficialDataProvider officialData,
+        IReadOnlySet<string> allowedFlipNames,
+        CancellationToken cancellationToken)
+    {
+        var (invAvailable, bagItemIds) = await officialData.GetUnboundInventoryItemIdsAsync(cancellationToken).ConfigureAwait(false);
+        if (!invAvailable)
+        {
+            if (!_warnedInventoryUnavailable)
+            {
+                _warnedInventoryUnavailable = true;
+                _logger.LogWarning("Auto-list cannot read your bags: the active API key needs the 'characters' and 'inventories' permissions. Bought items are only listed right after a Delivery Box pickup.");
+            }
+
+            return null;
+        }
+
+        Gw2CachedItemInfo[] flipInfos = [];
+        if (bagItemIds.Count > 0 && allowedFlipNames.Count > 0)
+        {
+            var itemMeta = await officialData.ResolveItemMetadataAsync(bagItemIds, _ledgerStore, cancellationToken).ConfigureAwait(false);
+            flipInfos = itemMeta.Values
+                .Where(info => !string.IsNullOrWhiteSpace(info.Name) &&
+                               allowedFlipNames.Contains(info.Name.Trim()) &&
+                               !session.BlacklistMatcher.IsBlocked(info.Name))
+                .ToArray();
+        }
+
+        session.FlipStockByCharacter = CharacterStock.Rank(
+            officialData.LastCharacterBagItemIds,
+            flipInfos.Select(info => info.ItemId).ToHashSet());
+        session.HeldFlipItems = CharacterStock.HeldByItem(
+            officialData.LastCharacterBagItemIds,
+            flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim()));
+        if (session.LiveDriver is { } driver)
+        {
+            // A launch, game restart or disconnect lands on Character Select too: enter the character holding stock.
+            driver.PreferredCharacterNames = ParkedFlipStock(session, driver).Select(entry => entry.Name).ToArray();
+        }
+
+        return flipInfos.Select(info => info.Name.Trim()).ToArray();
+    }
+
+    /// <summary>
+    /// Before the first cycle opens the game: reads where the unsold stock is, so the first Character Select enters
+    /// the character holding the most instead of a rule-picked slot and a stock swap minutes later.
+    /// </summary>
+    private async Task ReadFlipStockBeforeLaunchAsync(TradingSession session, CancellationToken cancellationToken)
+    {
+        if (session.LiveDriver is null || !session.Request.EnableInventorySellPass || session.Client.ParkedCharacterCount <= 1 ||
+            _marketData is not Gw2OfficialDataProvider officialData)
+        {
+            return;
+        }
+
+        try
+        {
+            var names = await FlipItemNamesAsync(session, _utcNow(), cancellationToken).ConfigureAwait(false);
+            if (await ReadFlipStockAsync(session, officialData, names, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                _logger.LogInformation("Unsold flip items by character before launch: {Stock}.", DescribeFlipStock(session.FlipStockByCharacter));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not read bags before launch; Character Select uses the usual slot choice.");
+        }
+    }
+
     /// <summary>Queues bought flip items found in the bags and new buy fills from the API (at most every 2 minutes).</summary>
     private async Task SyncOwnedFlipInventoryFromApiAsync(TradingSession session, CancellationToken cancellationToken)
     {
@@ -302,60 +402,20 @@ public sealed partial class WorkerRuntime
 
         session.LastInventoryApiSyncUtc = now;
         var liveDriver = session.LiveDriver;
-        var candidateNameSet = session.CandidateNames;
         var blacklistMatcher = session.BlacklistMatcher;
         var pendingSellTracker = session.SellQueue;
-        // Only the shopping list and items Mmopal itself ordered. The synced buy history holds every TP purchase on
-        // the account, including personal ones (an old "Holographic Super Cheese" was being put up for sale).
-        var allowedFlipNames = new HashSet<string>(candidateNameSet, StringComparer.OrdinalIgnoreCase);
-
-        // Items Mmopal itself ordered are flip items even after a re-scan drops them from the shopping list and
-        // before the buy history is synced; without this, fills from an older list were never listed.
-        try
-        {
-            foreach (var name in await _store.GetOrderedItemNamesAsync(now.AddDays(-30), cancellationToken).ConfigureAwait(false))
-            {
-                allowedFlipNames.Add(name.Trim());
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogDebug(ex, "Could not read previously ordered items.");
-        }
+        var allowedFlipNames = await FlipItemNamesAsync(session, now, cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var (invAvailable, bagItemIds) = await officialData.GetUnboundInventoryItemIdsAsync(cancellationToken).ConfigureAwait(false);
-            if (!invAvailable && !_warnedInventoryUnavailable)
+            if (await ReadFlipStockAsync(session, officialData, allowedFlipNames, cancellationToken).ConfigureAwait(false) is { Length: > 0 } confirmedFlipItems)
             {
-                _warnedInventoryUnavailable = true;
-                _logger.LogWarning("Auto-list cannot read your bags: the active API key needs the 'characters' and 'inventories' permissions. Bought items are only listed right after a Delivery Box pickup.");
-            }
-
-            if (invAvailable && bagItemIds.Count > 0 && allowedFlipNames.Count > 0)
-            {
-                var itemMeta = await officialData.ResolveItemMetadataAsync(bagItemIds, _ledgerStore, cancellationToken).ConfigureAwait(false);
-                var flipInfos = itemMeta.Values
-                    .Where(info => !string.IsNullOrWhiteSpace(info.Name) &&
-                                   allowedFlipNames.Contains(info.Name.Trim()) &&
-                                   !blacklistMatcher.IsBlocked(info.Name))
-                    .ToArray();
-                var confirmedFlipItems = flipInfos.Select(info => info.Name.Trim()).ToArray();
-                session.FlipStockByCharacter = CharacterStock.Rank(
-                    officialData.LastCharacterBagItemIds,
-                    flipInfos.Select(info => info.ItemId).ToHashSet());
-                session.HeldFlipItems = CharacterStock.HeldByItem(
-                    officialData.LastCharacterBagItemIds,
-                    flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim()));
-                if (confirmedFlipItems.Length > 0)
+                pendingSellTracker.SyncFromCharacterInventory(confirmedFlipItems, now);
+                var seen = string.Join(", ", confirmedFlipItems.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+                if (!string.Equals(seen, _lastLoggedBagFlipItems, StringComparison.Ordinal))
                 {
-                    pendingSellTracker.SyncFromCharacterInventory(confirmedFlipItems, now);
-                    var seen = string.Join(", ", confirmedFlipItems.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
-                    if (!string.Equals(seen, _lastLoggedBagFlipItems, StringComparison.Ordinal))
-                    {
-                        _lastLoggedBagFlipItems = seen;
-                        _logger.LogInformation("Bought flip items in bags, queued to list: {Items}", seen);
-                    }
+                    _lastLoggedBagFlipItems = seen;
+                    _logger.LogInformation("Bought flip items in bags, queued to list: {Items}", seen);
                 }
             }
         }

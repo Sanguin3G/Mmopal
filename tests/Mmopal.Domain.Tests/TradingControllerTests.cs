@@ -572,17 +572,53 @@ public sealed class TradingControllerTests
         }
     }
 
-    private sealed class AbortingExecutor : ITradingActionExecutor
+    [Fact]
+    public async Task Item_no_search_row_opens_is_skipped_for_the_session_after_two_attempts()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"mmopal-unreachable-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new CheckpointStore(dbPath);
+            await store.InitializeAsync();
+            var now = new DateTimeOffset(2026, 11, 21, 19, 0, 0, TimeSpan.Zero);
+            var executor = new AbortingExecutor(
+                "None of the search rows opened 'Soldier's Benthic Waterbreather of the Afflicted' (saw: 'Soldier's Benthic Waterbreather of the'); not buying a different item.");
+            var controller = new TradingCycleController(
+                store,
+                NullLogger.Instance,
+                new ReplayMarketReader(new MarketSnapshot(Array.Empty<Transaction>(), new AccountBalance(1_000_000), now, "replay")),
+                executor,
+                new TradingControllerOptions { UtcNow = () => now });
+            ItemCandidate[] candidates = [new("Soldier's Benthic Waterbreather of the Afflicted", Quantity: 1, BuyPriceCopper: 5_000, SellPriceCopper: 9_000)];
+
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                await controller.RunCycleAsync("run-benthic", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+                now = now.AddMinutes(31); // past the 30-minute retry cooldown each time
+            }
+
+            var final = await controller.RunCycleAsync("run-benthic", candidates, Array.Empty<string>(), new ProfitabilityPolicy());
+
+            Assert.Equal(2, executor.Attempts);
+            Assert.Contains("No search row opened it twice", Assert.Single(final.Decisions).Reason, StringComparison.Ordinal);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteDatabase(dbPath);
+        }
+    }
+
+    private sealed class AbortingExecutor(
+        string message = "Buy order aborted: visible price 57s 96c is more than 10% under the planned 69s 96c; the order would sit below the top bid and not fill.")
+        : ITradingActionExecutor
     {
         public int Attempts { get; private set; }
 
         public Task<TradingActionResult> ExecuteAsync(TradingAction action, CancellationToken cancellationToken = default)
         {
             Attempts++;
-            return Task.FromResult(new TradingActionResult(
-                action,
-                TradingActionStatus.Failed,
-                "Buy order aborted: visible price 57s 96c is more than 10% under the planned 69s 96c; the order would sit below the top bid and not fill."));
+            return Task.FromResult(new TradingActionResult(action, TradingActionStatus.Failed, message));
         }
     }
 

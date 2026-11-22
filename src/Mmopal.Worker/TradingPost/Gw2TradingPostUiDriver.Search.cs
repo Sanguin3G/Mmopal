@@ -222,7 +222,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     "Search results for '{Item}' were not confirmed within {Ms} ms; continuing (the opened item is still verified).{Note}",
                     itemName,
                     timeoutMs,
-                    UsesShortSearchWait(stats.Seen, stats.Missed + 1) ? $" Its name never shows up readably, so later searches wait {ShortSearchWaitMs / 1000} s." : string.Empty);
+                    UsesShortSearchWait(stats.Seen, stats.Missed + 1) ? $" Its name is rarely readable in the results, so later searches wait {ShortSearchWaitMs / 1000} s." : string.Empty);
                 await SaveDiagnosticFrameAsync("search-unconfirmed", cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -232,7 +232,12 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     /// <summary>Two misses and no confirmation yet: the name does not read on screen, so waiting longer will not help.</summary>
-    internal static bool UsesShortSearchWait(int seen, int missed) => seen == 0 && missed >= 2;
+    /// <summary>
+    /// Short wait once misses clearly outnumber confirmations. Requiring zero confirmations kept the full 7.5 s wait for
+    /// names read only now and then: 222 full waits (~28 min) in the 21-22 Nov 10 h session, Amber Quantic Dipole
+    /// alone 13 times. Results that do appear show up in ~1.5 s, inside the short wait.
+    /// </summary>
+    internal static bool UsesShortSearchWait(int seen, int missed) => missed >= 2 && missed > 2 * seen;
 
     /// <summary>True when <paramref name="text"/> contains <paramref name="query"/>, allowing ~15% OCR noise.</summary>
     internal static bool FuzzyContains(string text, string query)
