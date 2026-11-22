@@ -204,11 +204,11 @@ public sealed partial class Gw2TradingPostUiDriver
             return false;
         }
 
-        if (requireListedName && !listed && !await SearchChipShowsAsync(itemName, cancellationToken).ConfigureAwait(false))
+        if (requireListedName && !listed)
         {
             var skips = _unconfirmedCancelSearches[itemName] = _unconfirmedCancelSearches.GetValueOrDefault(itemName) + 1;
             _logger.LogInformation(
-                "Not cancelling anything for '{Item}': neither the list nor the search filter showed it, so the first Cancel button could belong to another listing.{Note}",
+                "Not cancelling anything for '{Item}': the result list never showed it, so the first Cancel button could belong to another listing.{Note}",
                 itemName,
                 skips >= UnconfirmedCancelSearchesBeforeSkip ? " Not trying it again this session." : string.Empty);
             return false;
@@ -217,19 +217,7 @@ public sealed partial class Gw2TradingPostUiDriver
         return true;
     }
 
-    /// <summary>
-    /// The filter chip above the list ("Search : Ebonblade") in large type. My Transactions lists names in a small
-    /// orange font that OCR does not read: on 22 Nov every cancel check failed on the list text (26 in 23 minutes)
-    /// although the screenshot showed the right single row. Read after the full list wait, so the list has had time
-    /// to refresh. Long names are cut in the chip, so its first 16 letters are compared.
-    /// </summary>
-    private async Task<bool> SearchChipShowsAsync(string itemName, CancellationToken cancellationToken)
-    {
-        var query = NormalizeItemName(itemName);
-        var prefix = query[..Math.Min(query.Length, 16)];
-        var texts = await ReadJoinedTextVariantsAsync(SearchFilterChipsRegion, cancellationToken).ConfigureAwait(false);
-        return texts.Select(NormalizeItemName).Any(text => text.Contains("search", StringComparison.Ordinal) && FuzzyContains(text, prefix));
-    }
+
 
     /// <summary>
     /// On high ping the previous search's rows stay on screen for a while after Enter, and the "Item" header is
@@ -266,7 +254,8 @@ public sealed partial class Gw2TradingPostUiDriver
                 return false;
             }
 
-            var texts = await ReadTextVariantsAsync(SearchResultsListRegion, cancellationToken).ConfigureAwait(false);
+            var texts = (await ReadTextVariantsAsync(SearchFirstRowNameRegion, cancellationToken).ConfigureAwait(false))
+                .Concat(await ReadTextVariantsAsync(SearchResultsListRegion, cancellationToken).ConfigureAwait(false));
             if (texts.Any(text => FuzzyContains(NormalizeItemName(text), query)))
             {
                 _searchConfirmStats[query] = (stats.Seen + 1, stats.Missed);

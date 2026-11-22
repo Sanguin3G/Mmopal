@@ -24,8 +24,10 @@ public sealed partial class Gw2TradingPostUiDriver
     private static readonly CaptureRegion PopupTextRegion = new(340, 305, 400, 120);
     // Right-hand result list (Buy/Sell Items rows, My Transactions rows); excludes the category panel on the left.
     private static readonly CaptureRegion SearchResultsListRegion = new(325, 240, 450, 300);
-    // The filter chips above the result list ("Buying x  Current Transactions x  Search : Ebonblade x").
-    private static readonly CaptureRegion SearchFilterChipsRegion = new(330, 180, 640, 30);
+    // The first result row's name, alone. Read from the whole list, My Transactions' small orange names came back as
+    // "Nika's" or "SWkfio•r of ttk"; this tight crop read "Nika's Leggings" and "Superior Rune of the Renegade" on the
+    // same frames (22 Nov). The filter chip above the list was no better ("Search : Mlka± L—ings").
+    private static readonly CaptureRegion SearchFirstRowNameRegion = new(385, 258, 300, 28);
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
     private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
     // Rows include their "Max. Price" / "Total Price:" labels: on live frames Windows OCR read nothing from tighter

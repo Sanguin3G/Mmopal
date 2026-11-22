@@ -104,9 +104,11 @@ public sealed partial class Gw2TradingPostUiDriver
                         }
 
                         // Re-check on a fresh frame right before clicking: the launcher may have moved on to the
-                        // news page while the previous frame was being inspected.
+                        // news page while the previous frame was being inspected. This extra capture and read is why
+                        // LOG IN takes a moment longer than PLAY; a click on the news page opens the browser.
                         frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
                         snapshot = await InspectLauncherFrameAsync(frame, cancellationToken).ConfigureAwait(false);
+
                         if (snapshot.LoginPoint is { } confirmed &&
                             Math.Abs(confirmed.X - detectedLoginPoint.X) <= 16 &&
                             Math.Abs(confirmed.Y - detectedLoginPoint.Y) <= 16)
@@ -134,7 +136,7 @@ public sealed partial class Gw2TradingPostUiDriver
                             // ignored on 22 Nov (3 clicks at (123, 585), no login), while a hand resting the mouse
                             // there always worked.
                             await _input.MoveAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
-                            await Task.Delay(300, cancellationToken).ConfigureAwait(false);
+                            await Task.Delay(200, cancellationToken).ConfigureAwait(false);
                         }
 
                         await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
