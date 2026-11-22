@@ -195,6 +195,34 @@ public sealed partial class LiveTradingExecutorTests
         Assert.True(input.Clicks.IndexOf(slotFour) < input.Clicks.IndexOf((785, 734))); // portrait before Play
     }
 
+    [Fact]
+    public async Task TryAdvanceLauncherOrCharacterSelectAsync_ignores_a_play_lookalike_outside_the_play_corner()
+    {
+        // Live 21-22 Nov: a red dialog button mid-screen matched charscreen_play.png on a whole-screen search;
+        // clicking it (plus Enter) logged the account out to the launcher on 6 of 7 character swaps.
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher();
+        templates.PredicateMatches["charscreen_play.png"] = template =>
+            template.Region is { } region && region.X <= 610 && region.X + region.Width >= 670 && region.Y <= 440 && region.Y + region.Height >= 470
+                ? new TemplateMatch(610, 440, 60, 32, 0.80m)
+                : null;
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(),
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0, ParkedCharacterCount: 4, RandomizeCharacterSelection: false),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false);
+
+        await driver.TryAdvanceLauncherOrCharacterSelectAsync();
+
+        Assert.DoesNotContain(input.Clicks, c => c.X >= 600 && c.X <= 680 && c.Y >= 430 && c.Y <= 480);
+        Assert.DoesNotContain("enter", input.KeyPresses);
+    }
+
     [Theory]
     [InlineData(false, 1, 0)]
     [InlineData(true, 1, 0)]

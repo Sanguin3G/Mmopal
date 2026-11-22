@@ -354,8 +354,10 @@ public sealed partial class Gw2TradingPostUiDriver
         AutomationFrame frame,
         CancellationToken cancellationToken)
     {
-        var charPlay = await TryFindInFrameAsync(frame, "charscreen_play.png", CharSelectPlayRegion, 0.72m, cancellationToken).ConfigureAwait(false)
-                       ?? await TryFindInFrameAsync(frame, "charscreen_play.png", CaptureRegion.FullScreen1024x768, 0.75m, cancellationToken).ConfigureAwait(false);
+        // Only the bottom-right corner, where Play really is (792, 735). A whole-screen search also matched a red
+        // dialog button mid-screen at (640, 456): on 21-22 Nov 6 of 7 character swaps clicked it plus Enter, which
+        // logged the account out to the launcher, relaunched, and entered whichever character the relaunch picked.
+        var charPlay = await TryFindInFrameAsync(frame, "charscreen_play.png", CharSelectPlayRegion, 0.72m, cancellationToken).ConfigureAwait(false);
         if (charPlay is not null)
         {
             return charPlay;
