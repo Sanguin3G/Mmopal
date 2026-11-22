@@ -58,6 +58,13 @@ public sealed partial class WorkerRuntime
         /// <summary>Flip item names in each character's bags (from the last bag sync).</summary>
         public IReadOnlyDictionary<string, IReadOnlySet<string>> FlipItemsByCharacter { get; set; } =
             new Dictionary<string, IReadOnlySet<string>>();
+        /// <summary>Units of each flip item in each character's bags (from the last bag sync).</summary>
+        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> FlipUnitsByCharacter { get; set; } =
+            new Dictionary<string, IReadOnlyDictionary<string, long>>();
+        /// <summary>Units of each item Mmopal itself still holds (bought by its orders, not sold or listed); null until read.</summary>
+        public IReadOnlyDictionary<string, long>? HeldByMmopal { get; set; }
+        /// <summary>Items already logged as holding the player's own copies (logged once per session).</summary>
+        public HashSet<string> OwnCopiesLogged { get; } = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>Unsold units of each flip item across all bags (from the last bag sync).</summary>
         public IReadOnlyDictionary<string, long> HeldFlipItems { get; set; } = new Dictionary<string, long>();
         /// <summary>Candidates skipped last cycle because their item is still unsold in bags.</summary>

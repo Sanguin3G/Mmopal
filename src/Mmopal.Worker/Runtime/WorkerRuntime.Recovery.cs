@@ -52,6 +52,7 @@ public sealed partial class WorkerRuntime
                 {
                     var finalTargets = pendingSellTracker.GetReadyTargets(_utcNow(), Math.Max(1, profile.MaxOverbidUpdatesPerPass));
                     IReadOnlyDictionary<string, SellPricing> finalPricing;
+                    finalTargets = KeepMmopalStacks(session, finalTargets, liveDriver.CurrentCharacterName);
                     (finalTargets, finalPricing) = await KeepProfitableSellTargetsAsync(finalTargets, request.EffectiveCandidates, request.UndercutBufferMinCopper, ct).ConfigureAwait(false);
                     if (finalTargets.Count > 0)
                     {

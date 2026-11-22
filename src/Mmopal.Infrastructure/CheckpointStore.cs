@@ -118,6 +118,45 @@ public sealed class CheckpointStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Mmopal's completed live buy orders since a time: item, planned unit price, the typed unit price when the dialog
+    /// was typed, and when the order was placed. A fill at one of these prices is one of Mmopal's units.
+    /// </summary>
+    public async Task<IReadOnlyList<(string ItemName, long PlannedUnitCopper, long? TypedUnitCopper, DateTimeOffset PlacedAt)>> GetPlacedBuyOrdersAsync(
+        DateTimeOffset sinceUtc,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT item_name, payload, created_at FROM actions
+            WHERE action_type = 'PlaceBuyOrder' AND status = 'Completed' AND item_name IS NOT NULL AND created_at >= $since;
+            """;
+        command.Parameters.AddWithValue("$since", sinceUtc.ToUniversalTime().ToString("O"));
+        var orders = new List<(string, long, long?, DateTimeOffset)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(reader.GetString(1));
+                var root = doc.RootElement;
+                var planned = root.GetProperty("Action").GetProperty("PriceCopper").GetInt64();
+                long? typed = root.TryGetProperty("PlacedUnitPriceCopper", out var typedProp) && typedProp.ValueKind == System.Text.Json.JsonValueKind.Number
+                    ? typedProp.GetInt64()
+                    : null;
+                orders.Add((reader.GetString(0), planned, typed, DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture)));
+            }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+            {
+                // An action stored before prices were recorded: it cannot vouch for any fill.
+            }
+        }
+
+        return orders;
+    }
+
     /// <summary>Names of items Mmopal placed live buy orders for since <paramref name="sinceUtc"/>.</summary>
     public async Task<IReadOnlyList<string>> GetOrderedItemNamesAsync(
         DateTimeOffset sinceUtc,

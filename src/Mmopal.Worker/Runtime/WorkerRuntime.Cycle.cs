@@ -457,6 +457,7 @@ public sealed partial class WorkerRuntime
 
         var readyTargets = ReadyTargetsHere(session, driver, maxPerPass);
         IReadOnlyDictionary<string, SellPricing> sellPricing;
+        readyTargets = KeepMmopalStacks(session, readyTargets, driver.CurrentCharacterName);
         (readyTargets, sellPricing) = await KeepProfitableSellTargetsAsync(readyTargets, session.Candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
         if (readyTargets.Count == 0)
         {

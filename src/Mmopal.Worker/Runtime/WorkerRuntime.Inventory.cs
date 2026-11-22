@@ -351,6 +351,14 @@ public sealed partial class WorkerRuntime
         var flipNamesById = flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim());
         session.HeldFlipItems = CharacterStock.HeldByItem(officialData.LastCharacterBagItemIds, flipNamesById);
         session.FlipItemsByCharacter = CharacterStock.ItemsByCharacter(officialData.LastCharacterBagItemIds, flipNamesById);
+        session.FlipUnitsByCharacter = officialData.LastCharacterBagItemIds.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyDictionary<string, long>)pair.Value
+                .Where(item => flipNamesById.ContainsKey(item.Key))
+                .GroupBy(item => flipNamesById[item.Key], StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Value), StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+        await ReadHeldByMmopalAsync(session, officialData, cancellationToken).ConfigureAwait(false);
         if (session.LiveDriver is { } driver)
         {
             // A launch, game restart or disconnect lands on Character Select too: enter the character holding stock.
@@ -358,6 +366,63 @@ public sealed partial class WorkerRuntime
         }
 
         return flipInfos.Select(info => info.Name.Trim()).ToArray();
+    }
+
+    /// <summary>
+    /// How many units of each item are Mmopal's own (see <see cref="OwnedStock"/>): its placed buy orders (60 days), the
+    /// synced history plus the newest history page, and the current listings. Left unchanged when a read fails.
+    /// </summary>
+    private async Task ReadHeldByMmopalAsync(TradingSession session, Gw2OfficialDataProvider officialData, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
+                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlannedUnitCopper, order.TypedUnitCopper, order.PlacedAt));
+            var recent = await officialData.GetRecentHistoryAsync(_ledgerStore, cancellationToken).ConfigureAwait(false);
+            session.HeldByMmopal = OwnedStock.UnitsHeldByMmopal(placed, session.LedgerHistory.Concat(recent), session.LastKnownActiveOrders);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not work out which units are Mmopal's this cycle; keeping the last count.");
+        }
+    }
+
+    /// <summary>
+    /// Sell targets whose stack on this character is all Mmopal's. The sell dialog lists the whole stack, so an item
+    /// where the player holds copies of their own (food, infusions, a legendary on the shopping list) is left alone.
+    /// When the current character is unknown, every character's units count. Without a count yet, nothing is dropped.
+    /// </summary>
+    private IReadOnlyList<string> KeepMmopalStacks(TradingSession session, IReadOnlyList<string> targets, string? currentCharacter)
+    {
+        if (session.HeldByMmopal is not { } held || targets.Count == 0)
+        {
+            return targets;
+        }
+
+        var here = session.FlipUnitsByCharacter.FirstOrDefault(pair => CharacterStock.NamesMatch(pair.Key, currentCharacter)).Value;
+        var kept = new List<string>(targets.Count);
+        foreach (var item in targets)
+        {
+            var stack = here is not null
+                ? here.GetValueOrDefault(item)
+                : session.FlipUnitsByCharacter.Values.Sum(units => units.GetValueOrDefault(item));
+            if (stack == 0 || OwnedStock.StackIsMmopals(item, stack, held))
+            {
+                kept.Add(item); // not in a bag yet (just collected), or every unit here is Mmopal's
+                continue;
+            }
+
+            if (session.OwnCopiesLogged.Add(item))
+            {
+                _logger.LogInformation(
+                    "Not listing {Item}: the bags hold {Stack} but only {Mine} of them were bought by Mmopal; the rest are yours, and the sell dialog would list the whole stack.",
+                    item,
+                    stack,
+                    held.GetValueOrDefault(ItemNameNormalizer.Normalize(item)));
+            }
+        }
+
+        return kept;
     }
 
     /// <summary>

@@ -151,6 +151,23 @@ public sealed partial class Gw2OfficialDataProvider
         return (Math.Max(baseline, highestId), fills);
     }
 
+    /// <summary>
+    /// The newest page (200 rows) of buy and of sell history, with names. The synced ledger lags up to 45 minutes; this
+    /// keeps "how many units are Mmopal's" current between syncs.
+    /// </summary>
+    public async Task<IReadOnlyList<Gw2LedgerTransaction>> GetRecentHistoryAsync(
+        TradingLedgerStore? itemCache = null,
+        CancellationToken cancellationToken = default)
+    {
+        RequireKey();
+        var (buys, _) = await GetPageAsync<Gw2HistoryTransaction>("v2/commerce/transactions/history/buys", 0, cancellationToken).ConfigureAwait(false);
+        var (sells, _) = await GetPageAsync<Gw2HistoryTransaction>("v2/commerce/transactions/history/sells", 0, cancellationToken).ConfigureAwait(false);
+        var itemMap = await ResolveItemMetadataAsync(DistinctItemIds(buys, sells, row => row.ItemId), itemCache, cancellationToken).ConfigureAwait(false);
+        return buys.Select(row => ToLedgerTransaction(TransactionType.Buy, row, itemMap))
+            .Concat(sells.Select(row => ToLedgerTransaction(TransactionType.Sell, row, itemMap)))
+            .ToArray();
+    }
+
     public async Task<IReadOnlyList<Gw2ActiveOrder>> GetActiveOrdersDetailedAsync(
         TradingLedgerStore? itemCache = null,
         CancellationToken cancellationToken = default)
