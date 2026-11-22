@@ -45,6 +45,16 @@ public sealed partial class Gw2TradingPostUiDriver
                 ? Math.Max(Math.Max(_uiWaitMs * 4, _settings.WindowWaitTimeoutSeconds * 1000), 30_000)
                 : Math.Max(_uiWaitMs, 100);
             var launcherDeadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(launcherWaitMs);
+            // The launcher wait used to be silent until a button was clicked: on 22 Nov four starts sat ~2 min each
+            // with nothing in the log. Say what was recognised, and why the wait ended without a click.
+            _logger.LogInformation(
+                "Launcher on screen (launcher window: {Window}; LOG IN {Login}; PLAY {Play}; READY {Ready}; white card {Card}); waiting up to {Seconds} s for LOG IN or PLAY.",
+                isLauncherWindow ? "yes" : "no",
+                snapshot.LoginPoint is { } lp ? $"at ({lp.X}, {lp.Y})" : "not found",
+                snapshot.PlayPoint is { } pp ? $"at ({pp.X}, {pp.Y})" : "not found",
+                snapshot.OcrReadyVisible ? "shown" : "not shown",
+                snapshot.WhiteCard is null ? "not found" : "found",
+                launcherWaitMs / 1000);
             DateTimeOffset? lastLoginClickUtc = null;
             var loginClickAttempts = 0;
             var emptySignalPolls = 0;
@@ -178,6 +188,19 @@ public sealed partial class Gw2TradingPostUiDriver
                 {
                     emptySignalPolls = 0;
                 }
+            }
+
+            if (triggeredPlayPoint is null && !IsGame3DWindowActive())
+            {
+                _logger.LogWarning(
+                    "Launcher wait ended without PLAY: LOG IN clicked {Clicks} time(s); last frame LOG IN {Login}, PLAY {Play}, READY {Ready}, AUTO-PLAY {Auto}, launcher window {Window}. Saving a screenshot.",
+                    loginClickAttempts,
+                    snapshot.LoginPoint is { } lp2 ? $"at ({lp2.X}, {lp2.Y})" : "not found",
+                    snapshot.PlayPoint is { } pp2 ? $"at ({pp2.X}, {pp2.Y})" : "not found",
+                    snapshot.OcrReadyVisible ? "shown" : "not shown",
+                    snapshot.OcrAutoPlayVisible ? "shown" : "not shown",
+                    IsLauncherProcessWindowActive() ? "open" : "closed");
+                await SaveDiagnosticFrameAsync("launcher-waiting", cancellationToken).ConfigureAwait(false);
             }
         }
 

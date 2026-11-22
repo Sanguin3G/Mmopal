@@ -57,6 +57,11 @@ public sealed partial class WorkerRuntime
         // A sleeping PC, display power-off or lock screen stops capture and input to the game.
         using var keepAwake = session.LiveDriver is not null && _liveTemplateMatcher is null ? new KeepAwake() : null;
 
+        if (session.LiveDriver is not null)
+        {
+            _logger.LogInformation("Opening the game: looking for the launcher, Character Select or the game world.");
+        }
+
         try
         {
             while (!cancellationToken.IsCancellationRequested)
