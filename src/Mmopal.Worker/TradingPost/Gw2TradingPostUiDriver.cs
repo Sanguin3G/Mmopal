@@ -44,6 +44,10 @@ public sealed partial class Gw2TradingPostUiDriver
     // prints "Listing Fee" / "Exchange Fee" from x ~658, which would garble the read.
     private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 380, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
+    // A buy order still at the top bid after this long is not filling: on 22 Nov 14 orders were 1-3 days old (15x
+    // Valkyrie Draconic Coat 62 h at the top) while buy orders held ~374g, half the net worth, and new buys waited on
+    // the gold cap. Cancelling a buy order is free.
+    internal static readonly TimeSpan StaleBuyOrderAge = TimeSpan.FromHours(48);
 
     // Per item: search confirmations seen / missed. Some names never confirm on screen (Tyria's Best Nougat Center
     // 24 of 24, Unstable Rift Motivation 22 of 22), and each miss waited the full 7.5 s: 41 min in a 7 h session.
@@ -54,6 +58,9 @@ public sealed partial class Gw2TradingPostUiDriver
 
     /// <summary>Items whose buy orders the last Outbid Refresh pass cancelled (for the bot-war guard).</summary>
     public IReadOnlyList<string> LastCanceledOutbidItems { get; private set; } = Array.Empty<string>();
+
+    /// <summary>Items whose old, unfilled top-bid buy orders the last Outbid Refresh pass cancelled.</summary>
+    public IReadOnlyList<string> LastCanceledStaleItems { get; private set; } = Array.Empty<string>();
 
     // Slot the last swap picked: if Character Select shows up again right after, enter the same slot instead of a new
     // random one (a swap picked slot #3, then the follow-up picked slot #4 and logged in twice).

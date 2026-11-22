@@ -41,6 +41,15 @@ public sealed class OwnedStockTests
     }
 
     [Fact]
+    public void Only_buy_orders_at_Mmopals_prices_are_its_own()
+    {
+        PlacedBuyOrder[] placed = [new("Valkyrie Draconic Coat", 7_811, null, T0)];
+
+        Assert.True(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Valkyrie Draconic Coat", 7_811, 15, T0, null, 7_811), placed));
+        Assert.False(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Unopened Endless Mystery Tonic", 40_003, 21, T0, null, 60_000), placed));
+    }
+
+    [Fact]
     public void A_listing_cancelled_by_hand_returns_to_Mmopals_count()
     {
         PlacedBuyOrder[] placed = [new("Ebonblade", 2_036, null, T0)];

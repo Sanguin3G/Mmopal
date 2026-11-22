@@ -54,6 +54,7 @@ public sealed partial class WorkerRuntime
                     IReadOnlyDictionary<string, SellPricing> finalPricing;
                     finalTargets = KeepMmopalStacks(session, finalTargets, liveDriver.CurrentCharacterName);
                     (finalTargets, finalPricing) = await KeepProfitableSellTargetsAsync(finalTargets, request.EffectiveCandidates, request.UndercutBufferMinCopper, ct).ConfigureAwait(false);
+                    finalPricing = WithOwnListings(finalPricing, session.LastKnownActiveOrders);
                     if (finalTargets.Count > 0)
                     {
                         var sellResults = await liveDriver.SellInventoryPassDetailedAsync(

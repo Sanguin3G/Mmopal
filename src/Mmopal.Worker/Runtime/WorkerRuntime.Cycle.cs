@@ -459,6 +459,7 @@ public sealed partial class WorkerRuntime
         IReadOnlyDictionary<string, SellPricing> sellPricing;
         readyTargets = KeepMmopalStacks(session, readyTargets, driver.CurrentCharacterName);
         (readyTargets, sellPricing) = await KeepProfitableSellTargetsAsync(readyTargets, session.Candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
+        sellPricing = WithOwnListings(sellPricing, session.LastKnownActiveOrders);
         if (readyTargets.Count == 0)
         {
             return 0;
@@ -510,10 +511,18 @@ public sealed partial class WorkerRuntime
         IReadOnlyList<Transaction> orders,
         CancellationToken cancellationToken)
     {
+        // Only Mmopal's own buy orders are cancelled; orders placed by hand stay, outbid or old.
+        var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
+            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlannedUnitCopper, order.TypedUnitCopper, order.PlacedAt))
+            .ToArray();
+        var cancellable = orders
+            .Where(order => order.Type != TransactionType.Buy || OwnedStock.IsMmopalsOrder(order, placed))
+            .ToArray();
         var canceledOutbidBuys = await driver.CancelOutbidBuyOrdersAsync(
-            orders,
+            cancellable,
             Math.Max(1, session.Profile.MaxOverbidUpdatesPerPass),
             cancellationToken);
+        _buyCompetition.PauseSlowItems(driver.LastCanceledStaleItems, _utcNow());
         foreach (var paused in _buyCompetition.RecordOutbidCancels(driver.LastCanceledOutbidItems, _utcNow()))
         {
             _logger.LogInformation(

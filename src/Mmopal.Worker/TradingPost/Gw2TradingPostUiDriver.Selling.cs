@@ -184,7 +184,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 string? typedSellNote = null;
                 if (typeSellPrice)
                 {
-                    var choice = ChooseTypedSellPrice(itemPricing!.ApiLowestAskCopper!.Value, liveLowestAsk, undercutSteps, itemPricing.BreakEvenCopper);
+                    var choice = ChooseTypedSellPrice(itemPricing!.ApiLowestAskCopper!.Value, liveLowestAsk, undercutSteps, itemPricing.BreakEvenCopper, itemPricing.OwnLowestListingCopper);
                     _logger.LogInformation("Typed sell price for {Item}: {Message}", targetItem, choice.Message);
                     if (choice.Target is not { } sellTarget)
                     {

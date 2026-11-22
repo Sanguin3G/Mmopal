@@ -116,6 +116,34 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
+    public void SelectSafeOutbidCancels_also_picks_top_bid_orders_unfilled_for_two_days()
+    {
+        var now = new DateTimeOffset(2026, 11, 22, 16, 0, 0, TimeSpan.Zero);
+        Transaction[] orders =
+        [
+            // 22 Nov: 15x Valkyrie Draconic Coat at the top bid for 62 h.
+            new(TransactionType.Buy, "Valkyrie Draconic Coat", 7_811, 15, now.AddHours(-62), null, 7_811),
+            // At the top for a day: still has time to fill.
+            new(TransactionType.Buy, "Carrion Noble Boots", 1_214, 2, now.AddHours(-24), null, 1_214)
+        ];
+
+        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, maxCancelsPerPass: 5, now, out _, out _);
+
+        Assert.Equal(["Valkyrie Draconic Coat"], safe.Select(tx => tx.ItemName));
+    }
+
+    [Theory]
+    [InlineData(6_630L, 6_630L, 6_630L)]   // the lowest ask is our own listing: join it, do not undercut ourselves
+    [InlineData(6_630L, null, 6_628L)]    // no listing of ours: undercut by 2c as usual
+    [InlineData(6_630L, 6_650L, 6_628L)]   // ours is above the lowest ask: undercut the other seller
+    public void ChooseTypedSellPrice_joins_our_own_lowest_listing(long lowestAsk, long? ownListing, long expected)
+    {
+        var (target, _) = Gw2TradingPostUiDriver.ChooseTypedSellPrice(lowestAsk, lowestAsk, undercutSteps: 2, breakEvenCopper: 5_000, ownLowestListingCopper: ownListing);
+
+        Assert.Equal(expected, target);
+    }
+
+    [Fact]
     public async Task CancelOutbidBuyOrdersAsync_KeepsEveryOrderDuringDailyResetWindow()
     {
         var resetUtc = new DateTimeOffset(2026, 11, 21, 0, 30, 0, TimeSpan.Zero);

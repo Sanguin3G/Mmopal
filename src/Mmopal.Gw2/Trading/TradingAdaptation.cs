@@ -51,6 +51,22 @@ public sealed class BuyCompetitionTracker
         result is { Status: TradingActionStatus.Failed, Action.Kind: TradingActionKind.PlaceBuyOrder } &&
         result.Message?.Contains("is above the profitable ceiling", StringComparison.Ordinal) == true;
 
+    /// <summary>How long an item whose top-bid order sat unfilled for 2 days is not bought again.</summary>
+    public static readonly TimeSpan SlowItemPause = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// Pauses items whose buy order was cancelled for not filling, so the next cycle does not place the same order
+    /// again. Not a bot war: the outbid counts are left alone. A fill lifts it like any pause.
+    /// </summary>
+    public void PauseSlowItems(IEnumerable<string> itemNames, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(itemNames);
+        foreach (var raw in itemNames.Where(name => !string.IsNullOrWhiteSpace(name)))
+        {
+            _paused[ItemNameNormalizer.Normalize(raw)] = (raw.Trim(), nowUtc + SlowItemPause);
+        }
+    }
+
     public void RecordFills(IEnumerable<string> itemNames)
     {
         ArgumentNullException.ThrowIfNull(itemNames);

@@ -34,12 +34,15 @@ public sealed partial class Gw2TradingPostUiDriver
         foreach (var tx in transactions)
         {
             if (safe.Count >= maxCancelsPerPass) break;
-            if (tx.Type != TransactionType.Buy ||
-                string.IsNullOrWhiteSpace(tx.ItemName) ||
-                tx.MinimumBuyPriceCopper is not { } topBid ||
-                topBid <= tx.PriceCopper)
+            if (tx.Type != TransactionType.Buy || string.IsNullOrWhiteSpace(tx.ItemName))
             {
                 continue;
+            }
+
+            var outbid = tx.MinimumBuyPriceCopper is { } topBid && topBid > tx.PriceCopper;
+            if (!outbid && nowUtc - tx.Created < StaleBuyOrderAge)
+            {
+                continue; // at the top bid and recent enough to fill
             }
 
             if (nowUtc - tx.Created < MinOrderAgeBeforeOutbidCancel)
@@ -83,6 +86,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         LastCanceledOutbidItems = Array.Empty<string>();
+        LastCanceledStaleItems = Array.Empty<string>();
         var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung);
         if (keptYoung > 0)
         {
@@ -120,6 +124,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         var canceledNames = new List<string>();
+        var staleNames = new List<string>();
         foreach (var order in outbidBuys)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -146,17 +151,31 @@ public sealed partial class Gw2TradingPostUiDriver
             if (confirmBtn is not null && !IsPaused)
             {
                 await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
-                canceledNames.Add(order.ItemName);
-                _logger.LogInformation(
-                    "Outbid Refresh canceled buy order for {Item}: our bid {OurBid}c, API top bid {TopBid}c.",
-                    order.ItemName,
-                    order.PriceCopper,
-                    order.MinimumBuyPriceCopper);
+                if (order.MinimumBuyPriceCopper is { } top && top > order.PriceCopper)
+                {
+                    canceledNames.Add(order.ItemName);
+                    _logger.LogInformation(
+                        "Outbid Refresh canceled buy order for {Item}: our bid {OurBid}c, API top bid {TopBid}c.",
+                        order.ItemName,
+                        order.PriceCopper,
+                        order.MinimumBuyPriceCopper);
+                }
+                else
+                {
+                    staleNames.Add(order.ItemName);
+                    _logger.LogInformation(
+                        "Outbid Refresh canceled the {Hours} h old buy order for {Item} ({Qty} left at {OurBid}c, still the top bid but not filling); its gold goes to items that fill.",
+                        (int)(nowUtc - order.Created).TotalHours,
+                        order.ItemName,
+                        order.Quantity,
+                        order.PriceCopper);
+                }
             }
         }
 
         LastCanceledOutbidItems = canceledNames;
-        return canceledNames.Count;
+        LastCanceledStaleItems = staleNames;
+        return canceledNames.Count + staleNames.Count;
     }
 
     /// <summary>

@@ -14,7 +14,11 @@ public enum SellPassItemOutcome
 /// Current Sellers row text and is the fallback price) and the lowest listing price that still covers what Mmopal
 /// paid after the 15% fees.
 /// </summary>
-public sealed record SellPricing(long? ApiLowestAskCopper, long? BreakEvenCopper)
+/// <param name="OwnLowestListingCopper">
+/// The lowest price of Mmopal's own current listings of the item, if any: when the lowest ask is this listing, a new
+/// unit joins it at the same price instead of undercutting it.
+/// </param>
+public sealed record SellPricing(long? ApiLowestAskCopper, long? BreakEvenCopper, long? OwnLowestListingCopper = null)
 {
     /// <summary>Lowest listing price whose net after the 5% listing and 10% exchange fees covers the cost.</summary>
     public static long BreakEvenListingPrice(long costCopper)

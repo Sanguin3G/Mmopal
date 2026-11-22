@@ -323,9 +323,18 @@ public sealed partial class Gw2TradingPostUiDriver
         long apiLowestAskCopper,
         long? liveLowestAskCopper,
         int undercutSteps,
-        long? breakEvenCopper)
+        long? breakEvenCopper,
+        long? ownLowestListingCopper = null)
     {
         var basis = liveLowestAskCopper ?? apiLowestAskCopper;
+        // The lowest ask is already our own listing: join it at the same price. Undercutting it only lowered our own
+        // price each time (22 Nov: Magi's Intricate Gossamer Insignia listed at 66s 30c, 28c, 26c, 24c and 22c).
+        var joinsOwnListing = ownLowestListingCopper is { } own && own == basis;
+        if (joinsOwnListing)
+        {
+            undercutSteps = 0;
+        }
+
         var target = Math.Max(1, basis - Math.Max(0, undercutSteps));
         var source = liveLowestAskCopper is null
             ? $"API lowest ask {MarketScanItem.FormatCoins(apiLowestAskCopper)} (live lowest ask unreadable)"
@@ -333,6 +342,12 @@ public sealed partial class Gw2TradingPostUiDriver
         if (breakEvenCopper is { } floor && target < floor)
         {
             return (null, $"holding: {source} - {undercutSteps}c = {MarketScanItem.FormatCoins(target)} is below break-even {MarketScanItem.FormatCoins(floor)}; checking again in 30 min.");
+        }
+
+        if (joinsOwnListing)
+        {
+            return (target, $"{source} is our own listing -> typing the same {MarketScanItem.FormatCoins(target)} instead of undercutting it"
+                            + (breakEvenCopper is { } ownBe ? $" (break-even {MarketScanItem.FormatCoins(ownBe)})." : "."));
         }
 
         return (target, $"{source} - {undercutSteps}c -> typing {MarketScanItem.FormatCoins(target)}"

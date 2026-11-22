@@ -153,6 +153,21 @@ public sealed partial class WorkerRuntime
     /// item (its planned buy price; else the shopping list's buy price). Held items stay queued and are rechecked
     /// on later passes, so they list once the market recovers. Unknown cost or quote: listed as before.
     /// </summary>
+    /// <summary>Adds the lowest price of our own current listing of each item, so a new unit joins it instead of undercutting it.</summary>
+    private static IReadOnlyDictionary<string, SellPricing> WithOwnListings(
+        IReadOnlyDictionary<string, SellPricing> pricing,
+        IReadOnlyList<Transaction> currentOrders)
+    {
+        var ownLowest = currentOrders
+            .Where(order => order.Type == TransactionType.Sell && !string.IsNullOrWhiteSpace(order.ItemName))
+            .GroupBy(order => order.ItemName.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Min(order => order.PriceCopper), StringComparer.OrdinalIgnoreCase);
+        return pricing.ToDictionary(
+            pair => pair.Key,
+            pair => ownLowest.TryGetValue(pair.Key, out var own) ? pair.Value with { OwnLowestListingCopper = own } : pair.Value,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private async Task<(IReadOnlyList<string> Targets, IReadOnlyDictionary<string, SellPricing> Pricing)> KeepProfitableSellTargetsAsync(
         IReadOnlyList<string> targets,
         IReadOnlyList<ItemCandidate> candidates,

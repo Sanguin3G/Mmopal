@@ -69,6 +69,15 @@ public static class OwnedStock
     }
 
     /// <summary>
+    /// True when a current buy order is one Mmopal placed: same item, at a price one of its orders was placed at. Buy
+    /// orders the player placed by hand are never cancelled by Outbid Refresh.
+    /// </summary>
+    public static bool IsMmopalsOrder(Transaction order, IEnumerable<PlacedBuyOrder> placedOrders) =>
+        placedOrders.Any(placed =>
+            string.Equals(ItemNameNormalizer.Normalize(placed.ItemName), ItemNameNormalizer.Normalize(order.ItemName), StringComparison.OrdinalIgnoreCase) &&
+            (placed.PlannedUnitCopper == order.PriceCopper || placed.TypedUnitCopper == order.PriceCopper));
+
+    /// <summary>
     /// True when listing this character's whole stack of <paramref name="itemName"/> sells only Mmopal's units:
     /// the stack is no larger than what Mmopal still holds.
     /// </summary>
