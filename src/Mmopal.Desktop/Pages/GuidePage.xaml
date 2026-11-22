@@ -157,7 +157,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Text="Check the results" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
-                                        <TextBlock Text="Session shows the shopping list and what history learned. Income &amp; Portfolio shows net worth over time." Style="{StaticResource HintText}" />
+                                        <TextBlock Text="Session shows the shopping list and what history learned. Income &amp; Portfolio shows net worth over time. Latency mode (Settings) sets how long each step waits; Pace (Session) sets how much a pass does and the pause between cycles. Hover Pace to see both together." Style="{StaticResource HintText}" />
                                     </StackPanel>
                                 </Grid>
                             </Border>

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -85,7 +86,8 @@ public partial class SessionPage : UserControl
         }
 
         var profileTag = (ProfileSelector.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "balanced";
-        var paceText = TradingPaceDescriptions.Describe(profileTag);
+        var client = Host.SettingsPage.TryReadClientSettings(out var readSettings) ? readSettings : null;
+        var paceText = TradingPaceDescriptions.Describe(profileTag, LoadPaceProfile(profileTag), client);
         var platform = Host.SettingsPage.GetSelectedLaunchPlatform();
         var acct = Host.ApiKeyVault.ActiveEntry?.DisplayLabel;
         SessionPaceSummaryText.Text = string.IsNullOrWhiteSpace(acct)
@@ -95,9 +97,22 @@ public partial class SessionPage : UserControl
         ProfileSelector.ToolTip = SessionPaceSummaryText.Text;
         if (PaceSafeItem is not null)
         {
-            PaceSafeItem.ToolTip = TradingPaceDescriptions.Describe("safe");
-            PaceBalancedItem.ToolTip = TradingPaceDescriptions.Describe("balanced");
-            PaceFastItem.ToolTip = TradingPaceDescriptions.Describe("fast");
+            PaceSafeItem.ToolTip = TradingPaceDescriptions.Describe("safe", LoadPaceProfile("safe"), client);
+            PaceBalancedItem.ToolTip = TradingPaceDescriptions.Describe("balanced", LoadPaceProfile("balanced"), client);
+            PaceFastItem.ToolTip = TradingPaceDescriptions.Describe("fast", LoadPaceProfile("fast"), client);
+        }
+    }
+
+    /// <summary>The pace profile the worker will load (config/profiles next to the app), or null when missing.</summary>
+    private static Mmopal.Infrastructure.RunProfile? LoadPaceProfile(string profileTag)
+    {
+        try
+        {
+            return new Mmopal.Infrastructure.ProfileLoader().Load(profileTag, AppContext.BaseDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+        {
+            return null;
         }
     }
 

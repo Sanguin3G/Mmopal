@@ -357,12 +357,37 @@ public static class Gw2LatencyPresets
             : All.FirstOrDefault(p => p.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
 }
 
+/// <summary>
+/// One description of how fast a session runs, from the two settings that decide it: the pace profile (how many
+/// orders, listings and outbid cancels a pass may make, and the pause between cycles) and the latency mode (how long
+/// every UI step waits). The numbers come from the profile files and the client settings, never from fixed text: the
+/// old tooltip said "50s interval" while a cycle itself took ~110 s at high ping on 21-22 Nov.
+/// </summary>
 public static class TradingPaceDescriptions
 {
-    public static string Describe(string? profileTag) => profileTag?.Trim().ToLowerInvariant() switch
+    public static string Describe(string? profileTag, Mmopal.Infrastructure.RunProfile? profile = null, Gw2ClientSettings? client = null)
     {
-        "safe" => "Safe: 2 actions/pass · 90s interval — best for overnight & anti-throttle",
-        "fast" => "Fast: 5 actions/pass · 25s interval — high turnover for Reset & Prime Time",
-        _ => "Balanced: 3 actions/pass · 50s interval — optimal for 5-min GW2 API cache"
-    };
+        var tag = profileTag?.Trim().ToLowerInvariant();
+        var (label, purpose, actions, pause) = tag switch
+        {
+            "safe" => ("Safe", "overnight and anti-throttle", 2, 90),
+            "fast" => ("Fast", "high turnover at reset and prime time", 5, 25),
+            _ => ("Balanced", "matches the ~5-minute GW2 API cache", 3, 50)
+        };
+        if (profile is not null)
+        {
+            actions = Math.Max(1, profile.MaxOverbidUpdatesPerPass);
+            pause = Math.Max(2, profile.OverbidScanIntervalSeconds);
+        }
+
+        var text = $"{label}: up to {actions} orders, listings and outbid cancels per pass · {pause} s pause between cycles ({purpose})";
+        if (client is null)
+        {
+            return text;
+        }
+
+        var latency = Gw2LatencyPresets.FindById(client.LatencyProfile)?.Label ?? client.LatencyProfile;
+        return $"{text} · {latency}: UI steps wait up to {client.UiLoadWaitMs / 1000.0:0.#} s, {client.ActionSettleDelayMs} ms after each click, " +
+               "so a cycle itself takes about 1–3 min";
+    }
 }

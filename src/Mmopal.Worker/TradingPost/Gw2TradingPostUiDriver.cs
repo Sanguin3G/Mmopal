@@ -46,7 +46,9 @@ public sealed partial class Gw2TradingPostUiDriver
     // Per item: search confirmations seen / missed. Some names never confirm on screen (Tyria's Best Nougat Center
     // 24 of 24, Unstable Rift Motivation 22 of 22), and each miss waited the full 7.5 s: 41 min in a 7 h session.
     private readonly Dictionary<string, (int Seen, int Missed)> _searchConfirmStats = new(StringComparer.OrdinalIgnoreCase);
-    internal const int ShortSearchWaitMs = 2_000;
+    // A third of the UI wait (1.5-3 s): results that do appear show up in ~1.5 s at high ping (21-22 Nov), so the
+    // short wait follows the latency mode like every other UI wait instead of a fixed 2 s.
+    private int ShortSearchWaitMs => Math.Clamp(_uiWaitMs / 3, 1_500, 3_000);
 
     /// <summary>Items whose buy orders the last Outbid Refresh pass cancelled (for the bot-war guard).</summary>
     public IReadOnlyList<string> LastCanceledOutbidItems { get; private set; } = Array.Empty<string>();

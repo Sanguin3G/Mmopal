@@ -87,6 +87,8 @@ public partial class SettingsPage : UserControl
             ActionSettleDelayMsBox.Text = preset.ActionSettleDelayMs.ToString(CultureInfo.InvariantCulture);
             ApiTimeoutSecondsBox.Text = preset.ApiTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         }
+
+        Host.SessionPage.UpdateSessionPaceSummary(); // the pace description includes the latency waits
     }
 
     private async void DetectGw2_Click(object sender, RoutedEventArgs e) => await DetectGw2Async();
