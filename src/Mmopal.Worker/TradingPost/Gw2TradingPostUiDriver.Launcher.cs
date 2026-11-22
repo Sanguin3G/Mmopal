@@ -338,6 +338,15 @@ public sealed partial class Gw2TradingPostUiDriver
                 }
             }
 
+            // The ArenaNet login form always has LOG IN right under the password box. When the form is on screen
+            // (its PASSWORD label read in place) but the button label is not, click the button's measured centre:
+            // OCR misread the idle button on 22 Nov and auto-login waited for a hand on the mouse.
+            if (ocrLogin is null && !_settings.IsSteamPlatform &&
+                loginLines.Any(box => box.Text.Trim().Equals("PASSWORD", StringComparison.OrdinalIgnoreCase) && box.Y is >= 440 and <= 490 && box.X <= 120))
+            {
+                ocrLogin = LauncherLoginButtonPoint;
+            }
+
             var playLines = await _textLocator.LocateLinesAsync(frame, LauncherPlayOcrRegion, cancellationToken).ConfigureAwait(false);
             foreach (var box in playLines)
             {

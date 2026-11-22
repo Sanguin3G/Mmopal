@@ -262,6 +262,32 @@ public sealed partial class LiveTradingExecutorTests
         Assert.DoesNotContain("enter", input.KeyPresses);
     }
 
+    [Fact]
+    public async Task TryAdvanceLauncherOrCharacterSelectAsync_clicks_log_in_when_only_the_password_label_is_read()
+    {
+        // 22 Nov: the idle LOG IN label was misread, but the login form (its PASSWORD label) was read in place.
+        var input = new FakeInputController();
+        var locator = new FakeUiTextLocator(region =>
+            region is { X: 10, Y: 340 } && !input.Clicks.Contains((123, 585))
+                ? [new OcrTextBox("PASSWORD", 55, 464, 70, 14), new OcrTextBox("L G", 92, 579, 62, 16)]
+                : []);
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = region => new AutomationFrame(DateTimeOffset.UtcNow, region, new byte[4], "Bgra32", 4) },
+            new FakeTemplateMatcher(),
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 200, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        await driver.TryAdvanceLauncherOrCharacterSelectAsync();
+
+        Assert.Contains((123, 585), input.Clicks);
+    }
+
     [Theory]
     [InlineData("LOG IN", true)]
     [InlineData("LOG N", true)]   // idle button, Visions of Eternity theme (22 Nov)

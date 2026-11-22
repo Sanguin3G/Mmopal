@@ -83,6 +83,8 @@ public sealed partial class Gw2TradingPostUiDriver
     private static readonly CaptureRegion TransactionsTabRegion = new(810, 90, 175, 150);
     private static readonly CaptureRegion SearchFieldRegion = new(0, 180, 330, 140);
     private static readonly CaptureRegion LauncherLoginRegion = new(20, 440, 280, 220);
+    // Centre of the launcher's LOG IN button with the launcher snapped to (0, 0): every live click since 20 Nov.
+    private static readonly (int X, int Y) LauncherLoginButtonPoint = (123, 585);
     private static readonly CaptureRegion LauncherLoginOcrRegion = new(10, 340, 360, 360);
     private static readonly CaptureRegion LauncherPlayRegion = new(600, 560, 424, 208);
     private static readonly CaptureRegion LauncherPlayOcrRegion = new(540, 510, 484, 258);
