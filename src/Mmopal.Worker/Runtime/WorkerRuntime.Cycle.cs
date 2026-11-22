@@ -632,13 +632,24 @@ public sealed partial class WorkerRuntime
     /// at most once per <see cref="MinTimeBetweenDeliverySwaps"/>: every logout risks the server disconnect that
     /// repeated swaps caused.
     /// </summary>
-    private string? StockSwapTarget(TradingSession session, DateTimeOffset now) =>
-        session.LiveDriver is { } driver &&
-        session.Request.EnableInventorySellPass &&
-        session.Client.ParkedCharacterCount > 1 &&
-        now - _lastCharacterSwapUtc >= MinTimeBetweenDeliverySwaps
+    private string? StockSwapTarget(TradingSession session, DateTimeOffset now)
+    {
+        if (session.LiveDriver is not { } driver ||
+            !session.Request.EnableInventorySellPass ||
+            session.Client.ParkedCharacterCount <= 1)
+        {
+            return null;
+        }
+
+        // Normally at most once an hour. Once this character has nothing left to list, move on after the 20 minutes
+        // that keep logouts safe: on 22 Nov stock sat on all five characters while each swap waited the full hour.
+        var sinceSwap = now - _lastCharacterSwapUtc;
+        var nothingLeftHere = ReadyTargetsHere(session, driver, 1).Count == 0 &&
+                              session.FlipStockByCharacter.FirstOrDefault(entry => CharacterStock.NamesMatch(entry.Name, driver.CurrentCharacterName)).Items == 0;
+        return sinceSwap >= MinTimeBetweenDeliverySwaps || (nothingLeftHere && sinceSwap >= MinTimeBetweenRecoverySwaps)
             ? CharacterStock.StockSwapTarget(ParkedFlipStock(session, driver), driver.CurrentCharacterName)
             : null;
+    }
 
     /// <summary>
     /// Flip stock on characters in the rotation. Until a name-guided swap has read the parked portraits every
