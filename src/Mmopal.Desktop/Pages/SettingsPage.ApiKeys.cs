@@ -411,6 +411,31 @@ public partial class SettingsPage
         }
     }
 
+    /// <summary>
+    /// Sets one saved account's launch platform from its row (a Steam account next to an ArenaNet one). For the active
+    /// account the Launch Platform setting follows, so the next launch uses it.
+    /// </summary>
+    private void ApiKeyPlatform_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Loading || sender is not ComboBox { Tag: string id, SelectedValue: string platform })
+        {
+            return;
+        }
+
+        var entry = Host.ApiKeyVault.Entries.FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
+        var current = string.IsNullOrWhiteSpace(entry?.LaunchPlatform) ? Gw2ClientSettings.PlatformArenaNet : entry.LaunchPlatform;
+        if (entry is null || string.Equals(current, platform, StringComparison.OrdinalIgnoreCase))
+        {
+            return; // the binding setting the initial value, or no change
+        }
+
+        Host.UpdateVaultEntry(id, item => item with { LaunchPlatform = platform });
+        if (string.Equals(Host.ApiKeyVault.ActiveEntry?.Id, id, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectComboByTag(LaunchPlatformSelector, platform); // its handler saves settings and refreshes the checklist
+        }
+    }
+
     internal void RefreshApiKeyIndicator()
     {
         if (Host.ApiKeyVault.ActiveEntry is { } active)
@@ -449,7 +474,7 @@ public partial class SettingsPage
         public string StatusText { get; } = statusText;
         public Brush StatusBrush { get; } = statusBrush;
         public string AccountName { get; } = accountName;
-        public string PlatformLabel { get; } = platformLabel;
+        public string Platform { get; } = platformLabel;
         public string MaskedKey { get; } = maskedKey;
         public string CustomName { get; set; } = customName;
     }

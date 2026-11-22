@@ -65,19 +65,30 @@
                                 <DataGridTemplateColumn Header="ORDER" Width="64">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
-                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <!-- Flat chevrons: same look enabled or disabled (only fainter), a hover background like the other icon buttons. -->
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                                                 <Button Tag="&#xE70E;"
                                                         CommandParameter="{Binding Id}"
                                                         IsEnabled="{Binding CanMoveUp}"
                                                         Click="MoveApiKeyUp_Click"
                                                         Style="{StaticResource IconButton}"
-                                                        Margin="0,2,4,2"
+                                                        Background="Transparent"
+                                                        BorderThickness="0"
+                                                        MinWidth="24"
+                                                        MinHeight="24"
+                                                        Padding="4,2"
+                                                        Margin="0,2,2,2"
                                                         ToolTip="Move up" />
                                                 <Button Tag="&#xE70D;"
                                                         CommandParameter="{Binding Id}"
                                                         IsEnabled="{Binding CanMoveDown}"
                                                         Click="MoveApiKeyDown_Click"
                                                         Style="{StaticResource IconButton}"
+                                                        Background="Transparent"
+                                                        BorderThickness="0"
+                                                        MinWidth="24"
+                                                        MinHeight="24"
+                                                        Padding="4,2"
                                                         Margin="0,2"
                                                         ToolTip="Move down" />
                                             </StackPanel>
@@ -98,19 +109,41 @@
                                 <DataGridTemplateColumn Header="NAME" Width="130">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
+                                            <!-- MinHeight 0: the default 34 px input outgrew the 32 px row and was clipped. -->
                                             <TextBox Text="{Binding CustomName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                     Height="28"
+                                                     MinHeight="0"
+                                                     Height="26"
                                                      Padding="6,0"
                                                      FontSize="12"
                                                      VerticalContentAlignment="Center"
-                                                     Margin="0,2,6,2"
+                                                     VerticalAlignment="Center"
+                                                     Margin="0,2,8,2"
                                                      LostFocus="ApiKeyName_LostFocus"
                                                      KeyDown="ApiKeyName_KeyDown"
                                                      ToolTip="Your label for this account (e.g. Main EU). Saved when you press Enter or click elsewhere." />
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="PLATFORM" Binding="{Binding PlatformLabel}" Width="80" IsReadOnly="True" />
+                                <DataGridTemplateColumn Header="PLATFORM" Width="128">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox Tag="{Binding Id}"
+                                                      SelectedValuePath="Tag"
+                                                      SelectedValue="{Binding Platform, Mode=OneWay}"
+                                                      SelectionChanged="ApiKeyPlatform_SelectionChanged"
+                                                      MinHeight="0"
+                                                      Height="26"
+                                                      Padding="8,0"
+                                                      FontSize="12"
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,2,8,2"
+                                                      ToolTip="How this account's game is launched: ArenaNet launcher (LOG IN, then PLAY) or Steam (signs in by itself; PLAY is still pressed).">
+                                                <ComboBoxItem Content="ArenaNet" Tag="ArenaNet" />
+                                                <ComboBoxItem Content="Steam" Tag="Steam" />
+                                            </ComboBox>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTemplateColumn Header="API KEY" Width="196">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -176,7 +209,7 @@
                             <StackPanel>
                                 <TextBlock Text="1. Click 'ArenaNet Key Page' -> New Key and check: account, tradingpost, wallet, inventories, characters (characters+inventories enable bag-aware smart auto-sell)." Style="{StaticResource HintText}" />
                                 <TextBlock Text="2. Paste the key above, give it a nickname, and click Save &amp; Verify Key." Style="{StaticResource HintText}" Margin="0,4,0,0" />
-                                <TextBlock Text="3. Each saved account remembers its Launch Platform (ArenaNet vs Steam) when switched." Style="{StaticResource HintText}" Margin="0,4,0,0" />
+                                <TextBlock Text="3. Each saved account remembers its Launch Platform (ArenaNet vs Steam): set it in the Platform column, and it applies when that account is switched to." Style="{StaticResource HintText}" Margin="0,4,0,0" />
                             </StackPanel>
                         </Expander>
                     </StackPanel>
