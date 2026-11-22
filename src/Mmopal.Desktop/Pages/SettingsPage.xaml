@@ -1,4 +1,4 @@
-<UserControl x:Class="Mmopal.Desktop.Pages.SettingsPage"
+﻿<UserControl x:Class="Mmopal.Desktop.Pages.SettingsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid x:Name="SettingsView" Visibility="Collapsed">
@@ -62,11 +62,13 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="ORDER" Width="64">
+                                <DataGridTemplateColumn Header="ORDER" Width="80">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
-                                            <!-- Flat chevrons: same look enabled or disabled (only fainter), a hover background like the other icon buttons. -->
-                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                            <!-- Flat chevrons: same look enabled or disabled (only fainter), a hover background like the other
+                                                 icon buttons. 80 px = 10 px cell padding each side + two 24 px buttons with a gap; the -6 px margin
+                                                 lines the first chevron up with the ORDER header text (the glyph sits centred in its button). -->
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="-6,0,0,0">
                                                 <Button Tag="&#xE70E;"
                                                         CommandParameter="{Binding Id}"
                                                         IsEnabled="{Binding CanMoveUp}"
@@ -74,10 +76,11 @@
                                                         Style="{StaticResource IconButton}"
                                                         Background="Transparent"
                                                         BorderThickness="0"
+                                                        Width="24"
                                                         MinWidth="24"
                                                         MinHeight="24"
-                                                        Padding="4,2"
-                                                        Margin="0,2,2,2"
+                                                        Padding="0"
+                                                        Margin="0,2,4,2"
                                                         ToolTip="Move up" />
                                                 <Button Tag="&#xE70D;"
                                                         CommandParameter="{Binding Id}"
@@ -86,9 +89,10 @@
                                                         Style="{StaticResource IconButton}"
                                                         Background="Transparent"
                                                         BorderThickness="0"
+                                                        Width="24"
                                                         MinWidth="24"
                                                         MinHeight="24"
-                                                        Padding="4,2"
+                                                        Padding="0"
                                                         Margin="0,2"
                                                         ToolTip="Move down" />
                                             </StackPanel>
