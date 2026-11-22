@@ -263,6 +263,17 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Theory]
+    [InlineData("LOG IN", true)]
+    [InlineData("LOG N", true)]   // idle button, Visions of Eternity theme (22 Nov)
+    [InlineData("L0G IN", true)]
+    [InlineData("LOGIN", true)]
+    [InlineData("LOGOUT", false)]
+    [InlineData("LOGO", false)]
+    [InlineData("Forgot your password?", false)]
+    public void Launcher_login_label_survives_ocr_dropping_the_i(string text, bool expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.IsOcrLoginLabel(text));
+
+    [Theory]
     [InlineData(false, 1, 0)]
     [InlineData(true, 1, 0)]
     [InlineData(false, 4, 3)]   // "next": least recently played parked character

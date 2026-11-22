@@ -430,10 +430,15 @@ public sealed partial class Gw2TradingPostUiDriver
             : null;
     }
 
-    private static bool IsOcrLoginLabel(string text)
+    /// <summary>
+    /// The launcher's LOG IN label. With the "Visions of Eternity" theme (22 Nov) OCR reads the idle button as
+    /// "LOG N": the thin I is lost on the dark orange. It was only read whole while the mouse hovered the button, so
+    /// auto-login waited until someone moved the mouse there. O may read as 0 and I as 1, l or |.
+    /// </summary>
+    internal static bool IsOcrLoginLabel(string text)
     {
         var normalized = text.Trim().ToUpperInvariant().Replace(" ", string.Empty);
-        return normalized is "LOGIN" or "LOG IN";
+        return System.Text.RegularExpressions.Regex.IsMatch(normalized, "^L[O0]G[I1L|]?N$");
     }
 
     private static bool IsOcrPlayButtonLabel(string upperText)
