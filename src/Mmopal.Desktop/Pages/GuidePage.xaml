@@ -127,7 +127,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Text="Park and snap" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
-                                        <TextBlock Text="Stand each parked character next to a Black Lion trader (the Delivery Box only opens there; listing works anywhere). Put the characters you trade with in the first Character Select slots and set Parked chars to how many: only those are entered, and swaps go to the one holding the most unsold items. Parked chars is remembered per account. Launch &amp; snap GW2 puts the game at 1024×768." Style="{StaticResource HintText}" />
+                                        <TextBlock Text="Stand each parked character next to a Black Lion trader (the Delivery Box only opens there; listing works anywhere). Put the characters you trade with in the first Character Select slots and set Parked chars to how many: only those are entered, and swaps go to the one holding the most unsold items; an item still unsold in bags is not bought again until it is listed. Parked chars is remembered per account. Launch &amp; snap GW2 puts the game at 1024×768." Style="{StaticResource HintText}" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
