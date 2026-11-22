@@ -256,9 +256,11 @@ public sealed partial class Gw2TradingPostUiDriver
             }
 
             CurrentCharacterLabel = $"slot #{slotOffset + 1}";
+            CurrentCharacterName = null;
             if (slotOffset > 0 && await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) is { } selectedName)
             {
                 CurrentCharacterLabel = $"'{selectedName}' (slot #{slotOffset + 1})";
+                CurrentCharacterName = selectedName;
                 _logger.LogInformation("Character Select now shows '{Name}' (slot #{Slot}).", selectedName, slotOffset + 1);
             }
 

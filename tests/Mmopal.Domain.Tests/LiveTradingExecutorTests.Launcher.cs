@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mmopal.Contracts;
@@ -444,6 +444,99 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Contains((784, 727), input.Clicks); // clicked Play button
         Assert.Contains(expectedSlot4, input.DoubleClicks); // double-clicked portrait if Play stayed up
         Assert.Contains("F", input.KeyPresses);
+    }
+
+    [Fact]
+    public async Task RotateParkedCharacterAsync_with_preferred_names_reads_portraits_and_enters_the_named_character()
+    {
+        // The character holding the most unsold stock sits in slot #3; the usual rule ("next") would pick slot #5.
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher();
+        var names = new[] { "Janetta Shepard", "Big Cheetos", "Johanne Shepard", "Calanthe F Riannon", "Mesmerising Rizzo" };
+        var johanneSlot = (258 + 2 * 122, 640);
+
+        templates.DynamicMatches["logout.png"] = () =>
+            input.KeyPresses.Contains("escape") && !input.Clicks.Contains((477, 443))
+                ? new TemplateMatch(409, 425, 137, 37, 0.91m)
+                : null;
+        templates.DynamicMatches["charscreen_play.png"] = () =>
+            input.Clicks.Contains((477, 443)) && !input.DoubleClicks.Contains(johanneSlot)
+                ? new TemplateMatch(749, 711, 71, 33, 0.99m)
+                : null;
+        templates.DynamicMatches["ingame_1.png"] = () =>
+            input.DoubleClicks.Contains(johanneSlot) ? new TemplateMatch(48, 54, 16, 16, 0.85m) : null;
+        templates.DynamicMatches["tradingpost_tab.png"] = () =>
+            input.DoubleClicks.Contains(johanneSlot) && input.KeyPresses.Contains("F")
+                ? new TemplateMatch(460, 70, 40, 20, 0.95m)
+                : null;
+        var locator = new FakeUiTextLocator(region =>
+        {
+            if (region is not { X: 40, Y: 375 } || !input.Clicks.Any(c => c.Y == 640))
+            {
+                return [];
+            }
+
+            var lastPortrait = input.Clicks.Last(c => c.Y == 640);
+            var slot = (lastPortrait.X - 258) / 122;
+            // OCR drops the last letter, as live reads sometimes do.
+            return [new OcrTextBox(names[slot][..^1], 57, 380, 220, 30)];
+        });
+
+        var screenshots = new FakeScreenshotProvider
+        {
+            CustomFrameFactory = region => new AutomationFrame(DateTimeOffset.UtcNow, region, new byte[4], "Bgra32", 4)
+        };
+        var driver = new Gw2TradingPostUiDriver(
+            screenshots,
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(InteractKeybind: "F", UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        var (succeeded, message) = await driver.RotateParkedCharacterAsync(
+            randomize: false,
+            parkedCharacterCount: 5,
+            preferredNames: ["Johanne Shepard", "Mesmerising Rizzo"]);
+
+        Assert.True(succeeded, message);
+        Assert.Contains("slot #3", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(johanneSlot, input.DoubleClicks);
+        Assert.Equal("Johanne Shepar", driver.CurrentCharacterName);
+        Assert.Equal(5, driver.ParkedCharacterNames.Count); // all parked portraits read, none beyond slot 5
+        Assert.DoesNotContain(input.Clicks, c => c.Y == 640 && c.X > 258 + 4 * 122);
+    }
+
+    [Theory]
+    [InlineData("Mesmerising Rizzo", "Mesmerising Rizz", true)]
+    [InlineData("Calanthe F Riannon", "Calanthe F. Riannon", true)]
+    [InlineData("Janetta Shepard", "Johanne Shepard", false)]
+    [InlineData("Big Cheetos", "", false)]
+    public void CharacterStock_NamesMatch_tolerates_small_ocr_losses_only(string apiName, string ocrRead, bool expected) =>
+        Assert.Equal(expected, CharacterStock.NamesMatch(apiName, ocrRead));
+
+    [Fact]
+    public void CharacterStock_ranks_characters_by_flip_items_and_picks_a_stock_swap_target()
+    {
+        var bags = new Dictionary<string, IReadOnlyDictionary<int, long>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Mesmerising Rizzo"] = new Dictionary<int, long> { [1] = 40, [2] = 20, [99] = 500 },
+            ["Johanne Shepard"] = new Dictionary<int, long> { [1] = 24 },
+            ["Big Cheetos"] = new Dictionary<int, long> { [99] = 3 },
+        };
+
+        var ranked = CharacterStock.Rank(bags, new HashSet<int> { 1, 2 });
+
+        Assert.Equal(["Mesmerising Rizzo", "Johanne Shepard"], ranked.Select(entry => entry.Name));
+        Assert.Equal(60, ranked[0].Items);
+        Assert.Equal("Mesmerising Rizzo", CharacterStock.StockSwapTarget(ranked, "Johanne Shepard"));
+        Assert.Null(CharacterStock.StockSwapTarget(ranked, "Mesmerising Rizz")); // already on it (OCR read)
+        Assert.Null(CharacterStock.StockSwapTarget(ranked, null)); // current unknown: the swap could land back on it
+        Assert.Null(CharacterStock.StockSwapTarget([("Big Cheetos", 4)], "Janetta Shepard")); // too little to be worth a logout
     }
 
     [Fact]

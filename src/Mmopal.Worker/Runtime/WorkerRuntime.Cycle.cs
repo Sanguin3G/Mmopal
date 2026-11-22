@@ -499,7 +499,8 @@ public sealed partial class WorkerRuntime
     {
         var client = session.Client;
         var deliveryStuckSwap = IsDeliveryStuckSwapDue(now, client.ParkedCharacterCount);
-        if (!session.AfkSwap.IsDue(now) && !deliveryStuckSwap)
+        var stockSwapTarget = StockSwapTarget(session, now);
+        if (!session.AfkSwap.IsDue(now) && !deliveryStuckSwap && stockSwapTarget is null)
         {
             return (CycleStep.Proceed, false);
         }
@@ -513,13 +514,29 @@ public sealed partial class WorkerRuntime
                     driver.CurrentCharacterLabel ?? "this character",
                     (int)(now - _deliveryLockedSinceUtc!.Value).TotalMinutes);
             }
+            else if (stockSwapTarget is not null && !session.AfkSwap.IsDue(now))
+            {
+                _logger.LogInformation(
+                    "Swapping to {Target} to list its unsold flip items ({Stock}); listing works anywhere, but only from the logged-in character's bags.",
+                    stockSwapTarget,
+                    DescribeFlipStock(session.FlipStockByCharacter));
+            }
+
+            // Any swap goes to the character holding the most unsold stock when its name can be read.
+            var preferredNames = session.Request.EnableInventorySellPass
+                ? ParkedFlipStock(session, driver)
+                    .Where(entry => !CharacterStock.NamesMatch(entry.Name, driver.CurrentCharacterName))
+                    .Select(entry => entry.Name)
+                    .ToArray()
+                : [];
 
             _lastCharacterSwapUtc = now;
             _deliveryLockedSinceUtc = null;
             var (swapped, swapMsg) = await driver.RotateParkedCharacterAsync(
                 session.AfkSwap.RandomizeCharacter,
                 client.ParkedCharacterCount,
-                cancellationToken);
+                cancellationToken,
+                preferredNames);
             if (swapped)
             {
                 session.Report.RecordCharacterSwap(_utcNow(), true, swapMsg);
@@ -550,6 +567,33 @@ public sealed partial class WorkerRuntime
         session.AfkSwap.MarkSwapped(now);
         return (CycleStep.Proceed, true);
     }
+
+    /// <summary>
+    /// Another character worth a swap only to list its stock (see <see cref="CharacterStock.StockSwapTarget"/>),
+    /// at most once per <see cref="MinTimeBetweenDeliverySwaps"/>: every logout risks the server disconnect that
+    /// repeated swaps caused.
+    /// </summary>
+    private string? StockSwapTarget(TradingSession session, DateTimeOffset now) =>
+        session.LiveDriver is { } driver &&
+        session.Request.EnableInventorySellPass &&
+        session.Client.ParkedCharacterCount > 1 &&
+        now - _lastCharacterSwapUtc >= MinTimeBetweenDeliverySwaps
+            ? CharacterStock.StockSwapTarget(ParkedFlipStock(session, driver), driver.CurrentCharacterName)
+            : null;
+
+    /// <summary>
+    /// Flip stock on characters in the rotation. Until a name-guided swap has read the parked portraits every
+    /// character counts; a target outside the rotation is simply not found and the usual slot is used.
+    /// </summary>
+    private static IReadOnlyList<(string Name, long Items)> ParkedFlipStock(TradingSession session, Gw2TradingPostUiDriver driver) =>
+        driver.ParkedCharacterNames.Count == 0
+            ? session.FlipStockByCharacter
+            : session.FlipStockByCharacter
+                .Where(entry => driver.ParkedCharacterNames.Any(parked => CharacterStock.NamesMatch(entry.Name, parked)))
+                .ToArray();
+
+    private static string DescribeFlipStock(IReadOnlyList<(string Name, long Items)> stock) =>
+        stock.Count == 0 ? "none" : string.Join(", ", stock.Select(entry => $"{entry.Name} {entry.Items}"));
 
     /// <summary>Sets the status line and sends the Health event the Session page shows.</summary>
     private void ReportCycleStatus(

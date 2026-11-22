@@ -53,6 +53,8 @@ public sealed partial class WorkerRuntime
         public required IReadOnlyList<Transaction> LastKnownActiveOrders { get; set; }
         public long? LastHistoryBuyId { get; set; }
         public DateTimeOffset LastInventoryApiSyncUtc { get; set; } = DateTimeOffset.MinValue;
+        /// <summary>Characters holding unsold flip items, most first (from the last bag sync).</summary>
+        public IReadOnlyList<(string Name, long Items)> FlipStockByCharacter { get; set; } = [];
 
         // Recovery budget.
         public int GameRestartsUsed { get; set; }

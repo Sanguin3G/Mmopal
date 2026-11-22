@@ -60,6 +60,15 @@ public sealed partial class Gw2OfficialDataProvider
             }
 
             var characters = await GetAsync<List<Gw2CharacterEntry?>>("v2/characters?ids=all", cancellationToken).ConfigureAwait(false);
+            LastCharacterBagItemIds = characters
+                .Where(character => !string.IsNullOrWhiteSpace(character?.Name))
+                .GroupBy(character => character!.Name!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyDictionary<int, long>)UnboundItemCounts(group
+                        .SelectMany(character => character!.Bags ?? [])
+                        .SelectMany(bag => bag?.Inventory ?? [])),
+                    StringComparer.OrdinalIgnoreCase);
             var itemIds = UnboundItemIds(characters
                 .SelectMany(character => character?.Bags ?? [])
                 .SelectMany(bag => bag?.Inventory ?? []));
@@ -83,6 +92,19 @@ public sealed partial class Gw2OfficialDataProvider
             return MarkInventoryScopeUnavailable();
         }
     }
+
+    /// <summary>
+    /// Unbound item counts per character from the last <see cref="GetUnboundInventoryItemIdsAsync"/> read. Bags
+    /// belong to one character and only the logged-in one can list, so this tells which character to swap to.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<int, long>> LastCharacterBagItemIds { get; private set; } =
+        new Dictionary<string, IReadOnlyDictionary<int, long>>(StringComparer.OrdinalIgnoreCase);
+
+    private static Dictionary<int, long> UnboundItemCounts(IEnumerable<Gw2InventorySlot?> slots) =>
+        slots
+            .Where(slot => slot is { Id: > 0, Count: > 0 } && string.IsNullOrWhiteSpace(slot.Binding))
+            .GroupBy(slot => slot!.Id)
+            .ToDictionary(group => group.Key, group => group.Sum(slot => slot!.Count));
 
     private (bool Available, IReadOnlySet<int> ItemIds) MarkInventoryScopeUnavailable()
     {

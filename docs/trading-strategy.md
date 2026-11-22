@@ -74,4 +74,3 @@ Ordered by expected impact; none of these exist yet.
 1. **Order size from volume:** quantity = min(configured quantity, ~5% of daily trades), so slow items get 1 unit and busy items more.
 2. **Competition filter before buying:** gnashblade's listings-per-sale and delisted-per-sale from DataWars2 history, to skip bot-war items before the first order (today they are paused after 3 outbids).
 3. **More auto-blacklist suggestions:** items with search mismatches, buys that stay unfilled for 24h+, or repeated spread collapse (items that lose money are already listed in Income & Portfolio).
-4. **Choose the swap target:** the API knows which character holds unsold flip items; swapping to that character would list them sooner. Character Select only shows the selected name, so this needs a reliable name read first.

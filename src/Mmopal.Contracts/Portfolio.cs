@@ -59,7 +59,8 @@ public sealed record Gw2ApiKeyEntry(
     IReadOnlyList<string> Permissions,
     long? LastWalletCopper,
     DateTimeOffset? LastVerifiedAt,
-    string LaunchPlatform = "")
+    string LaunchPlatform = "",
+    int? ParkedCharacters = null)
 {
     public string MaskedKey => ApiKey.Length > 18 ? ApiKey[..18] + "..." : ApiKey;
 

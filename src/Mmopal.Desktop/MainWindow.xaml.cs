@@ -122,7 +122,12 @@ public partial class MainWindow : Window
         ReadSavedLimits = loadLimits;
         SaveLimits = saveLimits;
         ReadSavedClientSettings = loadClientSettings ?? (() => new Gw2ClientSettings());
-        SaveClientSettings = saveClientSettings ?? (_ => { });
+        var persistClientSettings = saveClientSettings ?? (_ => { });
+        SaveClientSettings = settings =>
+        {
+            RememberParkedCharactersForActiveAccount(settings);
+            persistClientSettings(settings);
+        };
         ReadSavedOperatorSettings = loadOperatorSettings ?? (() => new OperatorSettings());
         SaveOperatorSettings = saveOperatorSettings ?? (_ => { });
         ClientPreparer = clientPreparer ?? new Gw2ClientPreparer();
@@ -935,6 +940,7 @@ public partial class MainWindow : Window
         ApiKeyVault = _loadApiKeyVault();
         RefreshHasVerifiedApiKey();
         SelectActiveAccountLaunchPlatform();
+        SelectActiveAccountParkedCharacters();
         RebuildApiKeyViews();
     }
 
@@ -953,6 +959,31 @@ public partial class MainWindow : Window
         IsLoadingUi = true;
         SelectComboByTag(SettingsPage.LaunchPlatformSelector, ApiKeyVault.ActiveEntry.LaunchPlatform);
         IsLoadingUi = wasLoading;
+    }
+
+    /// <summary>
+    /// Shows the active account's parked character count. Each account parks its own characters (a main may rotate
+    /// 5 of 10, an alt all 4), and only the first that many Character Select portraits are ever entered.
+    /// </summary>
+    private void SelectActiveAccountParkedCharacters()
+    {
+        if (ApiKeyVault.ActiveEntry?.ParkedCharacters is not { } parked)
+        {
+            return;
+        }
+
+        var wasLoading = IsLoadingUi;
+        IsLoadingUi = true;
+        SettingsPage.ParkedCharactersBox.Text = parked.ToString(CultureInfo.InvariantCulture);
+        IsLoadingUi = wasLoading;
+    }
+
+    private void RememberParkedCharactersForActiveAccount(Gw2ClientSettings settings)
+    {
+        if (ApiKeyVault.ActiveEntry is { } active && active.ParkedCharacters != settings.ParkedCharacterCount)
+        {
+            UpdateVaultEntry(active.Id, entry => entry with { ParkedCharacters = settings.ParkedCharacterCount });
+        }
     }
 
     /// <summary>An idle worker is restarted so it picks up the newly active account.</summary>
@@ -1022,6 +1053,7 @@ public partial class MainWindow : Window
         SaveApiKeyVault(ApiKeyVault);
         RefreshHasVerifiedApiKey();
         SelectActiveAccountLaunchPlatform();
+        SelectActiveAccountParkedCharacters();
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         SettingsPage.SaveAllSettingsSilently();

@@ -9,10 +9,16 @@ namespace Mmopal.Worker;
 /// <summary>Parked characters: AFK and recovery swaps, slot choice, reading the selected name, logout at the session cap.</summary>
 public sealed partial class Gw2TradingPostUiDriver
 {
+    /// <summary>
+    /// Logs out to Character Select and enters another parked character. With <paramref name="preferredNames"/>
+    /// (best first) the portraits are read one by one and the best-ranked name found is entered; otherwise, or when
+    /// no name is found, the slot follows <see cref="PickParkedSlotOffset"/>.
+    /// </summary>
     public async Task<(bool Succeeded, string Message)> RotateParkedCharacterAsync(
         bool randomize,
         int parkedCharacterCount,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? preferredNames = null)
     {
         if (parkedCharacterCount <= 1)
         {
@@ -51,12 +57,15 @@ public sealed partial class Gw2TradingPostUiDriver
             return (false, "Character swap aborted: Character select screen did not appear after Esc/F12 logout.");
         }
 
-        var slotOffset = PickParkedSlotOffset(randomize, parkedCharacterCount);
+        var previousName = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+        var named = preferredNames is { Count: > 0 }
+            ? await FindPortraitByNameAsync(preferredNames, parkedCharacterCount, cancellationToken).ConfigureAwait(false)
+            : null;
+        var slotOffset = named?.Offset ?? PickParkedSlotOffset(randomize, parkedCharacterCount);
         _pendingSlot = (slotOffset, _utcNow());
         var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
         var portraitY = DeterministicCharSlotOnePoint.Y;
 
-        var previousName = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation(
             "Selecting parked character slot #{Slot} at ({X}, {Y}); currently selected: {Previous}.",
             slotOffset + 1,
@@ -90,10 +99,75 @@ public sealed partial class Gw2TradingPostUiDriver
 
         var who = selectedName is null ? $"slot #{slotOffset + 1}" : $"'{selectedName}' (slot #{slotOffset + 1})";
         CurrentCharacterLabel = who;
+        CurrentCharacterName = selectedName;
         var (reopened, openMsg) = await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
         return reopened
             ? (true, $"Swapped to parked character {who} and reopened Trading Post.")
             : (false, $"Swapped to parked character {who}, but could not reopen Trading Post: {openMsg}");
+    }
+
+    /// <summary>
+    /// Clicks the first min(parked, 5) portraits and reads each name; returns the slot of the best-ranked preferred
+    /// name, or null when none was read. Clicking a portrait only selects it. Every portrait is read (about 0.5 s
+    /// each) so <see cref="ParkedCharacterNames"/> lists the whole rotation.
+    /// </summary>
+    private async Task<(int Offset, string Name)?> FindPortraitByNameAsync(
+        IReadOnlyList<string> preferredNames,
+        int parkedCharacterCount,
+        CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return null;
+        }
+
+        (int Offset, string Name, int Rank)? best = null;
+        var seen = new List<string>();
+        for (var offset = 0; offset < Math.Clamp(parkedCharacterCount, 1, 5); offset++)
+        {
+            if (IsPaused)
+            {
+                return null;
+            }
+
+            await _input.ClickAsync(DeterministicCharSlotOnePoint.X + (offset * CharacterSlotStrideX), DeterministicCharSlotOnePoint.Y, cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            var name = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+            if (name is not null)
+            {
+                seen.Add(name);
+            }
+
+            var rank = name is null ? -1 : IndexOfName(preferredNames, name);
+            if (rank >= 0 && (best is null || rank < best.Value.Rank))
+            {
+                best = (offset, preferredNames[rank], rank);
+            }
+        }
+
+        if (seen.Count > 0)
+        {
+            ParkedCharacterNames = seen;
+        }
+
+        if (best is { } found)
+        {
+            _logger.LogInformation("Character Select: '{Name}' is in slot #{Slot}; swapping to it.", found.Name, found.Offset + 1);
+            return (found.Offset, found.Name);
+        }
+
+        _logger.LogInformation("Character Select: none of {Names} was read on the first portraits; using the usual slot choice.", string.Join(", ", preferredNames));
+        return null;
+
+        static int IndexOfName(IReadOnlyList<string> names, string read)
+        {
+            for (var i = 0; i < names.Count; i++)
+            {
+                if (CharacterStock.NamesMatch(names[i], read)) return i;
+            }
+
+            return -1;
+        }
     }
 
     /// <summary>

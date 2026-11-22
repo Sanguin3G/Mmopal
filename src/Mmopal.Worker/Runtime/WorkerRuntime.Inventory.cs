@@ -335,12 +335,15 @@ public sealed partial class WorkerRuntime
             if (invAvailable && bagItemIds.Count > 0 && allowedFlipNames.Count > 0)
             {
                 var itemMeta = await officialData.ResolveItemMetadataAsync(bagItemIds, _ledgerStore, cancellationToken).ConfigureAwait(false);
-                var confirmedFlipItems = itemMeta.Values
+                var flipInfos = itemMeta.Values
                     .Where(info => !string.IsNullOrWhiteSpace(info.Name) &&
                                    allowedFlipNames.Contains(info.Name.Trim()) &&
                                    !blacklistMatcher.IsBlocked(info.Name))
-                    .Select(info => info.Name.Trim())
                     .ToArray();
+                var confirmedFlipItems = flipInfos.Select(info => info.Name.Trim()).ToArray();
+                session.FlipStockByCharacter = CharacterStock.Rank(
+                    officialData.LastCharacterBagItemIds,
+                    flipInfos.Select(info => info.ItemId).ToHashSet());
                 if (confirmedFlipItems.Length > 0)
                 {
                     pendingSellTracker.SyncFromCharacterInventory(confirmedFlipItems, now);
