@@ -133,6 +133,14 @@ public sealed partial class Gw2TradingPostUiDriver
             await _input.ClickAsync(DeterministicCharSlotOnePoint.X + (offset * CharacterSlotStrideX), DeterministicCharSlotOnePoint.Y, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
             var name = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+            if (name is null)
+            {
+                // Right after a fresh launch Character Select is still fading in: no name was read on any portrait in
+                // five launches on 22 Nov. One more read after a full settle.
+                await SettleAsync(cancellationToken).ConfigureAwait(false);
+                name = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             if (name is not null)
             {
                 seen.Add(name);

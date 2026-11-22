@@ -31,6 +31,8 @@ public interface IInputController
         await Task.Delay(70, cancellationToken).ConfigureAwait(false);
         await ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
     }
+    /// <summary>Moves the cursor without clicking (hover). Inputs that cannot move do nothing.</summary>
+    Task MoveAsync(int x, int y, CancellationToken cancellationToken = default) => Task.CompletedTask;
     Task KeyPressAsync(string key, CancellationToken cancellationToken = default);
     Task SendTextAsync(string text, CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);

@@ -128,6 +128,15 @@ public sealed partial class Gw2TradingPostUiDriver
                             point.Y,
                             loginClickAttempts,
                             MaxLoginClickAttempts);
+                        if (_requireTemplateFilesOnDisk)
+                        {
+                            // Rest the cursor on the button first so it highlights: an instant jump-and-click was
+                            // ignored on 22 Nov (3 clicks at (123, 585), no login), while a hand resting the mouse
+                            // there always worked.
+                            await _input.MoveAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+                            await Task.Delay(300, cancellationToken).ConfigureAwait(false);
+                        }
+
                         await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
                         if (_requireTemplateFilesOnDisk)
                         {

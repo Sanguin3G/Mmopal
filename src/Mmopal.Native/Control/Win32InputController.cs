@@ -29,6 +29,28 @@ public sealed partial class Win32InputController : IInputController
     public async Task ClickAsync(int x, int y, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var (absoluteX, absoluteY) = ToAbsolute(x, y);
+        // Move -> wait -> LeftDown -> wait -> LeftUp so DirectX/Coherent UI registers hover and click cleanly.
+        SendOrThrow([Mouse(absoluteX, absoluteY, MoveTo)]);
+        await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+        SendOrThrow([Mouse(absoluteX, absoluteY, MoveTo | MouseEventLeftDown)]);
+        await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+        SendOrThrow([Mouse(absoluteX, absoluteY, MoveTo | MouseEventLeftUp)]);
+    }
+
+    public Task MoveAsync(int x, int y, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var (absoluteX, absoluteY) = ToAbsolute(x, y);
+        SendOrThrow([Mouse(absoluteX, absoluteY, MoveTo)]);
+        return Task.CompletedTask;
+    }
+
+    private const uint MoveTo = MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk;
+
+    /// <summary>Screen pixels to SendInput's 0..65535 virtual-desktop coordinates.</summary>
+    private static (int X, int Y) ToAbsolute(int x, int y)
+    {
         var originX = GetSystemMetrics(VirtualScreenX);
         var originY = GetSystemMetrics(VirtualScreenY);
         var width = GetSystemMetrics(VirtualScreenWidth);
@@ -38,15 +60,8 @@ public sealed partial class Win32InputController : IInputController
             throw new InvalidOperationException("The virtual screen size is unavailable.");
         }
 
-        var absoluteX = (int)Math.Clamp((long)(x - originX) * 65535L / (width - 1), 0, 65535);
-        var absoluteY = (int)Math.Clamp((long)(y - originY) * 65535L / (height - 1), 0, 65535);
-        const uint moveTo = MouseEventMove | MouseEventAbsolute | MouseEventVirtualDesk;
-        // Move -> wait -> LeftDown -> wait -> LeftUp so DirectX/Coherent UI registers hover and click cleanly.
-        SendOrThrow([Mouse(absoluteX, absoluteY, moveTo)]);
-        await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        SendOrThrow([Mouse(absoluteX, absoluteY, moveTo | MouseEventLeftDown)]);
-        await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        SendOrThrow([Mouse(absoluteX, absoluteY, moveTo | MouseEventLeftUp)]);
+        return ((int)Math.Clamp((long)(x - originX) * 65535L / (width - 1), 0, 65535),
+                (int)Math.Clamp((long)(y - originY) * 65535L / (height - 1), 0, 65535));
     }
 
     public async Task KeyPressAsync(string key, CancellationToken cancellationToken = default)

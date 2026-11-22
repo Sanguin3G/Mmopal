@@ -155,6 +155,11 @@ public sealed partial class Gw2TradingPostUiDriver
     /// </summary>
     private async Task<bool> SearchItemAsync(string itemName, CancellationToken cancellationToken, bool requireListedName = false)
     {
+        if (requireListedName && _unconfirmedCancelSearches.GetValueOrDefault(itemName) >= UnconfirmedCancelSearchesBeforeSkip)
+        {
+            return false; // given up for this session (logged when it happened)
+        }
+
         var searchField = await WaitForAnyTemplateAsync(
             ["search.png", "search_focused.png"],
             SearchFieldRegion,
@@ -188,14 +193,42 @@ public sealed partial class Gw2TradingPostUiDriver
         await ReplaceFieldTextAsync(itemName.Trim(), cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+        _lastSearchFoundNothing = false;
         var listed = await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
-        if (requireListedName && !listed)
+        if (requireListedName && _lastSearchFoundNothing)
         {
-            _logger.LogInformation("Not cancelling anything for '{Item}': the search list never showed it, so the first Cancel button could belong to another listing.", itemName);
+            // The game is the fact: the API's order list lags up to ~5 minutes, so an order sold or cancelled (also by
+            // hand in game) still shows there. Do not search for it again this session.
+            _unconfirmedCancelSearches[itemName] = UnconfirmedCancelSearchesBeforeSkip;
+            _logger.LogInformation("'{Item}' has no current order or listing in game any more (sold, or cancelled by hand); nothing to cancel, not searching it again this session.", itemName);
+            return false;
+        }
+
+        if (requireListedName && !listed && !await SearchChipShowsAsync(itemName, cancellationToken).ConfigureAwait(false))
+        {
+            var skips = _unconfirmedCancelSearches[itemName] = _unconfirmedCancelSearches.GetValueOrDefault(itemName) + 1;
+            _logger.LogInformation(
+                "Not cancelling anything for '{Item}': neither the list nor the search filter showed it, so the first Cancel button could belong to another listing.{Note}",
+                itemName,
+                skips >= UnconfirmedCancelSearchesBeforeSkip ? " Not trying it again this session." : string.Empty);
             return false;
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The filter chip above the list ("Search : Ebonblade") in large type. My Transactions lists names in a small
+    /// orange font that OCR does not read: on 22 Nov every cancel check failed on the list text (26 in 23 minutes)
+    /// although the screenshot showed the right single row. Read after the full list wait, so the list has had time
+    /// to refresh. Long names are cut in the chip, so its first 16 letters are compared.
+    /// </summary>
+    private async Task<bool> SearchChipShowsAsync(string itemName, CancellationToken cancellationToken)
+    {
+        var query = NormalizeItemName(itemName);
+        var prefix = query[..Math.Min(query.Length, 16)];
+        var texts = await ReadJoinedTextVariantsAsync(SearchFilterChipsRegion, cancellationToken).ConfigureAwait(false);
+        return texts.Select(NormalizeItemName).Any(text => text.Contains("search", StringComparison.Ordinal) && FuzzyContains(text, prefix));
     }
 
     /// <summary>
@@ -229,6 +262,7 @@ public sealed partial class Gw2TradingPostUiDriver
             if (await TryFindOnceAsync("no_items.png", SearchResultsListRegion, 0.80m, cancellationToken).ConfigureAwait(false) is not null)
             {
                 // "Sorry, no items match this filter." — the search answered; there is simply nothing to click.
+                _lastSearchFoundNothing = true;
                 return false;
             }
 
