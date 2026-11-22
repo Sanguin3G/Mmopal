@@ -125,6 +125,11 @@ public sealed partial class LiveTradingExecutorTests
     [InlineData("Superior Rune of the Scourge", "Superior Rure of the Scourge", "Match")]
     [InlineData("Slice of Allspice Cake", "Slice of Allspice Cake with Ice Cream", "Mismatch")]
     [InlineData("Strong Ring", "Strong Ring of Fire", "Mismatch")]
+    // The dialog cuts long titles (22 Nov); the variants differ before the cut, and a short cut proves nothing.
+    [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Waterbreather of the", "Match")]
+    [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Aquabreather of the", "Mismatch")]
+    [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Hydrobreather of the", "Mismatch")]
+    [InlineData("Superior Rune of the Scourge Extra", "Superior Rune of the Scour", "Mismatch")]
     [InlineData("Eternity", "Seuch :", "Unreadable")]
     [InlineData("Eternity", "", "Unreadable")]
     public void ClassifyItemTitle_tolerates_ocr_noise_but_not_other_items(string expected, string seen, string outcome)

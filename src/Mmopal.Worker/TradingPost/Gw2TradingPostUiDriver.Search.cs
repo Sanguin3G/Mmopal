@@ -26,6 +26,29 @@ public sealed partial class Gw2TradingPostUiDriver
     /// (OCR often drops an apostrophe or misreads a letter); a readable title that is clearly a different item —
     /// including a longer name that merely contains the expected one — is a mismatch.
     /// </summary>
+    /// <summary>
+    /// The dialog cuts long titles: "Soldier's Benthic Waterbreather of the Afflicted" shows as "Soldier's Benthic
+    /// Waterbreather of the", and was refused 14 times in one night. A long title (30+ letters) that is the start of
+    /// the expected name, cut at a word boundary, is that item; the Aquabreather/Hydrobreather variants differ before
+    /// the cut. The typed price is still checked against the API before ordering.
+    /// </summary>
+    internal static bool IsCutOffTitleOf(string expectedName, string seenTitle)
+    {
+        var expected = Words(expectedName);
+        var seen = Words(seenTitle);
+        return seen.Length >= 30 &&
+               expected.Length > seen.Length + 1 &&
+               expected.StartsWith(seen, StringComparison.Ordinal) &&
+               expected[seen.Length] == ' ';
+
+        // Letters and digits, words separated by single spaces (OCR drops apostrophes, not spaces).
+        static string Words(string? text) =>
+            string.Join(' ', new string((text ?? string.Empty).ToLowerInvariant()
+                    .Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))
+                    .ToArray())
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
     internal static (ItemTitleCheck Result, string? SeenTitle) ClassifyItemTitle(string expectedName, IEnumerable<string> ocrTexts)
     {
         var expected = NormalizeItemName(expectedName);
@@ -39,7 +62,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 continue;
             }
 
-            if (NameSimilarity(expected, seen) >= 0.85)
+            if (NameSimilarity(expected, seen) >= 0.85 || IsCutOffTitleOf(expectedName, text))
             {
                 return (ItemTitleCheck.Match, text.Trim());
             }

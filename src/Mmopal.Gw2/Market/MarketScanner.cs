@@ -46,6 +46,9 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
     /// <summary>Items the last scan or re-filter skipped as price spikes (vs the 7-day average).</summary>
     public int LastSpikesSkipped { get; private set; }
 
+    /// <summary>Matches left out of the last scan because other tradable items share their name.</summary>
+    public int LastSharedNamesSkipped { get; private set; }
+
     public async Task<IReadOnlyList<MarketScanItem>> ScanAsync(
         MarketScanFilter filter,
         IReadOnlyCollection<string>? blacklist = null,
@@ -209,6 +212,8 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
             .Select(ItemNameNormalizer.Normalize)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var sharedNames = statsMap is null ? [] : SharedNames(statsMap.Values);
+        var sharedNamesSkipped = 0;
         var filteredRows = new List<(Gw2CommercePrice Price, ProfitabilityResult Eval, double LiquidityScore, Gw2CachedItemInfo Info)>();
         foreach (var candidate in topCandidates)
         {
@@ -219,6 +224,12 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
 
             if (normalizedBlacklist.Contains(ItemNameNormalizer.Normalize(info.Name)))
             {
+                continue;
+            }
+
+            if (sharedNames.Contains(ItemNameNormalizer.Normalize(info.Name)))
+            {
+                sharedNamesSkipped++;
                 continue;
             }
 
@@ -281,7 +292,9 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
         }
 
         LastSpikesSkipped = spikesSkipped;
-        progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, results.Count, $"Scan complete: {results.Count} profitable items found." + SpikeNote(spikesSkipped)));
+        LastSharedNamesSkipped = sharedNamesSkipped;
+        var sharedNote = sharedNamesSkipped > 0 ? $" {sharedNamesSkipped} left out: their name is shared by other rarities or levels." : string.Empty;
+        progress?.Report(new MarketScanProgress(rawPrices.Count, rawPrices.Count, results.Count, $"Scan complete: {results.Count} profitable items found." + SpikeNote(spikesSkipped) + sharedNote));
         return results;
     }
 

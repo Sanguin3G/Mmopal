@@ -30,7 +30,7 @@ public sealed record MarketScanFilter(
     double SpikeTolerance = 0.30);
 
 /// <summary>DataWars2 per-item stats: trades/day (slower side, 7-day average) and 7-day average prices.</summary>
-public sealed record MarketItemStats(double TradesPerDay, long? BuyAvg7dCopper, long? SellAvg7dCopper);
+public sealed record MarketItemStats(double TradesPerDay, long? BuyAvg7dCopper, long? SellAvg7dCopper, string? Name = null);
 
 public static class MarketScanSortModes
 {

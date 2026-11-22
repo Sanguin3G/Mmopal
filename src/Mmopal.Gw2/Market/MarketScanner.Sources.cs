@@ -125,7 +125,7 @@ public sealed partial class Gw2MarketScanner
                 : null;
             var client = _velocityHttpClient ?? ownedClient!;
             using var response = await client.GetAsync(
-                "https://api.datawars2.ie/gw2/v1/items/json?fields=id,1d_buy_sold,1d_sell_sold,7d_buy_sold,7d_sell_sold,7d_buy_price_avg,7d_sell_price_avg",
+                "https://api.datawars2.ie/gw2/v1/items/json?fields=id,name,1d_buy_sold,1d_sell_sold,7d_buy_sold,7d_sell_sold,7d_buy_price_avg,7d_sell_price_avg",
                 cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -191,11 +191,26 @@ public sealed partial class Gw2MarketScanner
             map[id] = new MarketItemStats(
                 perDay,
                 buyAvg > 0 ? (long)Math.Round(buyAvg) : null,
-                sellAvg > 0 ? (long)Math.Round(sellAvg) : null);
+                sellAvg > 0 ? (long)Math.Round(sellAvg) : null,
+                elem.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String ? nameProp.GetString() : null);
         }
 
         return map;
     }
+
+    /// <summary>
+    /// Names that more than one tradable item carries (3,331 of ~28,000 on 22 Nov: "Berserker's Ring" is 11 items of
+    /// different rarity and level). A Trading Post search by name lists them all and the dialog title cannot tell
+    /// them apart, so such an item is bought or priced as the wrong variant: Berserker's Ring showed a live bid of
+    /// 41s 78c against 30s 04c on the API every session, Berserker's Amulet a total of 27s 87c whatever was typed.
+    /// </summary>
+    public static HashSet<string> SharedNames(IEnumerable<MarketItemStats> stats) =>
+        stats
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Name))
+            .GroupBy(entry => ItemNameNormalizer.Normalize(entry.Name!), StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private async Task<T> GetJsonAsync<T>(string relativeUrl, CancellationToken cancellationToken)
     {
