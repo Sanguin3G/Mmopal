@@ -1,3 +1,5 @@
+using Mmopal.Contracts;
+
 namespace Mmopal.Gw2;
 
 /// <summary>
@@ -37,6 +39,41 @@ public static class CharacterStock
         var best = ranked.FirstOrDefault(entry => !NamesMatch(entry.Name, currentCharacter));
         return best.Name is not null && best.Items >= MinItemsForStockSwap && best.Items > current ? best.Name : null;
     }
+
+    /// <summary>A character holding at least this many flip items lists twice as many per sell pass.</summary>
+    public const int BacklogItemsForBiggerSellPass = 10;
+
+    /// <summary>Unsold units of each flip item across all characters' bags, by item name.</summary>
+    public static IReadOnlyDictionary<string, long> HeldByItem(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, long>> bagsByCharacter,
+        IReadOnlyDictionary<int, string> flipItemNames)
+    {
+        var held = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (itemId, count) in bagsByCharacter.Values.SelectMany(bag => bag))
+        {
+            if (flipItemNames.TryGetValue(itemId, out var name))
+            {
+                held[name] = held.GetValueOrDefault(name) + count;
+            }
+        }
+
+        return held;
+    }
+
+    /// <summary>
+    /// Candidates minus items that already hold at least one order's worth of unsold units in bags. Buying more of
+    /// an item that has not been listed yet only ties up gold: on 21-22 Nov 97 bought items (~145g) sat unsold while
+    /// the same items kept being re-bought (Twin Sisters: 11 orders placed in the run, 8 still unsold in bags at the end).
+    /// </summary>
+    public static IReadOnlyList<ItemCandidate> WithoutHeldStock(
+        IReadOnlyList<ItemCandidate> candidates,
+        IReadOnlyDictionary<string, long> heldByItem,
+        long orderQuantity) =>
+        heldByItem.Count == 0
+            ? candidates
+            : candidates
+                .Where(candidate => heldByItem.GetValueOrDefault(candidate.ItemName.Trim()) < Math.Max(1, candidate.Quantity ?? orderQuantity))
+                .ToArray();
 
     /// <summary>
     /// True when an OCR read of the Character Select name and an API character name are the same character. Only

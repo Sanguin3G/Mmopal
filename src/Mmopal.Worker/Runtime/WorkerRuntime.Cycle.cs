@@ -332,6 +332,23 @@ public sealed partial class WorkerRuntime
             cycleCandidates = cycleCandidates.Where(c => !_buyCompetition.IsPaused(c.ItemName, cycleNow)).ToArray();
         }
 
+        // Sell before buying again: an item still unsold in some character's bags is not bought again until listed.
+        if (session.Request.EnableInventorySellPass)
+        {
+            var withoutStock = CharacterStock.WithoutHeldStock(cycleCandidates, session.HeldFlipItems, session.Request.DefaultOrderQuantity ?? 1);
+            var waiting = cycleCandidates.Count - withoutStock.Count;
+            if (waiting > 0 && waiting != session.BuysWaitingOnStock)
+            {
+                _logger.LogInformation(
+                    "Not buying {Count} item(s) still unsold in bags until they are listed: {Items}.",
+                    waiting,
+                    string.Join(", ", cycleCandidates.Except(withoutStock).Select(c => c.ItemName).Take(12)));
+            }
+
+            session.BuysWaitingOnStock = waiting;
+            cycleCandidates = withoutStock;
+        }
+
         return cycleCandidates;
     }
 
@@ -404,6 +421,12 @@ public sealed partial class WorkerRuntime
     {
         var request = session.Request;
         var maxPerPass = Math.Max(1, session.Profile.MaxOverbidUpdatesPerPass);
+        // A big backlog on this character is listed faster; the buy cycle waits a little longer meanwhile.
+        if (session.FlipStockByCharacter.FirstOrDefault(entry => CharacterStock.NamesMatch(entry.Name, driver.CurrentCharacterName)).Items >= CharacterStock.BacklogItemsForBiggerSellPass)
+        {
+            maxPerPass *= 2;
+        }
+
         if (session.SellQueue.GetReadyTargets(_utcNow(), maxPerPass).Count == 0)
         {
             return 0;
@@ -655,7 +678,8 @@ public sealed partial class WorkerRuntime
                 nextCharacterSwapAt = session.AfkSwap.NextSwapAt,
                 sessionCap = session.Cap.Describe(now),
                 marketList = DescribeMarketList(request, session.Candidates.Count, session.LastRescanCount, session.LastRescanUtc, now) +
-                             (_buyCompetition.PausedItems(now).Count is var botWar and > 0 ? $" · {botWar} paused (outbid, no fills)" : string.Empty),
+                             (_buyCompetition.PausedItems(now).Count is var botWar and > 0 ? $" · {botWar} paused (outbid, no fills)" : string.Empty) +
+                             (session.BuysWaitingOnStock > 0 ? $" · {session.BuysWaitingOnStock} waiting to sell stock" : string.Empty),
                 portfolio = DescribePortfolio(request, portfolioGuidance, session.LastLedgerSyncNote),
                 sessionStartedAt = session.Cap.StartedAt,
                 sessionExpiresAt = session.Cap.ExpiresAt,

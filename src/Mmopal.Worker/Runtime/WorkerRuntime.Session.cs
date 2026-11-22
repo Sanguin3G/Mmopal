@@ -55,6 +55,10 @@ public sealed partial class WorkerRuntime
         public DateTimeOffset LastInventoryApiSyncUtc { get; set; } = DateTimeOffset.MinValue;
         /// <summary>Characters holding unsold flip items, most first (from the last bag sync).</summary>
         public IReadOnlyList<(string Name, long Items)> FlipStockByCharacter { get; set; } = [];
+        /// <summary>Unsold units of each flip item across all bags (from the last bag sync).</summary>
+        public IReadOnlyDictionary<string, long> HeldFlipItems { get; set; } = new Dictionary<string, long>();
+        /// <summary>Candidates skipped last cycle because their item is still unsold in bags.</summary>
+        public int BuysWaitingOnStock { get; set; }
 
         // Recovery budget.
         public int GameRestartsUsed { get; set; }

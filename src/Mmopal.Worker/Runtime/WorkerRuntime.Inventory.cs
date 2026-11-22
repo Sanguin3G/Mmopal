@@ -344,6 +344,9 @@ public sealed partial class WorkerRuntime
                 session.FlipStockByCharacter = CharacterStock.Rank(
                     officialData.LastCharacterBagItemIds,
                     flipInfos.Select(info => info.ItemId).ToHashSet());
+                session.HeldFlipItems = CharacterStock.HeldByItem(
+                    officialData.LastCharacterBagItemIds,
+                    flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim()));
                 if (confirmedFlipItems.Length > 0)
                 {
                     pendingSellTracker.SyncFromCharacterInventory(confirmedFlipItems, now);
