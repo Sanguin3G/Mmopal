@@ -60,6 +60,39 @@ public static class CharacterStock
         return held;
     }
 
+    /// <summary>Names of the flip items each character holds, by character.</summary>
+    public static IReadOnlyDictionary<string, IReadOnlySet<string>> ItemsByCharacter(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<int, long>> bagsByCharacter,
+        IReadOnlyDictionary<int, string> flipItemNames) =>
+        bagsByCharacter.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlySet<string>)pair.Value.Keys
+                .Where(flipItemNames.ContainsKey)
+                .Select(id => flipItemNames[id])
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Sell targets the logged-in character can list: drops items the API shows only on other characters. Kept: items
+    /// on this character, items no bag shows yet (just collected from the Delivery Box), and everything when the
+    /// current character is unknown. In 2.3 h on 22 Nov, 74 bag searches missed items held by other characters.
+    /// </summary>
+    public static IReadOnlyList<string> ListableHere(
+        IEnumerable<string> targets,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> itemsByCharacter,
+        string? currentCharacter)
+    {
+        var here = itemsByCharacter.FirstOrDefault(pair => NamesMatch(pair.Key, currentCharacter)).Value;
+        if (here is null)
+        {
+            return targets.ToArray();
+        }
+
+        return targets
+            .Where(item => here.Contains(item) || !itemsByCharacter.Values.Any(items => items.Contains(item)))
+            .ToArray();
+    }
+
     /// <summary>
     /// Candidates minus items that already hold at least one order's worth of unsold units in bags. Buying more of
     /// an item that has not been listed yet only ties up gold: on 21-22 Nov 97 bought items (~145g) sat unsold while

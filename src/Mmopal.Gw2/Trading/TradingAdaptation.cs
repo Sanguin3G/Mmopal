@@ -109,6 +109,14 @@ public static class SellRelistPolicy
         {
             if (picks.Count >= maxPerPass) break;
             var name = group.Key;
+            if (group.Count() > 1)
+            {
+                // The cancel flow clicks the first Cancel button its search lists. With several of our listings that
+                // is often not the stale one: on 22 Nov Pyre Dye (3 listings) was "cancelled" twice while its 41 h old
+                // 1g 39s 88c listing stayed up, each wrong cancel losing the 5% listing fee.
+                continue;
+            }
+
             var oldest = group.OrderBy(order => order.Created).First();
             var age = nowUtc - oldest.Created;
             if (group.Any(order => order.MinimumSellPriceCopper is not { } ask || ask <= 0 || ask >= order.PriceCopper))

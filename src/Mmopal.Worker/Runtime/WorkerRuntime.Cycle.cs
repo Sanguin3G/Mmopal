@@ -439,7 +439,7 @@ public sealed partial class WorkerRuntime
             maxPerPass *= 2;
         }
 
-        if (session.SellQueue.GetReadyTargets(_utcNow(), maxPerPass).Count == 0)
+        if (ReadyTargetsHere(session, driver, maxPerPass).Count == 0)
         {
             return 0;
         }
@@ -450,7 +450,7 @@ public sealed partial class WorkerRuntime
             return null;
         }
 
-        var readyTargets = session.SellQueue.GetReadyTargets(_utcNow(), maxPerPass);
+        var readyTargets = ReadyTargetsHere(session, driver, maxPerPass);
         IReadOnlyDictionary<string, SellPricing> sellPricing;
         (readyTargets, sellPricing) = await KeepProfitableSellTargetsAsync(readyTargets, session.Candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
         if (readyTargets.Count == 0)
@@ -487,6 +487,15 @@ public sealed partial class WorkerRuntime
 
         return soldCount;
     }
+
+    /// <summary>Queued sell targets this character holds (or that no bag shows yet), up to the per-pass limit.</summary>
+    private IReadOnlyList<string> ReadyTargetsHere(TradingSession session, Gw2TradingPostUiDriver driver, int maxPerPass) =>
+        CharacterStock.ListableHere(
+                session.SellQueue.GetReadyTargets(_utcNow(), int.MaxValue),
+                session.FlipItemsByCharacter,
+                driver.CurrentCharacterName)
+            .Take(maxPerPass)
+            .ToArray();
 
     /// <summary>Cancels outbid buy orders so the next cycle can bid again, and pauses items another bot keeps camping.</summary>
     private async Task<int> RefreshOutbidBuysAsync(

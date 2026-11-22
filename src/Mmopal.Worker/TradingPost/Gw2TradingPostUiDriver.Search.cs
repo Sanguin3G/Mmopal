@@ -125,7 +125,12 @@ public sealed partial class Gw2TradingPostUiDriver
         }
     }
 
-    private async Task<bool> SearchItemAsync(string itemName, CancellationToken cancellationToken)
+    /// <summary>
+    /// Types the name into the search box and waits for the result list. With <paramref name="requireListedName"/>
+    /// (cancel flows, which click the first Cancel button) it returns false unless a result row shows the name:
+    /// an unconfirmed list may still hold the previous search's rows or the whole unfiltered list.
+    /// </summary>
+    private async Task<bool> SearchItemAsync(string itemName, CancellationToken cancellationToken, bool requireListedName = false)
     {
         var searchField = await WaitForAnyTemplateAsync(
             ["search.png", "search_focused.png"],
@@ -160,7 +165,13 @@ public sealed partial class Gw2TradingPostUiDriver
         await ReplaceFieldTextAsync(itemName.Trim(), cancellationToken).ConfigureAwait(false);
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
-        await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
+        var listed = await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
+        if (requireListedName && !listed)
+        {
+            _logger.LogInformation("Not cancelling anything for '{Item}': the search list never showed it, so the first Cancel button could belong to another listing.", itemName);
+            return false;
+        }
+
         return true;
     }
 
@@ -170,11 +181,12 @@ public sealed partial class Gw2TradingPostUiDriver
     /// for Outbid Refresh a different order's Cancel button). Polls the result list until a row shows the searched
     /// name; on timeout it carries on (the buy flow still verifies the opened item's title) and logs it.
     /// </summary>
-    private async Task WaitForSearchResultsAsync(string itemName, CancellationToken cancellationToken)
+    /// <returns>True when a result row showed the name (or there is no OCR to check with); false otherwise.</returns>
+    private async Task<bool> WaitForSearchResultsAsync(string itemName, CancellationToken cancellationToken)
     {
         if (_textLocator is null)
         {
-            return;
+            return true;
         }
 
         var query = NormalizeItemName(itemName);
@@ -194,7 +206,7 @@ public sealed partial class Gw2TradingPostUiDriver
             if (await TryFindOnceAsync("no_items.png", SearchResultsListRegion, 0.80m, cancellationToken).ConfigureAwait(false) is not null)
             {
                 // "Sorry, no items match this filter." — the search answered; there is simply nothing to click.
-                return;
+                return false;
             }
 
             var texts = await ReadTextVariantsAsync(SearchResultsListRegion, cancellationToken).ConfigureAwait(false);
@@ -207,7 +219,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     _logger.LogInformation("Search results for '{Item}' appeared after {Ms:0} ms.", itemName, waited);
                 }
 
-                return;
+                return true;
             }
 
             if (_utcNow() >= deadline)
@@ -215,7 +227,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 _searchConfirmStats[query] = (stats.Seen, stats.Missed + 1);
                 if (neverConfirms)
                 {
-                    return; // known to never confirm on screen; the opened item's title is still verified
+                    return false; // rarely confirms on screen; the buy flow still verifies the opened item's title
                 }
 
                 _logger.LogInformation(
@@ -224,7 +236,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     timeoutMs,
                     UsesShortSearchWait(stats.Seen, stats.Missed + 1) ? $" Its name is rarely readable in the results, so later searches wait {ShortSearchWaitMs / 1000} s." : string.Empty);
                 await SaveDiagnosticFrameAsync("search-unconfirmed", cancellationToken).ConfigureAwait(false);
-                return;
+                return false;
             }
 
             await Task.Delay(Math.Max(_pollMs, 250), cancellationToken).ConfigureAwait(false);

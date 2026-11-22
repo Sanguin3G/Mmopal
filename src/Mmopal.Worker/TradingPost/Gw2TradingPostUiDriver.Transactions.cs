@@ -125,7 +125,7 @@ public sealed partial class Gw2TradingPostUiDriver
             cancellationToken.ThrowIfCancellationRequested();
             if (IsPaused) break;
             await DismissTransientPopupAsync("Outbid Refresh", cancellationToken).ConfigureAwait(false);
-            if (!await SearchItemAsync(order.ItemName, cancellationToken).ConfigureAwait(false))
+            if (!await SearchItemAsync(order.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
             {
                 continue;
             }
@@ -193,7 +193,7 @@ public sealed partial class Gw2TradingPostUiDriver
             cancellationToken.ThrowIfCancellationRequested();
             if (IsPaused) break;
             await DismissTransientPopupAsync("Relist", cancellationToken).ConfigureAwait(false);
-            if (!await SearchItemAsync(relist.Listing.ItemName, cancellationToken).ConfigureAwait(false))
+            if (!await SearchItemAsync(relist.Listing.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
             {
                 continue;
             }

@@ -348,9 +348,9 @@ public sealed partial class WorkerRuntime
         session.FlipStockByCharacter = CharacterStock.Rank(
             officialData.LastCharacterBagItemIds,
             flipInfos.Select(info => info.ItemId).ToHashSet());
-        session.HeldFlipItems = CharacterStock.HeldByItem(
-            officialData.LastCharacterBagItemIds,
-            flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim()));
+        var flipNamesById = flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim());
+        session.HeldFlipItems = CharacterStock.HeldByItem(officialData.LastCharacterBagItemIds, flipNamesById);
+        session.FlipItemsByCharacter = CharacterStock.ItemsByCharacter(officialData.LastCharacterBagItemIds, flipNamesById);
         if (session.LiveDriver is { } driver)
         {
             // A launch, game restart or disconnect lands on Character Select too: enter the character holding stock.

@@ -12,6 +12,17 @@ public sealed class CharacterStockTests
     };
 
     [Fact]
+    public void ListableHere_drops_items_held_only_by_other_characters()
+    {
+        var byCharacter = CharacterStock.ItemsByCharacter(Bags, new Dictionary<int, string> { [1] = "Twin Sisters", [2] = "Pyre Dye" });
+        string[] queue = ["Twin Sisters", "Pyre Dye", "Abyss Dye"]; // Abyss Dye: just collected, no bag shows it yet
+
+        Assert.Equal(["Twin Sisters", "Abyss Dye"], CharacterStock.ListableHere(queue, byCharacter, "Johanne Shepar"));
+        Assert.Equal(queue, CharacterStock.ListableHere(queue, byCharacter, "Mesmerising Rizzo"));
+        Assert.Equal(queue, CharacterStock.ListableHere(queue, byCharacter, null)); // current character unknown
+    }
+
+    [Fact]
     public void HeldByItem_adds_up_flip_items_across_characters_and_ignores_the_rest()
     {
         var held = CharacterStock.HeldByItem(Bags, new Dictionary<int, string> { [1] = "Twin Sisters", [2] = "Pyre Dye" });

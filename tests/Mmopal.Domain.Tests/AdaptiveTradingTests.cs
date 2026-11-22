@@ -54,6 +54,26 @@ public sealed class AdaptiveTradingTests
         new(TransactionType.Sell, name, price, 1, Now.AddHours(-hoursAgo), lowestAsk, null);
 
     [Fact]
+    public void Relist_skips_items_with_several_of_our_listings()
+    {
+        // Pyre Dye, 22 Nov: three listings; the cancel flow clicks the first Cancel button its search shows, which
+        // was not the stale one, twice.
+        var orders = new[]
+        {
+            Listing("Pyre Dye", 13_988, 9_208, 43),
+            Listing("Pyre Dye", 12_040, 9_208, 38),
+            Listing("Pyre Dye", 9_208, 9_208, 1),
+            Listing("Ebonblade", 3_912, 3_686, 36),
+        };
+        var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase) { ["Pyre Dye"] = 6_996, ["Ebonblade"] = 2_036 };
+        var traded = new HashSet<string>(["Pyre Dye", "Ebonblade"], StringComparer.OrdinalIgnoreCase);
+
+        var picks = SellRelistPolicy.Select(orders, paid, traded, new Dictionary<string, DateTimeOffset>(), undercutCopper: 1, Now, maxPerPass: 5);
+
+        Assert.Equal("Ebonblade", Assert.Single(picks).Listing.ItemName);
+    }
+
+    [Fact]
     public void Relist_only_old_undercut_traded_items_that_still_cover_cost_and_the_lost_fee()
     {
         var orders = new[]
