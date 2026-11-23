@@ -42,6 +42,8 @@ public static class VirtualKeyNames
             "space" => 0x20,
             "escape" or "esc" => 0x1B,
             "backspace" => 0x08,
+            "end" => 0x23,
+            "delete" => 0x2E,
             "left" => 0x25,
             "up" => 0x26,
             "right" => 0x27,

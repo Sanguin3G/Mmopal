@@ -16,7 +16,7 @@ orders through bounded clicks and keystrokes. Live input only happens in Live mo
 | `src/Mmopal.Desktop` | WPF app: `MainWindow` shell (sidebar, navigation, responsive layout, worker events) and one UserControl per page in `Pages/` (Session, Income, Reports, Scanner, Lists, Settings, Guide). `MainWindow.FindName` also searches the pages, which the smoke tests rely on. |
 | `tests/Mmopal.Domain.Tests` | xUnit tests, including WPF smoke tests and real GW2 dialog crops in `Fixtures/coin-frames`. |
 | `assets/templates/tradingpost` | Template PNGs, calibrated on 1024×768 frames. |
-| `docs/` | How it behaves: `gw2-trading-controller.md` (live flows), `trading-strategy.md` (rules, Auto-Tune), `run.md`. |
+| `docs/` | `run.md` (setup, going live), `trading-strategy.md` (rules, Auto-Tune), `gw2-trading-controller.md` (live flows, log lines), `architecture.md` (processes, replay payload). Each fact lives in one of them; keep them short. |
 
 Folders under `Mmopal.Gw2`, `Mmopal.Worker` and `Mmopal.Native` are for reading only: types keep the project namespace
 (`Mmopal.Gw2`, `Mmopal.Worker`, `Mmopal.Native`), except `Mmopal.Worker.Vision`.

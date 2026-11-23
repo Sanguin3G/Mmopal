@@ -222,7 +222,7 @@ public sealed partial class Gw2TradingPostUiDriver
             if (qtyBox is not null)
             {
                 await _input.ClickAsync(CenterX(qtyBox) + 112, CenterY(qtyBox), cancellationToken).ConfigureAwait(false);
-                await ReplaceFieldTextAsync(qty.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
+                await ReplaceFieldTextAsync(qty.ToString(System.Globalization.CultureInfo.InvariantCulture), LongestNumberText, cancellationToken).ConfigureAwait(false);
             }
         }
 

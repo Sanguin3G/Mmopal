@@ -649,6 +649,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private (WorkerState State, string? Detail)? _lastLoggedStatus;
+
     private void ApplyStatusEvent(string payload, string rawLog)
     {
         var status = JsonSerializer.Deserialize<WorkerStatus>(payload);
@@ -665,6 +667,16 @@ public partial class MainWindow : Window
         var stateLabel = SessionPage.UpdateStatusCard(status.State, statusDetail);
         UpdateSidebarStatus(status.State, stateLabel);
         UpdateSessionButtonStates(status.State);
+
+        // Each command answers with the status the worker has already announced, so Start, Pause and Resume were logged
+        // twice. Every cycle's routine statuses only repeat what its Cycle line says; the status card shows them.
+        var isRepeat = _lastLoggedStatus == (status.State, statusDetail);
+        _lastLoggedStatus = (status.State, statusDetail);
+        if (isRepeat || status.LastAction is WorkerStatus.EvaluatingMarket or WorkerStatus.CycleComplete)
+        {
+            return;
+        }
+
         AddLog(
             string.IsNullOrWhiteSpace(statusDetail)
                 ? $"Session state: {status.State}"
@@ -756,6 +768,8 @@ public partial class MainWindow : Window
             $"{GetInt32Property(root, "decisions")} evaluated",
             $"{GetInt32Property(root, "actions")} actions"
         };
+        var skippedActions = GetInt32Property(root, "skippedActions");
+        if (skippedActions > 0) summaryParts.Add($"{skippedActions} skipped");
         if (tpOpen.HasValue) summaryParts.Insert(1, tpOpen.Value ? "TP open" : "TP closed");
         var soldCount = GetInt32Property(root, "soldCount");
         if (soldCount > 0) summaryParts.Add($"{soldCount} listed sell");

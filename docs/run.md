@@ -1,49 +1,56 @@
-# Run
+# Run Mmopal
 
-Build and start the WPF window. The window starts and supervises the worker process itself (bound via a Windows Job Object and `--parent-pid` watchdog, over a `CurrentUserOnly` named pipe). Tests never open Guild Wars 2.
+## First session (no game needed)
 
-## Build
+1. `dotnet run --project src/Mmopal.Desktop/Mmopal.Desktop.csproj`, or start `Mmopal.Desktop` in Rider.
+2. **Guide & Setup** shows what is still missing.
+3. On **Session**, keep **Dry run** and **Replay data** and click **Try offline sample**. The Activity Log shows what
+   each cycle would do.
 
-Use Rider with `Mmopal.Desktop` as the startup project, or:
+## Connect your account
 
-```powershell
-dotnet build Mmopal.sln
-dotnet run --project src/Mmopal.Desktop/Mmopal.Desktop.csproj
-```
+Add a key in **Settings → Accounts & API** with the `account`, `tradingpost`, `wallet`, `inventories` and `characters`
+permissions. Keys are encrypted with Windows DPAPI. Several accounts are fine; switch with **Active Account** in the
+sidebar. Each has its own ledger, launcher platform (ArenaNet or Steam) and number of parked characters.
 
-`dotnet test Mmopal.sln` runs the xUnit suite. One test exercises `WindowsDesktopScreenshotProvider` on a 4×4 desktop region and one test shows the window on a background thread through a stand-in supervisor. The suite does not open Guild Wars 2 or send input.
+On every launch Mmopal syncs the account, runs Auto-Tune and scans the market (the **Startup** strip on Session).
 
-## First session
+## Going live
 
-1. Open **Guide & Setup** to review the auto-checked **Pre-Flight Readiness Checklist** (API key, GW2 path, Windows 100% display scale, and flip list), local-timezone Market Schedule cards, and 4 compact flipping rules.
-2. Leave **Data source** on **Replay data** and **Run mode** on **Dry run** in the **Session** view, then click **Try offline sample**. The activity log shows a clean human-readable summary by default (toggle **Raw JSON** to inspect payloads). No game window is required.
-3. To find real flips, open **Market Scanner**, pick a preset (such as **Balanced** or **Auto-Tune from Wallet**), keep **Sort by = Est. profit/day** and **Min trades/day** at 10 or more, click **Scan GW2 Market**, then **Use All for Session** or **+ Custom List**. The scan uses `v2/commerce/prices`, `v2/commerce/listings`, cached `v2/items` and the DataWars2 7-day trade counts; GW2BLTC / GW2Profits CSV import also works. Re-scan at least daily. See [trading-strategy.md](trading-strategy.md) for why volume matters more than ROI.
-4. Open **Income & Portfolio** and click **Sync GW2 Account** to permanently archive transactions into SQLite per active GW2 account past ArenaNet's 90-day cutoff, compute exact FIFO realized flip profit, inspect 90%-net active sell equity, and see which open orders are **Top of Book**, **Outbid**, or **Undercut**. Switch accounts anytime via the sidebar **Active Account** dropdown or the **API Keys** table in **Settings → Accounts & API**.
-5. Manage your custom targets and blocked items in **Lists & Blacklist**, and configure multi-account keys, smart GW2 client detect (ignoring Steam `.ico` files) & auto-snap (`1024×768`), **Network & Ping Latency Profile** (`High Ping / SEA→EU 200–300 ms` with 7500ms UI wait / 900ms settle / 60s API timeout), `0g` / reserve floor buy pause, 10h session duration cap, parked character count/keybinds, and global hotkeys (`Ctrl+Shift+P` / `Ctrl+Shift+S` / `Ctrl+Shift+X`) in **Settings**.
+In the game:
 
-**Observe only** reports live detection without sending input. **Live (Armed trading)** always uses **Screen observe** (picking Live switches the data source; picking Replay data switches Live back to Dry run) and executes bounded Trading Post clicks/keys only when **Arm live input** is checked on the Session toolbar (otherwise halts safely in `NeedsAttention`); buys automatically pause whenever wallet balance hits `0g` or your gold floor while delivery collection, inventory selling, and free outbid buy refreshes remain active. **Fishing** stays a scaffold and issues no input.
+- **Resolution = Window**, **Interface Size = Larger**, **DPI Scaling = Off**, Dynamic HUD = Always Hide All.
+- Stand each character you rotate **right next to a Black Lion trader**, not the bank: the Delivery Box only opens
+  there. Put them in the first Character Select slots.
 
-## Screen observe & GW2 API keys
+In Mmopal:
 
-**Screen observe** reads the screen with owned Win32 capture (`WindowsDesktopScreenshotProvider`), OpenCV template search (`FrameTemplateMatcher`), and Windows OCR (`WindowsOcrReader`). Prices, all pages of current buy/sell transactions, and wallet coin balance come from the official Guild Wars 2 API.
+1. **Settings → GW2 Client & Recovery:** **Detect** the game, choose the latency mode (High Ping for 200 ms+), and set
+   **Parked chars** to how many characters you rotate.
+2. **Session → Launch & snap GW2** (the monitor icon) puts the game at 1024×768 in the top-left corner.
+3. Try **Observe only** first: the Game card should say **TP open**.
+4. Switch to **Live (Armed trading)**. Screen observe and **Arm live input** are set for you. Press **Start session**.
 
-Manage one or multiple GW2 API keys (`account`, `tradingpost`, `wallet`, `inventories` scopes) in **Settings → Accounts & API** — keys are stored encrypted with **Windows DPAPI (`CurrentUser`)** in `%LOCALAPPDATA%\Mmopal\profiles\gw2-api-keys.dpapi` (automatically migrating legacy single-key `gw2-api-key.dpapi`), with status verification, custom account labels, copy/reorder/delete controls, and per-account SQLite isolation. You can also supply `MMOPAL_Native__Gw2ApiKey` as an environment variable override.
+| Key | Button | Effect |
+| --- | --- | --- |
+| Ctrl+Shift+P | Pause / Resume | Starts nothing new until resumed. |
+| Ctrl+Shift+S | Stop | Finishes the current step, saves the report (90 s at most). |
+| Ctrl+Shift+X | Emergency stop | Stops at once, even mid-action. |
 
-Template pictures load from `assets/templates/tradingpost` (configured by `Native:TemplateRoot` in `config/appsettings.json`) unless a `templateRoot` override is supplied in the payload. The worker never loads `core.dll` or any file from the old Lua distribution.
+Leave the mouse and keyboard alone while it runs; its keys go to whatever has the focus.
 
-## Where files go
+## When something is off
 
-User data defaults to `%LOCALAPPDATA%\Mmopal`: logs, `mmopal.db`, checkpoints, profiles (`trading-limits.json`, `client-settings.json`, `operator-settings.json`, `custom-shoppinglist.json`, `blacklist.json`, `gw2-api-keys.dpapi`), and screenshots. Use **Open Data Folder** in **Settings** to inspect them. Do not commit API keys or runtime files.
+| You see | Do |
+| --- | --- |
+| `Delivery Box still locked … on 'Name'` | Move that character next to a trader. Mmopal swaps after 30 minutes. |
+| `buy orders paused` or `0 accepted` every cycle | Gold floor or the 50% buy-order cap reached. Wait for fills or change it in Settings → Trading & Portfolio. |
+| `Not listing X: the bags hold N but only M …` | The stack holds copies of your own. Move them to the bank and the rest is listed. |
+| `Order audit: … the API shows that order as …` | A wrong item was ordered. Cancel it in game. |
+| `None of the search rows opened 'X'` | Blacklist X; the search cannot reach it. |
+| `Auto-list cannot read your bags` | The key lacks `characters` or `inventories`. |
 
-## Manual check on the installed client
+## Where files are
 
-Do this by hand. There is no automated click-through.
-
-1. Open **Settings**, paste and save your GW2 API key (DPAPI encrypted — auto-verified against `api.guildwars2.com`).
-2. Click **Detect** (or enter your `Gw2-64.exe` path / `steam://rungameid/1284210`), choose your latency profile (default **High Ping** for 220–280ms VN→EU), set in-game **Resolution = Window**, **Interface Size = Larger**, and **DPI Scaling = Off**, then click **Launch & snap GW2** in **Session** to automatically resize and snap Guild Wars 2 to top-left `(0, 0)` at `1024×768`.
-3. Log in and park characters next to Trading Post NPCs (`F` interact).
-4. Test **Data source = Screen observe** in **Observe only** mode first to confirm TP detection and order book telemetry in the Session cards.
-5. When ready for bounded autonomous trading, switch **Run mode** to **Live (Armed trading)** (Data source follows to Screen observe and **Arm live input** is ticked for you; leaving Live unticks it), and click **Start session** (note button states dynamically lock and indicate `Running...` / `Paused`). The header shows **Live · Armed** while input is armed.
-
-On high ping (the **High Ping** latency profile) the bot waits after every TP search until the result list shows the searched item, and verifies the opened item's name and price before ordering. In-game message boxes such as the log-in server notice (Code=42) are dismissed automatically. Details: [gw2-trading-controller.md](gw2-trading-controller.md).
-6. **Stop** (`Ctrl+Shift+S`) finishes the current step (an order being typed, a listing), then stops and saves the session report; after 90 s it stops anyway. **Emergency stop** (`Ctrl+Shift+X`) stops instantly, even mid-action.
+`%LOCALAPPDATA%\Mmopal` (**Settings → Open Data Folder**): `logs`, `mmopal.db` (ledger and reports), `profiles`
+(settings, lists, encrypted keys), `screenshots` (frames of reads that failed). Never commit any of it.

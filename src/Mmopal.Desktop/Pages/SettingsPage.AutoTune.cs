@@ -69,6 +69,7 @@ public partial class SettingsPage
         Host.SessionPage.StatusText.Text = message;
         Host.ScannerPage.ScanStatusText.Text = message;
         Host.AddLog($"Auto-Tune ({sourceLabel}): {tune.Summary}");
+        _lastAutoTuneLogged = tune.Summary;
         if (feedbackButton is not null)
         {
             await FlashButtonFeedbackAsync(feedbackButton, "✓ Tuned");
@@ -106,6 +107,8 @@ public partial class SettingsPage
         return tune;
     }
 
+    private string? _lastAutoTuneLogged;
+
     /// <summary>Re-tune right before a session from the last synced wallet and orders (no network call).</summary>
     internal void TuneBeforeSession()
     {
@@ -115,7 +118,10 @@ public partial class SettingsPage
         }
 
         var tune = ApplySmartAutoTune(snapshot.WalletCopper);
-        Host.AddLog($"Auto-Tune before session (gold as of the last account sync): {tune.Summary}");
+        Host.AddLog(tune.Summary == _lastAutoTuneLogged
+            ? "Auto-Tune before session: same values as the last Auto-Tune."
+            : $"Auto-Tune before session (gold as of the last account sync): {tune.Summary}");
+        _lastAutoTuneLogged = tune.Summary;
     }
 
     private void TunedField_TextChanged(object sender, TextChangedEventArgs e)

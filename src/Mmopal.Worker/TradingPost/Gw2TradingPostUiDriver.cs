@@ -74,6 +74,9 @@ public sealed partial class Gw2TradingPostUiDriver
     private readonly HashSet<string> _ambiguousOutbidLogged = new(StringComparer.OrdinalIgnoreCase);
     // Cancel searches that could not be confirmed, per item: the 23 min session on 22 Nov searched Ebonblade 6 times
     // and Elder Draco-Pop, Reclaimed Torch and Rune of the Renegade 4-5 times each without cancelling anything.
+    private const int LongestSearchText = 60;
+    private const int LongestNumberText = 6;
+    private int _searchBoxMayHold = LongestSearchText;
     private readonly Dictionary<string, int> _unconfirmedCancelSearches = new(StringComparer.OrdinalIgnoreCase);
     private const int UnconfirmedCancelSearchesBeforeSkip = 2;
     private bool _lastSearchFoundNothing;

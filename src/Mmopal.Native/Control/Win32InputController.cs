@@ -92,6 +92,23 @@ public sealed partial class Win32InputController : IInputController
         }
     }
 
+    public async Task KeyTapsAsync(string key, int count, CancellationToken cancellationToken = default)
+    {
+        var virtualKey = VirtualKeyNames.Plan(key) is [var press, ..] plan && plan.Count(item => !item.KeyUp) == 1
+            ? press.VirtualKey
+            : throw new ArgumentException($"'{key}' is not a single key.", nameof(key));
+        var scan = (ushort)MapVirtualKeyW(virtualKey, 0);
+        var flags = IsExtendedVirtualKey(virtualKey) ? KeyEventExtendedKey : 0u;
+        for (var i = 0; i < count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SendOrThrow([Keyboard(virtualKey, scan, flags)]);
+            await Task.Delay(8, CancellationToken.None).ConfigureAwait(false); // the key always comes up again
+            SendOrThrow([Keyboard(virtualKey, scan, flags | KeyEventKeyUp)]);
+            await Task.Delay(6, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>A single event is sent as is; a chord's events go one at a time, each followed by <paramref name="gapMs"/>.</summary>
     private static async Task SendSpacedAsync(List<Input> events, int gapMs, CancellationToken cancellationToken)
     {

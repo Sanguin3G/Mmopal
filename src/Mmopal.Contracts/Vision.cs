@@ -34,6 +34,14 @@ public interface IInputController
     /// <summary>Moves the cursor without clicking (hover). Inputs that cannot move do nothing.</summary>
     Task MoveAsync(int x, int y, CancellationToken cancellationToken = default) => Task.CompletedTask;
     Task KeyPressAsync(string key, CancellationToken cancellationToken = default);
+    /// <summary>Taps a key several times in a row.</summary>
+    async Task KeyTapsAsync(string key, int count, CancellationToken cancellationToken = default)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            await KeyPressAsync(key, cancellationToken).ConfigureAwait(false);
+        }
+    }
     Task SendTextAsync(string text, CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);
 }

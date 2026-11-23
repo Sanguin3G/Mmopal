@@ -387,7 +387,7 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             await _input.ClickAsync(x, anchorY + 7, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-            await ReplaceFieldTextAsync(value.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
+            await ReplaceFieldTextAsync(value.ToString(System.Globalization.CultureInfo.InvariantCulture), LongestNumberText, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         }
 

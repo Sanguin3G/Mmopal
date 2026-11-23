@@ -152,4 +152,9 @@ public sealed record WorkerStatus(
     string? Profile,
     string? LastAction,
     DateTimeOffset Timestamp,
-    string? Message = null);
+    string? Message = null)
+{
+    /// <summary>Last actions every cycle goes through. Its Health event reports the result, so the log leaves these out.</summary>
+    public const string EvaluatingMarket = "Evaluating market";
+    public const string CycleComplete = "Cycle complete";
+}

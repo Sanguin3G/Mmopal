@@ -163,6 +163,20 @@ public sealed class MainWindowSmokeTests
                 Assert.NotEmpty(savedClientSettings);
                 Assert.NotEmpty(savedOpSettings);
 
+                // A command is answered with the status the worker already announced: logged once. A cycle's routine
+                // statuses update the card only.
+                var log = Assert.IsType<ListBox>(window.FindElement("LogList"));
+                WorkerEvent StatusOf(WorkerState state, string lastAction, string message) => new(
+                    WorkerEventTypes.Status,
+                    JsonSerializer.Serialize(new WorkerStatus(state, BotKind.TradingPost, RunMode.DryRun, "balanced", lastAction, DateTimeOffset.UtcNow, message)));
+                var logged = log.Items.Count;
+                supervisor.Raise(StatusOf(WorkerState.Paused, "Paused", "Pause requested; no new actions will begin."));
+                supervisor.Raise(StatusOf(WorkerState.Paused, "Paused", "Pause requested; no new actions will begin."));
+                supervisor.Raise(StatusOf(WorkerState.ProcessingTrading, WorkerStatus.EvaluatingMarket, "Running a trading cycle."));
+                PumpDispatcher();
+                Assert.Equal(logged + 1, log.Items.Count);
+                Assert.Equal("Running a trading cycle.", status.Text);
+
                 RequireButton(window, "Stop").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpDispatcher();
                 Assert.Equal("Session stopped", status.Text);

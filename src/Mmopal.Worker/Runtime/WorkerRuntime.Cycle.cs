@@ -137,7 +137,7 @@ public sealed partial class WorkerRuntime
 
         if (IsPauseRequested) return CycleStep.NextCycle;
 
-        SetStatusIfNotPaused(WorkerState.ProcessingTrading, BotKind.TradingPost, session.Mode, session.ProfileName, "Evaluating market", "Running a deterministic trading cycle.");
+        SetStatusIfNotPaused(WorkerState.ProcessingTrading, BotKind.TradingPost, session.Mode, session.ProfileName, WorkerStatus.EvaluatingMarket, "Running a trading cycle.");
         var result = await session.Controller.RunCycleAsync(
             session.RunId,
             cycleCandidates,
@@ -703,7 +703,7 @@ public sealed partial class WorkerRuntime
             BotKind.TradingPost,
             session.Mode,
             session.ProfileName,
-            result.Succeeded ? "Cycle complete" : "Cycle requires recovery",
+            result.Succeeded ? WorkerStatus.CycleComplete : "Cycle requires recovery",
             summaryMessage);
         Emit(new WorkerEvent(
             WorkerEventTypes.Health,

@@ -243,13 +243,20 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
-        await ReplaceFieldTextAsync(itemName.Trim(), cancellationToken).ConfigureAwait(false);
+        await ReplaceFieldTextAsync(itemName.Trim(), _searchBoxMayHold, cancellationToken).ConfigureAwait(false);
+        // After a search that was not confirmed, the box may hold more than was typed.
+        _searchBoxMayHold = LongestSearchText;
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
         _lastSearchFoundNothing = false;
         _lastSearchShowedName = false;
         var listed = await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
         _lastSearchShowedName = listed;
+        if (listed)
+        {
+            _searchBoxMayHold = Math.Min(LongestSearchText, itemName.Trim().Length + 4);
+        }
+
         if (requireListedName && _lastSearchFoundNothing)
         {
             // The game is the fact: the API's order list lags up to ~5 minutes, so an order sold or cancelled (also by
@@ -405,16 +412,20 @@ public sealed partial class Gw2TradingPostUiDriver
         return false;
     }
 
-    private async Task ReplaceFieldTextAsync(string text, CancellationToken cancellationToken)
+    /// <summary>
+    /// Replaces a field's text without any key the game binds. Ctrl+A was used before: when the field did not have the
+    /// focus, the game took its A as "strafe left", also with the Trading Post open, and over a night characters drifted
+    /// away from the trader (23 Nov). End, Backspace and Delete do nothing to a character.
+    /// The Deletes come after the text: an emptied number box can fill itself back in ("1") behind the cursor, which
+    /// turned an order for 2 into one for 21.
+    /// </summary>
+    /// <param name="maxExisting">How many characters the field may hold.</param>
+    private async Task ReplaceFieldTextAsync(string text, int maxExisting, CancellationToken cancellationToken)
     {
-        for (var pass = 0; pass < 2; pass++)
-        {
-            await _input.KeyPressAsync("ctrl+a", cancellationToken).ConfigureAwait(false);
-            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-            await _input.KeyPressAsync("backspace", cancellationToken).ConfigureAwait(false);
-            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        }
-
+        await _input.KeyPressAsync("end", cancellationToken).ConfigureAwait(false);
+        await _input.KeyTapsAsync("backspace", maxExisting, cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         await _input.SendTextAsync(text, cancellationToken).ConfigureAwait(false);
+        await _input.KeyTapsAsync("delete", maxExisting, cancellationToken).ConfigureAwait(false);
     }
 }

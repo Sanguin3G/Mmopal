@@ -308,8 +308,10 @@ public sealed partial class LiveTradingExecutorTests
         var result = await driver.PlaceBuyOrderAsync(action, overbidMinCopper: 1, overbidMaxCopper: 1);
 
         Assert.Equal(TradingActionStatus.Skipped, result.Status);
-        Assert.Equal(2, input.KeyPresses.Count(k => k == "ctrl+a"));
-        Assert.Equal(2, input.KeyPresses.Count(k => k == "backspace"));
+        Assert.Single(input.KeyPresses, k => k == "end");
+        Assert.Contains("backspace", input.KeyPresses);
+        // Letters are movement and skill keys in the world: no driver key may ever be a letter chord like Ctrl+A.
+        Assert.DoesNotContain(input.KeyPresses, k => k.Contains('+'));
         Assert.DoesNotContain(input.Clicks, c => c == (439, 396)); // never clicked Place Order after pause
     }
 
