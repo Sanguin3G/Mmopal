@@ -108,6 +108,7 @@ public sealed partial class Gw2TradingPostUiDriver
         // title is the exact item.
         TemplateMatch? buyersAnchor = null;
         var wrongTitles = new List<string>();
+        var titleUnread = false;
         for (var row = 0; row < MaxSearchRowsToTry; row++)
         {
             if (IsPaused)
@@ -125,7 +126,8 @@ public sealed partial class Gw2TradingPostUiDriver
             var (titleCheck, seenTitle) = await CheckOpenedItemTitleAsync(action.ItemName, cancellationToken).ConfigureAwait(false);
             if (titleCheck == ItemTitleCheck.Unreadable)
             {
-                _logger.LogInformation("Could not read the item window title for {Item}; continuing with search row {Row}.", action.ItemName, row + 1);
+                _logger.LogInformation("Could not read the item window title for {Item} (search row {Row}); it needs the search list and the live price as proof.", action.ItemName, row + 1);
+                titleUnread = _textLocator is not null;
                 break;
             }
 
@@ -163,6 +165,15 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             // Read before clicking a row: afterwards our own "Ordering N" preview row joins the list.
             liveTopBid = await ReadTopBuyerPriceAsync(Math.Max(1, action.PriceCopper - overbidMinCopper), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (titleUnread && !UnreadTitleIsProven(_lastSearchShowedName, liveTopBid, Math.Max(1, action.PriceCopper - overbidMinCopper)))
+        {
+            return await CloseItemWindowWithResultAsync(
+                action,
+                TradingActionStatus.Failed,
+                $"Buy order aborted: the item window's title could not be read, and {(liveTopBid is null ? "the live top bid could not be read either" : "the search list or the live top bid does not prove it")}; it may be a different item.",
+                cancellationToken).ConfigureAwait(false);
         }
 
         await _input.ClickAsync(CenterX(buyersAnchor), CenterY(buyersAnchor) + 48, cancellationToken).ConfigureAwait(false);
@@ -226,7 +237,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Failed, $"Buy order aborted: {choice.Message}", cancellationToken).ConfigureAwait(false);
             }
 
-            var (confirmed, confirmMessage) = await TypeAndConfirmPriceAsync(target, cancellationToken).ConfigureAwait(false);
+            var (confirmed, confirmMessage) = await TypeAndConfirmPriceAsync(target, cancellationToken, qty).ConfigureAwait(false);
             _logger.LogInformation("Buy price check for {Item}: {Message}", action.ItemName, confirmMessage);
             if (!confirmed)
             {

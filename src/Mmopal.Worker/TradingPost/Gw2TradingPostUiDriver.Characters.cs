@@ -338,16 +338,19 @@ public sealed partial class Gw2TradingPostUiDriver
         int verifyDelayMs,
         CancellationToken cancellationToken)
     {
+        // Play only, never Enter: the world can load before the key lands, and Enter there opens chat, so the next "F"
+        // was typed into chat instead of opening the trader (seen live on 23 Nov).
         await ClickCenterAsync(playBtn, cancellationToken).ConfigureAwait(false);
-        await Task.Delay(Math.Min(150, Math.Max(10, _settleMs / 4)), cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
-        if (verifyDelayMs > 0)
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(_requireTemplateFilesOnDisk ? Math.Max(verifyDelayMs, 5_000) : verifyDelayMs);
+        TemplateMatch? stillCharSelect;
+        do
         {
-            await Task.Delay(verifyDelayMs, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(Math.Max(_pollMs, Math.Min(150, Math.Max(10, _settleMs / 4))), cancellationToken).ConfigureAwait(false);
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            stillCharSelect = await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false);
         }
+        while (stillCharSelect is not null && DateTimeOffset.UtcNow < deadline);
 
-        var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
-        var stillCharSelect = await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false);
         if (stillCharSelect is not null)
         {
             await _input.DoubleClickAsync(portraitX, portraitY, cancellationToken).ConfigureAwait(false);

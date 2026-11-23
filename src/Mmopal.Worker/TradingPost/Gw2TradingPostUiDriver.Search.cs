@@ -18,37 +18,90 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         var texts = await ReadTextVariantsAsync(ItemDialogTitleRegion, cancellationToken).ConfigureAwait(false);
+        var check = ClassifyItemTitle(expectedName, texts);
+        if (check.Result != ItemTitleCheck.Unreadable)
+        {
+            return check;
+        }
+
+        // The title may still be drawing: one more read before calling it unreadable.
+        await SettleAsync(cancellationToken).ConfigureAwait(false);
+        texts = await ReadTextVariantsAsync(ItemDialogTitleRegion, cancellationToken).ConfigureAwait(false);
         return ClassifyItemTitle(expectedName, texts);
     }
 
     /// <summary>
-    /// Compares OCR'd dialog title lines with the expected item name. Any line close to the expected name is a match
-    /// (OCR often drops an apostrophe or misreads a letter); a readable title that is clearly a different item —
-    /// including a longer name that merely contains the expected one — is a mismatch.
+    /// With an unreadable title, the only proof left that the right item is open: the search list showed its name and
+    /// the price read live in the dialog is within 10% of the API's price for it. On 22 Nov "Genesis" (title and price
+    /// both unreadable) was typed into the dialog of "Gaze", a 77g item.
     /// </summary>
+    internal static bool UnreadTitleIsProven(bool searchShowedName, long? livePriceCopper, long apiPriceCopper) =>
+        searchShowedName && livePriceCopper is { } live && apiPriceCopper > 0 && Math.Abs(live - apiPriceCopper) * 10 <= apiPriceCopper;
+
+    private static readonly HashSet<string> CutOffEndings = new(StringComparer.Ordinal) { "of", "the", "and", "with", "for", "to", "in", "a", "an" };
+
     /// <summary>
     /// The dialog cuts long titles: "Soldier's Benthic Waterbreather of the Afflicted" shows as "Soldier's Benthic
     /// Waterbreather of the", and was refused 14 times in one night. A long title (30+ letters) that is the start of
-    /// the expected name, cut at a word boundary, is that item; the Aquabreather/Hydrobreather variants differ before
-    /// the cut. The typed price is still checked against the API before ordering.
+    /// the expected name and ends mid-phrase ("of the") is that item. A title ending in a full word is not: it may be a
+    /// whole name of its own ("Polysaturating Reverberating Infusion" against "... Infusion (Purple)").
     /// </summary>
     internal static bool IsCutOffTitleOf(string expectedName, string seenTitle)
     {
-        var expected = Words(expectedName);
-        var seen = Words(seenTitle);
+        var expected = string.Join(' ', TitleWords(expectedName));
+        var seenWords = TitleWords(seenTitle);
+        var seen = string.Join(' ', seenWords);
         return seen.Length >= 30 &&
                expected.Length > seen.Length + 1 &&
                expected.StartsWith(seen, StringComparison.Ordinal) &&
-               expected[seen.Length] == ' ';
-
-        // Letters and digits, words separated by single spaces (OCR drops apostrophes, not spaces).
-        static string Words(string? text) =>
-            string.Join(' ', new string((text ?? string.Empty).ToLowerInvariant()
-                    .Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))
-                    .ToArray())
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+               expected[seen.Length] == ' ' &&
+               CutOffEndings.Contains(seenWords[^1]);
     }
 
+    /// <summary>Lower-case words of letters and digits (OCR drops apostrophes, not spaces).</summary>
+    private static string[] TitleWords(string? text) =>
+        new string((text ?? string.Empty).ToLowerInvariant()
+                .Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c))
+                .ToArray())
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>
+    /// True when an OCR title is the expected item. 85% alike overall is not enough on its own: "(Red)" passed for
+    /// "(Purple)" and on 22 Nov held 190g in an order for the wrong infusion. Every word has to be recognisably the same
+    /// word, and numbers have to agree ("+8 Agony Infusion" is not "+9").
+    /// </summary>
+    internal static bool IsSameItemName(string expectedName, string seenTitle)
+    {
+        var similarity = NameSimilarity(NormalizeItemName(expectedName), NormalizeItemName(seenTitle));
+        if (similarity < 0.85)
+        {
+            return false;
+        }
+
+        var expected = TitleWords(expectedName);
+        var seen = TitleWords(seenTitle);
+        if (expected.Length != seen.Length)
+        {
+            // OCR split or joined a word ("Shaman 5 Etched"): then the letters must agree closely and none may be missing.
+            return similarity >= 0.9 && Math.Abs(NormalizeItemName(expectedName).Length - NormalizeItemName(seenTitle).Length) <= 2;
+        }
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var (want, got) = (expected[i], seen[i]);
+            if (want == got) continue;
+            if (want.Any(char.IsDigit) && got.Any(char.IsDigit)) return false;
+            if (Math.Max(want.Length, got.Length) >= 4 && NameSimilarity(want, got) < 0.5) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Compares OCR'd dialog title lines with the expected item name. Any line that is the same name is a match (OCR
+    /// often drops an apostrophe or misreads a letter); a readable title that is a different item — including a longer
+    /// name that merely contains the expected one — is a mismatch.
+    /// </summary>
     internal static (ItemTitleCheck Result, string? SeenTitle) ClassifyItemTitle(string expectedName, IEnumerable<string> ocrTexts)
     {
         var expected = NormalizeItemName(expectedName);
@@ -62,7 +115,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 continue;
             }
 
-            if (NameSimilarity(expected, seen) >= 0.85 || IsCutOffTitleOf(expectedName, text))
+            if (IsSameItemName(expectedName, text) || IsCutOffTitleOf(expectedName, text))
             {
                 return (ItemTitleCheck.Match, text.Trim());
             }
@@ -194,7 +247,9 @@ public sealed partial class Gw2TradingPostUiDriver
         await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
         _lastSearchFoundNothing = false;
+        _lastSearchShowedName = false;
         var listed = await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
+        _lastSearchShowedName = listed;
         if (requireListedName && _lastSearchFoundNothing)
         {
             // The game is the fact: the API's order list lags up to ~5 minutes, so an order sold or cancelled (also by

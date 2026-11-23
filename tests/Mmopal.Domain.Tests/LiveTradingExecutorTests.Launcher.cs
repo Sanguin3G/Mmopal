@@ -340,7 +340,7 @@ public sealed partial class LiveTradingExecutorTests
         var advanced = await driver.TryAdvanceLauncherOrCharacterSelectAsync();
         Assert.True(advanced);
         Assert.Contains((785, 734), input.Clicks);
-        Assert.Contains("enter", input.KeyPresses);
+        Assert.DoesNotContain("enter", input.KeyPresses); // Enter landed in the loaded world and opened chat (23 Nov)
 
         // Part B: Theme-independent launcher white card + colored LOG IN / grey READY detection
         const int width = 1024;

@@ -129,10 +129,12 @@ public sealed partial class Gw2TradingPostUiDriver
 
     /// <summary>
     /// Types the unit price and confirms it on the plain Total line (a whole multiple of the unit price, since the
-    /// quantity may be more than 1). A box that missed its click shows up as a different total; that is re-typed once
-    /// before giving up. An unreadable total proceeds: the typed value is deterministic and the API audit follows.
+    /// quantity may be more than 1, but never above <paramref name="maxQuantity"/>: on 20 Nov a "2" typed into a
+    /// quantity box that still held its "1" ordered 21). A box that missed its click shows up as a different total;
+    /// that is re-typed once before giving up. A total that stays unreadable is not confirmed either: on 22 Nov one
+    /// such order went in at 95g instead of the typed 21g.
     /// </summary>
-    private async Task<(bool Confirmed, string Message)> TypeAndConfirmPriceAsync(long unitCopper, CancellationToken cancellationToken)
+    private async Task<(bool Confirmed, string Message)> TypeAndConfirmPriceAsync(long unitCopper, CancellationToken cancellationToken, long maxQuantity = 250)
     {
         long? lastSeen = null;
         for (var attempt = 1; attempt <= 2; attempt++)
@@ -141,7 +143,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
             // Digit shapes first: exact, and immune to the OCR failures below. OCR stays as the fallback.
             var glyphs = await ReadTotalByGlyphsAsync(cancellationToken).ConfigureAwait(false);
-            if (glyphs.Reading is { } glyphTotal && IsWholeMultiple(glyphTotal.Copper, unitCopper))
+            if (glyphs.Reading is { } glyphTotal && IsWholeMultiple(glyphTotal.Copper, unitCopper, maxQuantity))
             {
                 return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (read by digit shapes: {glyphTotal.Text})" +
                               (attempt == 1 ? "." : $" after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)})."));
@@ -155,10 +157,17 @@ public sealed partial class Gw2TradingPostUiDriver
                 .ToArray();
             if (totals.Length == 0 && glyphs.Reading is null)
             {
-                return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)}; the dialog total could not be read to confirm it.");
+                if (attempt == 1)
+                {
+                    await SettleAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                await SaveDiagnosticFrameAsync("total-unreadable", cancellationToken).ConfigureAwait(false);
+                return (false, $"typed {MarketScanItem.FormatCoins(unitCopper)} twice but the dialog total could not be read to confirm it.");
             }
 
-            if (totals.FirstOrDefault(total => IsWholeMultiple(total, unitCopper)) is var ocrTotal and > 0)
+            if (totals.FirstOrDefault(total => IsWholeMultiple(total, unitCopper, maxQuantity)) is var ocrTotal and > 0)
             {
                 // OCR confirmed what the digit shapes could not read: learn the unknown shapes for next time.
                 // Only when two OCR reads agree on it: a learned shape is kept for good, so its label must be right.
@@ -173,7 +182,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     : $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)}).");
             }
 
-            if (glyphs.Reading is { } shown && !TotalMatchesAcrossReads(texts, unitCopper))
+            if (glyphs.Reading is { } shown && !TotalMatchesAcrossReads(texts, unitCopper, maxQuantity))
             {
                 // The shapes read a definite, different total and OCR does not confirm the typed one either: the boxes
                 // did not take the value. Re-type, never assume.
@@ -196,7 +205,7 @@ public sealed partial class Gw2TradingPostUiDriver
             // The raw and enhanced reads also fail differently ("56 56" and "2 56" for 2g 56s 56c; "81" and "88€ 814",
             // the coin icon read as a 4, for 88s 81c), so the reads are combined: each must fit the expected total and
             // together they must show every digit group that is not zero-ish (and always the gold).
-            if (TotalMatchesAcrossReads(texts, unitCopper))
+            if (TotalMatchesAcrossReads(texts, unitCopper, maxQuantity))
             {
                 return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{JoinReads(texts)}').");
             }
@@ -245,7 +254,7 @@ public sealed partial class Gw2TradingPostUiDriver
     /// whose two-digit form has no 0 (OCR drops "00", "06", "50" …). A 3-digit read in a silver/copper place may carry the
     /// coin icon as a last digit ("814" for 81). A box that missed its value shows other digits and never matches.
     /// </summary>
-    internal static bool TotalMatchesAcrossReads(IReadOnlyList<string> texts, long unitCopper)
+    internal static bool TotalMatchesAcrossReads(IReadOnlyList<string> texts, long unitCopper, long maxQuantity = 250)
     {
         if (unitCopper <= 0)
         {
@@ -263,7 +272,7 @@ public sealed partial class Gw2TradingPostUiDriver
             return false;
         }
 
-        for (var quantity = 1; quantity <= 250; quantity++)
+        for (var quantity = 1; quantity <= Math.Clamp(maxQuantity, 1, 250); quantity++)
         {
             var total = unitCopper * quantity;
             var (gold, silver, copper) = (total / 10_000, total / 100 % 100, total % 100);
@@ -354,8 +363,8 @@ public sealed partial class Gw2TradingPostUiDriver
                         + (breakEvenCopper is { } be ? $" (break-even {MarketScanItem.FormatCoins(be)})." : "."));
     }
 
-    internal static bool IsWholeMultiple(long total, long unit) =>
-        unit > 0 && total % unit == 0 && total / unit is >= 1 and <= 250;
+    internal static bool IsWholeMultiple(long total, long unit, long maxQuantity = 250) =>
+        unit > 0 && total % unit == 0 && total / unit >= 1 && total / unit <= maxQuantity;
 
     /// <summary>
     /// Clicks each Max. Price box (gold, silver, copper), selects its contents and types the value. Box positions are

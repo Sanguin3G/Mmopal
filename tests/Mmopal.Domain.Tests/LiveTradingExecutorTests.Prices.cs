@@ -120,6 +120,22 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Theory]
+    [InlineData(true, 15_160L, 15_156L, true)]
+    [InlineData(true, null, 15_156L, false)]     // Genesis, 22 Nov: title and live price both unreadable (it was "Gaze")
+    [InlineData(true, 778_504L, 15_156L, false)] // Gaze's real price
+    [InlineData(false, 15_160L, 15_156L, false)] // the search list never showed the name: stale rows
+    public void An_unread_title_needs_the_search_list_and_the_live_price_as_proof(bool listed, long? live, long api, bool expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.UnreadTitleIsProven(listed, live, api));
+
+    [Theory]
+    [InlineData(30_314L, 15_157L, 2L, true)]
+    [InlineData(15_157L, 15_157L, 2L, true)]
+    [InlineData(840_063L, 40_003L, 2L, false)]   // 21x ordered instead of 2 (20 Nov)
+    [InlineData(1_901_294L, 215_043L, 2L, false)]
+    public void Total_must_be_the_typed_price_times_at_most_the_ordered_quantity(long total, long unit, long quantity, bool expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.IsWholeMultiple(total, unit, quantity));
+
+    [Theory]
     [InlineData("Eternity", "Eternity", "Match")]
     [InlineData("Shaman's Etched Blaster of Accuracy", "Shaman 5 Etched Blaster of Accuracy", "Match")]   // OCR as seen live
     [InlineData("Superior Rune of the Scourge", "Superior Rure of the Scourge", "Match")]
@@ -130,6 +146,14 @@ public sealed partial class LiveTradingExecutorTests
     [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Aquabreather of the", "Mismatch")]
     [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Hydrobreather of the", "Mismatch")]
     [InlineData("Superior Rune of the Scourge Extra", "Superior Rune of the Scour", "Mismatch")]
+    // 22 Nov: the (Red) infusion passed for (Purple) at 85% alike and 190g went into the wrong order.
+    [InlineData("Polysaturating Reverberating Infusion (Purple)", "Polysaturating Reverberating Infusion (Red)", "Mismatch")]
+    [InlineData("Polysaturating Reverberating Infusion (Purple)", "Polysaturating Reverberating Infusion", "Mismatch")]
+    [InlineData("Polysaturating Reverberating Infusion (Purple)", "Polysaturating Reverberating Infusion (Purp1e)", "Match")]
+    [InlineData("+8 Agony Infusion", "+9 Agony Infusion", "Mismatch")]
+    [InlineData("15 Slot Linen Bag", "18 Slot Linen Bag", "Mismatch")]
+    [InlineData("+8 Agony Infusion", "+8 Agony lnfusion", "Match")]
+    [InlineData("Superior Rune of the Renegade", "Superior Rune of the Revenant", "Mismatch")]
     [InlineData("Eternity", "Seuch :", "Unreadable")]
     [InlineData("Eternity", "", "Unreadable")]
     public void ClassifyItemTitle_tolerates_ocr_noise_but_not_other_items(string expected, string seen, string outcome)

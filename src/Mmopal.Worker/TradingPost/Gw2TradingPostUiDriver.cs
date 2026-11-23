@@ -73,6 +73,7 @@ public sealed partial class Gw2TradingPostUiDriver
     private readonly Dictionary<string, int> _unconfirmedCancelSearches = new(StringComparer.OrdinalIgnoreCase);
     private const int UnconfirmedCancelSearchesBeforeSkip = 2;
     private bool _lastSearchFoundNothing;
+    private bool _lastSearchShowedName;
 
     /// <summary>The character entered last ("'Name' (slot #3)" or "slot #3"), for messages; null before any swap.</summary>
     public string? CurrentCharacterLabel { get; private set; }

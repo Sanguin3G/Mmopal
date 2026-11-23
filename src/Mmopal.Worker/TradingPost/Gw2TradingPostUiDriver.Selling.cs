@@ -124,6 +124,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 // Bag search is a substring match too: open rows in order and list only the exact item.
                 TemplateMatch? sellersAnchor = null;
                 var wrongTitles = new List<string>();
+                var titleUnread = false;
                 for (var row = 0; row < MaxSearchRowsToTry; row++)
                 {
                     var rowAnchor = firstItem with { Y = firstItem.Y + row * SellResultRowStride };
@@ -136,6 +137,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     var (titleCheck, seenTitle) = await CheckOpenedItemTitleAsync(targetItem, cancellationToken).ConfigureAwait(false);
                     if (titleCheck != ItemTitleCheck.Mismatch)
                     {
+                        titleUnread = titleCheck == ItemTitleCheck.Unreadable && _textLocator is not null;
                         break;
                     }
 
@@ -166,6 +168,16 @@ public sealed partial class Gw2TradingPostUiDriver
                 {
                     // Before the seller-row click, which inserts our own "Selling 1/N" preview row at the top.
                     liveLowestAsk = await ReadTopListPriceAsync(SellersListRegion, SellersPriceColumnMinX, itemPricing!.ApiLowestAskCopper!.Value, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (titleUnread && typeSellPrice && !UnreadTitleIsProven(_lastSearchShowedName, liveLowestAsk, itemPricing!.ApiLowestAskCopper!.Value))
+                {
+                    await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                    results.Add(new SellPassItemResult(
+                        targetItem,
+                        SellPassItemOutcome.SkippedError,
+                        "Listing aborted: the item window's title could not be read and the search list or live price does not prove it; it may be a different item."));
+                    continue;
                 }
 
                 // Clicking a Current Sellers row switches the dialog from "Sell Instantly" (the default, into the top buy
