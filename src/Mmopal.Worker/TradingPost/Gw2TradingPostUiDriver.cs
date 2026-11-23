@@ -89,7 +89,6 @@ public sealed partial class Gw2TradingPostUiDriver
     private IReadOnlyCollection<string>? _cancelListNames;
     private const int LongestSearchText = 60;
     private const int LongestNumberText = 6;
-    private int _searchBoxMayHold = LongestSearchText;
     private readonly Dictionary<string, int> _unconfirmedCancelSearches = new(StringComparer.OrdinalIgnoreCase);
     private const int UnconfirmedCancelSearchesBeforeSkip = 2;
     private bool _lastSearchFoundNothing;
@@ -143,7 +142,6 @@ public sealed partial class Gw2TradingPostUiDriver
     private static readonly (int X, int Y) DeterministicLeftSidebarTpPoint = (33, 224);
     private static readonly (int X, int Y) DeterministicBuyTabPoint = (562, 165);
     private static readonly (int X, int Y) DeterministicSellTabPoint = (725, 165);
-    private static readonly (int X, int Y) DeterministicSearchBoxPoint = (255, 258);
     private static readonly (int X, int Y) DeterministicRestPoint = (115, 65);
     private static readonly (int X, int Y) DeterministicCharSlotOnePoint = (258, 640);
     private const int CharacterSlotStrideX = 122;
@@ -163,6 +161,7 @@ public sealed partial class Gw2TradingPostUiDriver
     private readonly int _settleMs;
     private readonly int _pollMs;
     private readonly bool _requireTemplateFilesOnDisk;
+    private readonly bool _proveTradingPost;
     private readonly Func<bool>? _isPaused;
 
     public Gw2TradingPostUiDriver(
@@ -178,8 +177,10 @@ public sealed partial class Gw2TradingPostUiDriver
         Func<bool>? isPaused = null,
         IUiTextLocator? textLocator = null,
         Func<DateTimeOffset>? utcNow = null,
-        string? diagnosticsDirectory = null)
+        string? diagnosticsDirectory = null,
+        bool? proveTradingPost = null)
     {
+        _proveTradingPost = proveTradingPost ?? requireTemplateFilesOnDisk;
         _diagnosticsDirectory = diagnosticsDirectory;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));

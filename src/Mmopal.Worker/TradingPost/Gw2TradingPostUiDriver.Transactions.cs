@@ -116,7 +116,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 name);
         }
 
-        if (outbidBuys.Length == 0)
+        if (outbidBuys.Length == 0 || !await ReadyTradingPostAsync("Outbid Refresh", cancellationToken).ConfigureAwait(false))
         {
             return 0;
         }
@@ -203,7 +203,7 @@ public sealed partial class Gw2TradingPostUiDriver
         CancellationToken cancellationToken = default)
     {
         var canceledNames = new List<string>();
-        if (relists.Count == 0)
+        if (relists.Count == 0 || !await ReadyTradingPostAsync("relist", cancellationToken).ConfigureAwait(false))
         {
             return canceledNames;
         }

@@ -176,7 +176,7 @@ public sealed partial class Gw2TradingPostUiDriver
             return true;
         }
 
-        if (_requireTemplateFilesOnDisk)
+        if (_requireTemplateFilesOnDisk && await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
         {
             await _input.ClickAsync(DeterministicBuyTabPoint.X, DeterministicBuyTabPoint.Y, cancellationToken).ConfigureAwait(false);
             await SettleAsync(cancellationToken).ConfigureAwait(false);
@@ -213,49 +213,25 @@ public sealed partial class Gw2TradingPostUiDriver
             return false; // given up for this session (logged when it happened)
         }
 
-        var searchField = await WaitForAnyTemplateAsync(
-            ["search.png", "search_focused.png"],
-            SearchFieldRegion,
-            0.70m,
-            Math.Min(_uiWaitMs, Math.Max(40, _uiWaitMs / 3)),
-            cancellationToken).ConfigureAwait(false);
-
-        if (searchField is not null)
+        if (await FindSearchFieldAsync(cancellationToken).ConfigureAwait(false) is not { } field)
         {
-            await ClickCenterAsync(searchField, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            // When text is already in the search input, click near the right end of the search box
-            // so the cursor never lands mid-word if selection fails.
-            var cog = await WaitForTemplateAsync("cog.png", SearchFieldRegion, 0.70m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
-            if (cog is not null)
-            {
-                await _input.ClickAsync(Math.Max(10, CenterX(cog) - 24), CenterY(cog), cancellationToken).ConfigureAwait(false);
-            }
-            else if (_requireTemplateFilesOnDisk)
-            {
-                await _input.ClickAsync(DeterministicSearchBoxPoint.X, DeterministicSearchBoxPoint.Y, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                return false;
-            }
+            return false;
         }
 
-        var listed = await TypeSearchAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
-        if (!listed && _textLocator is not null && !await SearchBoxHoldsAsync(itemName, cancellationToken).ConfigureAwait(false))
+        var (typed, listed) = await TypeSearchAsync(itemName, field, requireListedName, cancellationToken).ConfigureAwait(false);
+        if (!typed)
         {
             // 23 Nov: the box kept only the "L" of "Lord Taeres's Shadow", so the list showed everything else.
             _logger.LogInformation("The search box does not hold '{Item}'; typing it once more.", itemName);
-            listed = await TypeSearchAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
+            if (await FindSearchFieldAsync(cancellationToken).ConfigureAwait(false) is not { } again)
+            {
+                return false;
+            }
+
+            (_, listed) = await TypeSearchAsync(itemName, again, requireListedName, cancellationToken).ConfigureAwait(false);
         }
 
         _lastSearchShowedName = listed;
-        if (listed)
-        {
-            _searchBoxMayHold = Math.Min(LongestSearchText, itemName.Trim().Length + 4);
-        }
 
         if (requireListedName && _lastSearchFoundNothing)
         {
@@ -280,30 +256,135 @@ public sealed partial class Gw2TradingPostUiDriver
         return true;
     }
 
-    private async Task<bool> TypeSearchAsync(string itemName, bool requireListedName, CancellationToken cancellationToken)
+    /// <summary>
+    /// The search box of the Trading Post that is on screen, or null. Never a guessed position: without the TP the same
+    /// click and keys land in the game world.
+    /// </summary>
+    private async Task<(int X, int Y, bool Empty)?> FindSearchFieldAsync(CancellationToken cancellationToken)
     {
-        await ReplaceFieldTextAsync(itemName.Trim(), _searchBoxMayHold, cancellationToken).ConfigureAwait(false);
-        // After a search that was not confirmed, the box may hold more than was typed.
-        _searchBoxMayHold = LongestSearchText;
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
-        _lastSearchFoundNothing = false;
-        _lastSearchShowedName = false;
-        return await WaitForSearchResultsAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
+        if (!await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
+        {
+            _logger.LogWarning("Not typing a search: the Trading Post is not on screen.");
+            return null;
+        }
+
+        // Empty boxes score 0.84-1.00 on the placeholder, boxes with text up to 0.68.
+        var placeholder = await WaitForTemplateAsync(
+            "search.png",
+            SearchFieldRegion,
+            0.80m,
+            Math.Min(_uiWaitMs, Math.Max(40, _uiWaitMs / 3)),
+            cancellationToken).ConfigureAwait(false);
+        if (placeholder is not null)
+        {
+            return (CenterX(placeholder), CenterY(placeholder), true);
+        }
+
+        // With text in it the box is found by the cog beside it: click near its right end.
+        var cog = await WaitForTemplateAsync("cog.png", SearchFieldRegion, 0.70m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        if (cog is not null)
+        {
+            return (Math.Max(10, CenterX(cog) - 24), CenterY(cog), false);
+        }
+
+        var focused = await TryFindOnceAsync("search_focused.png", SearchFieldRegion, 0.70m, cancellationToken).ConfigureAwait(false);
+        return focused is null ? null : (CenterX(focused), CenterY(focused), false);
     }
 
     /// <summary>
-    /// True when the search box shows the name (a long name may be cut off). Full names read well there, while leftovers
-    /// of one or two letters read as nothing, so an empty read counts as "does not hold it".
+    /// Types the name into the search box. Keys that do something in the world (Backspace is Reply, Enter is chat) are
+    /// only pressed once the typed text shows in the box, which proves it has the focus. The Trading Post also searches
+    /// without Enter, only a little later.
     /// </summary>
-    private async Task<bool> SearchBoxHoldsAsync(string itemName, CancellationToken cancellationToken)
+    /// <returns>Whether the box shows the name, and whether the result list does.</returns>
+    private async Task<(bool Typed, bool Listed)> TypeSearchAsync(
+        string itemName,
+        (int X, int Y, bool Empty) field,
+        bool requireListedName,
+        CancellationToken cancellationToken)
     {
-        var query = NormalizeItemName(itemName);
+        var name = itemName.Trim();
+        _lastSearchFoundNothing = false;
+        _lastSearchShowedName = false;
+        if (field.Empty)
+        {
+            await _input.ClickAsync(field.X, field.Y, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _input.TripleClickAsync(field.X, field.Y, cancellationToken).ConfigureAwait(false);
+        }
+
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        await _input.SendTextAsync(name, cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        var box = await ReadSearchBoxAsync(name, cancellationToken).ConfigureAwait(false);
+        if (box == SearchBoxText.Appended || (box == SearchBoxText.HoldsCutOff && !field.Empty))
+        {
+            // The old text is still in front of it (or may be, out of sight). The box has the focus, so it is safe to clear.
+            await _input.KeyPressAsync("end", cancellationToken).ConfigureAwait(false);
+            await _input.KeyTapsAsync("backspace", LongestSearchText * 2, cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            await _input.SendTextAsync(name, cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            box = await ReadSearchBoxAsync(name, cancellationToken).ConfigureAwait(false);
+        }
+
+        var typed = box is SearchBoxText.Holds or SearchBoxText.HoldsCutOff;
+        if (typed && await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+        }
+
+        var listed = await WaitForSearchResultsAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
+        return (typed || listed, listed);
+    }
+
+    internal enum SearchBoxText
+    {
+        /// <summary>Nothing readable, or something else: the box may not have the focus.</summary>
+        Other,
+        /// <summary>The name.</summary>
+        Holds,
+        /// <summary>The end of the name; the box is too narrow for all of it.</summary>
+        HoldsCutOff,
+        /// <summary>The name behind older text.</summary>
+        Appended
+    }
+
+    private async Task<SearchBoxText> ReadSearchBoxAsync(string name, CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return SearchBoxText.Holds;
+        }
+
         var texts = await ReadTextVariantsAsync(SearchBoxTextRegion, cancellationToken).ConfigureAwait(false);
-        return texts
-            .Select(NormalizeItemName)
-            .Any(text => text.Length >= Math.Min(4, query.Length) &&
-                         (NameSimilarity(text, query) >= 0.7 || NameSimilarity(text, query[..Math.Min(query.Length, text.Length)]) >= 0.7));
+        return ClassifySearchBox(texts, name);
+    }
+
+    internal static SearchBoxText ClassifySearchBox(IEnumerable<string> texts, string name)
+    {
+        var query = NormalizeItemName(name);
+        var best = SearchBoxText.Other;
+        foreach (var text in texts.Select(NormalizeItemName).Where(text => text.Length >= Math.Min(3, query.Length)))
+        {
+            if (NameSimilarity(text, query) >= 0.85)
+            {
+                return SearchBoxText.Holds;
+            }
+
+            if (text.Length >= 12 && text.Length < query.Length && NameSimilarity(text, query[^text.Length..]) >= 0.85)
+            {
+                best = SearchBoxText.HoldsCutOff;
+            }
+            else if (best == SearchBoxText.Other && text.Length > query.Length && FuzzyContains(text, query))
+            {
+                best = SearchBoxText.Appended;
+            }
+        }
+
+        return best;
     }
 
     /// <summary>
@@ -455,11 +536,10 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     /// <summary>
-    /// Replaces a field's text without any key the game binds. Ctrl+A was used before: when the field did not have the
-    /// focus, the game took its A as "strafe left", also with the Trading Post open, and over a night characters drifted
-    /// away from the trader (23 Nov). End, Backspace and Delete do nothing to a character.
-    /// The Deletes come after the text: an emptied number box can fill itself back in ("1") behind the cursor, which
-    /// turned an order for 2 into one for 21.
+    /// Replaces a number box's text. Ctrl+A was used before: without the focus the game took its A as "strafe left" and
+    /// characters drifted away from the trader. Backspace is the game's Reply key, so callers check that the dialog is on
+    /// screen right before. The Deletes come after the text: an emptied number box can fill itself back in ("1") behind
+    /// the cursor, which turned an order for 2 into one for 21.
     /// </summary>
     /// <param name="maxExisting">How many characters the field may hold.</param>
     private async Task ReplaceFieldTextAsync(string text, int maxExisting, CancellationToken cancellationToken)

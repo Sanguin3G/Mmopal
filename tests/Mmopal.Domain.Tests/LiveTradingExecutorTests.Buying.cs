@@ -270,7 +270,7 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
-    public async Task PlaceBuyOrderAsync_DoubleClearsSearchBox_AndAbortsImmediatelyWhenPaused()
+    public async Task PlaceBuyOrderAsync_ClearsNothingInAnEmptySearchBox_AndAbortsImmediatelyWhenPaused()
     {
         var paused = false;
         var input = new FakeInputController();
@@ -308,8 +308,8 @@ public sealed partial class LiveTradingExecutorTests
         var result = await driver.PlaceBuyOrderAsync(action, overbidMinCopper: 1, overbidMaxCopper: 1);
 
         Assert.Equal(TradingActionStatus.Skipped, result.Status);
-        Assert.Single(input.KeyPresses, k => k == "end");
-        Assert.Contains("backspace", input.KeyPresses);
+        // The box showed its placeholder, so it was empty: nothing is cleared (Backspace is the game's Reply key).
+        Assert.DoesNotContain("backspace", input.KeyPresses);
         // Letters are movement and skill keys in the world: no driver key may ever be a letter chord like Ctrl+A.
         Assert.DoesNotContain(input.KeyPresses, k => k.Contains('+'));
         Assert.DoesNotContain(input.Clicks, c => c == (439, 396)); // never clicked Place Order after pause

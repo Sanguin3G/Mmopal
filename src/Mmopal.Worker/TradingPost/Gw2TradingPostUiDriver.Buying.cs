@@ -219,7 +219,7 @@ public sealed partial class Gw2TradingPostUiDriver
         if (qty > 1)
         {
             var qtyBox = await WaitForTemplateAsync("quantity.png", CaptureRegion.FullScreen1024x768, 0.68m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
-            if (qtyBox is not null)
+            if (qtyBox is not null && await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
             {
                 await _input.ClickAsync(CenterX(qtyBox) + 112, CenterY(qtyBox), cancellationToken).ConfigureAwait(false);
                 await ReplaceFieldTextAsync(qty.ToString(System.Globalization.CultureInfo.InvariantCulture), LongestNumberText, cancellationToken).ConfigureAwait(false);

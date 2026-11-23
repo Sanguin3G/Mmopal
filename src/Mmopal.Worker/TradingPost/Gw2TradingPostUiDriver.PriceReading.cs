@@ -139,7 +139,10 @@ public sealed partial class Gw2TradingPostUiDriver
         long? lastSeen = null;
         for (var attempt = 1; attempt <= 2; attempt++)
         {
-            await TypeDialogPriceAsync(unitCopper, cancellationToken).ConfigureAwait(false);
+            if (!await TypeDialogPriceAsync(unitCopper, cancellationToken).ConfigureAwait(false))
+            {
+                return (false, "the price boxes are not on screen, so nothing was typed.");
+            }
 
             // Digit shapes first: exact, and immune to the OCR failures below. OCR stays as the fallback.
             var glyphs = await ReadTotalByGlyphsAsync(cancellationToken).ConfigureAwait(false);
@@ -368,15 +371,20 @@ public sealed partial class Gw2TradingPostUiDriver
 
     /// <summary>
     /// Clicks each Max. Price box (gold, silver, copper), selects its contents and types the value. Box positions are
-    /// taken from the copper ▲ spinner (measured at (601, 304) on live frames), falling back to fixed coordinates.
+    /// taken from the copper ▲ spinner (measured at (601, 304) on live frames); false without it, since the same clicks
+    /// and keys would land in the game.
     /// </summary>
-    private async Task TypeDialogPriceAsync(long unitCopper, CancellationToken cancellationToken)
+    private async Task<bool> TypeDialogPriceAsync(long unitCopper, CancellationToken cancellationToken)
     {
         var gold = unitCopper / 10_000;
         var silver = unitCopper / 100 % 100;
         var copper = unitCopper % 100;
-        var arrow = await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false);
-        var (anchorX, anchorY) = arrow is null ? (601, 304) : (CenterX(arrow), CenterY(arrow));
+        if (await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false) is not { } arrow)
+        {
+            return false;
+        }
+
+        var (anchorX, anchorY) = (CenterX(arrow), CenterY(arrow));
         var boxes = new (int X, int Value)[]
         {
             (anchorX - 176, (int)Math.Min(gold, int.MaxValue)),
@@ -385,6 +393,11 @@ public sealed partial class Gw2TradingPostUiDriver
         };
         foreach (var (x, value) in boxes)
         {
+            if (!await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
             await _input.ClickAsync(x, anchorY + 7, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
             await ReplaceFieldTextAsync(value.ToString(System.Globalization.CultureInfo.InvariantCulture), LongestNumberText, cancellationToken).ConfigureAwait(false);
@@ -393,6 +406,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
         // The Total updates as digits are typed; give the dialog a moment before it is read.
         await SettleAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>Reads the buy dialog's Max. Price (per unit) in copper, or null when it cannot be read.</summary>

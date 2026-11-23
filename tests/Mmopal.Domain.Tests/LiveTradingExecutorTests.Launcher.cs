@@ -315,6 +315,42 @@ public sealed partial class LiveTradingExecutorTests
         }));
     }
 
+    [Theory]
+    [InlineData(true)]  // the first portrait click entered the world (every fresh launch, 22-24 Nov)
+    [InlineData(false)] // the screen closed while it was still loading: nothing is clicked at all
+    public async Task Character_Select_that_closes_gets_no_more_portrait_clicks(bool closesOnFirstClick)
+    {
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher();
+        var looks = 0;
+        bool Open() => closesOnFirstClick ? !input.Clicks.Contains((258, 640)) : ++looks <= 2;
+        var playShown = true;
+        templates.DynamicMatches["charscreen_play.png"] = () => (playShown = playShown && Open()) ? new TemplateMatch(750, 718, 71, 33, 0.97m) : null;
+        templates.DynamicMatches["ingame_1.png"] = () => playShown ? null : new TemplateMatch(48, 54, 16, 16, 0.85m);
+        var locator = new FakeUiTextLocator(region => region.X == 40 ? [new OcrTextBox("Janetta Shepard", 60, 380, 260, 34)] : Array.Empty<OcrTextBox>());
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0, ParkedCharacterCount: 4),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator)
+        {
+            PreferredCharacterNames = ["Garry Vakarian", "Big Cheetos"]
+        };
+
+        Assert.True(await driver.TryAdvanceLauncherOrCharacterSelectAsync());
+
+        Assert.Equal(closesOnFirstClick ? 1 : 0, input.Clicks.Count);
+        Assert.Null(driver.CurrentCharacterName);
+        Assert.Empty(input.KeyPresses);
+    }
+
     [Fact]
     public async Task TryAdvanceLauncherOrCharacterSelectAsync_ClicksCharacterSelectPlay_AndDetectsThemedLauncher()
     {

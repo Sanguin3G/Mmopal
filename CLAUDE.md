@@ -42,5 +42,7 @@ dotnet build Mmopal.sln -p:UseSharedCompilation=false -m:1 --nologo
 - Safety first in the driver: a price is only typed after it is read and checked against the API, and every
   typed price is confirmed on the dialog Total before Place Order / List This Item. When a read is uncertain the
   code aborts or falls back; it never guesses.
+- Every key also reaches the game when no text box has the focus (Backspace = Reply, Enter = chat, letters = movement and
+  skills). Type or press keys only with the Trading Post proven on screen, and never click a guessed position first.
 - Comments explain *why*, usually with the live measurement behind a rule (e.g. "41 min lost in a 7 h session").
   Keep them when refactoring.

@@ -13,7 +13,7 @@ application. Nothing of the original is loaded or linked any more.
 | GW2 trading code | 2,906 lines of Lua in two files | Six C# projects, split by concern |
 | Vision | `core.dll` over OpenCV 4 and Tesseract | Own capture, OpenCvSharp, digit shapes, Windows OCR |
 | Native DLLs shipped | 28 | OpenCV only (SQLite and OCR come with Windows) |
-| Automated tests | None | 323, without the game and without input |
+| Automated tests | None | 332, without the game and without input |
 | API key | Plain text in `settings.ini`, first 20 characters logged | Windows DPAPI, never logged |
 | State | CSV files | SQLite: ledger, reports, metrics |
 | Failure handling | Kill the game, restart the script | Recovery steps, then a bounded game restart |

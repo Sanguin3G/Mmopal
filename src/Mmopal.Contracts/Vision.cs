@@ -31,6 +31,15 @@ public interface IInputController
         await Task.Delay(70, cancellationToken).ConfigureAwait(false);
         await ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
     }
+    /// <summary>Three quick clicks: selects the whole content of a text box.</summary>
+    async Task TripleClickAsync(int x, int y, CancellationToken cancellationToken = default)
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            await ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(40, cancellationToken).ConfigureAwait(false);
+        }
+    }
     /// <summary>Moves the cursor without clicking (hover). Inputs that cannot move do nothing.</summary>
     Task MoveAsync(int x, int y, CancellationToken cancellationToken = default) => Task.CompletedTask;
     Task KeyPressAsync(string key, CancellationToken cancellationToken = default);

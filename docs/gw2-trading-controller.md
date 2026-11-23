@@ -28,7 +28,7 @@ reads the orders first.
 | Step | Check |
 | --- | --- |
 | Open the TP | **F** (trader), then **O**, then **F**; Esc in between closes a bank opened by mistake. |
-| Search | Waits until the results show the name; if the search box does not hold it, types it once more. Rarely readable names get a third of the UI wait. |
+| Search | Only with the Trading Post proven on screen (Black Lion crest and transactions tab). Enter and Backspace are pressed only once the box shows the typed name. Then waits until the results show it. Rarely readable names get a third of the UI wait. |
 | Open a row | The title must be the item (rows 1–3 are tried). Unreadable: only goes on if the search showed the name and the live price is within 10% of the API's. |
 | Read the price | By digit shape (exact or nothing), else OCR. Top bid + overbid past the profitable price aborts. |
 | Type price and quantity | The Total must be the typed price × at most the ordered quantity. Re-typed once, then aborted. |
@@ -36,8 +36,10 @@ reads the orders first.
 
 An item aborted for a wrong price or title waits 30 minutes. An item no row opens twice is skipped for the session.
 
-Fields are cleared with End, Backspace and Delete. No letter chord is ever sent: Ctrl+A moves the character whenever no
-text box has the focus, even with the TP open.
+Keys reach the game whenever no text box has the focus, even with the TP open: Ctrl+A moves the character, Backspace
+replies to a whisper, Enter opens chat. So nothing is typed at a guessed position, the search box is cleared by selecting
+its text with the mouse, and price boxes are typed only while their dialog is on screen. If the TP closed, it is opened
+again before selling or cancelling (`The Trading Post is not on screen before the …`).
 
 **Click top row** (Settings → GW2 Client & Recovery → Price entry) is the older alternative to typing.
 
@@ -74,7 +76,8 @@ to any other order of yours. An item it cannot find on screen twice is left for 
   once nothing is left to list here. With 10+ items a character lists twice as many per pass.
 - **Unread name:** when Character Select cannot be read, two listed items that only one character held tell which one it
   is (`Logged-in character is …`).
-- **Character Select:** Play is clicked. Enter is not pressed: it landed in the loaded world and opened chat.
+- **Character Select:** nothing is clicked until the selected name reads the same twice, since it takes clicks late while
+  it loads. If it closes by itself, no further portrait is clicked. Play is clicked. Enter is not pressed: it landed in the loaded world and opened chat.
 
 ## Launch and recovery
 

@@ -374,6 +374,43 @@ public sealed partial class Gw2TradingPostUiDriver
                await TryFindInFrameAsync(frame, "exit_item_window.png", ModalCloseButtonRegion, 0.75m, cancellationToken).ConfigureAwait(false) is not null;
     }
 
+    /// <summary>
+    /// True when the Trading Post is certainly on screen: the Black Lion crest and the transactions tab. Checked before
+    /// anything is typed. On 24 Nov the TP had closed and the sell pass typed on: Backspace is the game's Reply key, and
+    /// two item names were said in chat. Over 40 saved frames both score 1.00 in the TP (item windows included) and at
+    /// most 0.48 elsewhere.
+    /// </summary>
+    private async Task<bool> TradingPostProvenAsync(CancellationToken cancellationToken)
+    {
+        if (!_proveTradingPost)
+        {
+            return true;
+        }
+
+        var frame = await _screenshots.CaptureAsync(TopHeaderRegion, cancellationToken).ConfigureAwait(false);
+        return await TryFindInFrameAsync(frame, "black_lion.png", BlackLionCrestRegion, 0.85m, cancellationToken).ConfigureAwait(false) is not null &&
+               await TryFindInFrameAsync(frame, "transactions.png", TransactionsTabRegion, 0.85m, cancellationToken).ConfigureAwait(false) is not null;
+    }
+
+    /// <summary>The Trading Post is on screen, opening it again when it closed meanwhile.</summary>
+    private async Task<bool> ReadyTradingPostAsync(string step, CancellationToken cancellationToken)
+    {
+        if (await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        _logger.LogInformation("The Trading Post is not on screen before the {Step}; opening it again.", step);
+        var (ready, message) = await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
+        if (ready && await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        _logger.LogWarning("Skipping the {Step}: the Trading Post is not open ({Message}).", step, message);
+        return false;
+    }
+
     private async Task<bool> TrySwitchFromBlackLionToTradingPostAsync(CancellationToken cancellationToken)
     {
         var sidebarTp = await TryFindOnceAsync("tradingpost_tab.png", LeftSidebarTpTabRegion, 0.68m, cancellationToken).ConfigureAwait(false);
@@ -448,6 +485,9 @@ public sealed partial class Gw2TradingPostUiDriver
             ? Math.Max(_uiWaitMs * 4, 30_000)
             : Math.Max(_uiWaitMs * 2, 120);
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(waitMs);
+        // The first signs of the world show while it still loads; a TP opened then closed again by itself (24 Nov).
+        var settledFor = TimeSpan.FromMilliseconds(_requireTemplateFilesOnDisk ? 2_000 : 0);
+        DateTimeOffset? inWorldSince = null;
         while (DateTimeOffset.UtcNow < deadline && !IsPaused)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -457,7 +497,11 @@ public sealed partial class Gw2TradingPostUiDriver
                  await TryFindOnceAsync("interact.png", InGameInteractRegion, 0.68m, cancellationToken).ConfigureAwait(false) is not null ||
                  await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false)))
             {
-                return;
+                inWorldSince ??= DateTimeOffset.UtcNow;
+                if (DateTimeOffset.UtcNow - inWorldSince >= settledFor)
+                {
+                    return;
+                }
             }
 
             await Task.Delay(_pollMs, cancellationToken).ConfigureAwait(false);

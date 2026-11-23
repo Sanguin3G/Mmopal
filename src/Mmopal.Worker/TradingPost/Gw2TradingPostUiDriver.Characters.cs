@@ -37,18 +37,20 @@ public sealed partial class Gw2TradingPostUiDriver
             logoutBtn = await WaitForTemplateAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, Math.Max(40, _uiWaitMs / 2), cancellationToken).ConfigureAwait(false);
         }
 
-        if (logoutBtn is not null)
-        {
-            await ClickCenterAsync(logoutBtn, cancellationToken).ConfigureAwait(false);
-            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-            await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
-        }
-        else
+        if (logoutBtn is null)
         {
             await _input.KeyPressAsync("f12", cancellationToken).ConfigureAwait(false);
-            await Task.Delay(Math.Min(400, Math.Max(40, _uiWaitMs / 2)), cancellationToken).ConfigureAwait(false);
-            await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+            logoutBtn = await WaitForTemplateAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, Math.Max(40, _uiWaitMs / 2), cancellationToken).ConfigureAwait(false);
         }
+
+        if (logoutBtn is null)
+        {
+            return (false, "Character swap aborted: the Game Menu's Log Out button was not found.");
+        }
+
+        await ClickCenterAsync(logoutBtn, cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        await ConfirmLogoutIfStillShownAsync(cancellationToken).ConfigureAwait(false);
 
         var charSelectWaitMs = _requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs * 3, 18_000) : _uiWaitMs * 2;
         var playBtn = await WaitForCharacterSelectPlayAsync(charSelectWaitMs, cancellationToken).ConfigureAwait(false);
@@ -57,10 +59,20 @@ public sealed partial class Gw2TradingPostUiDriver
             return (false, "Character swap aborted: Character select screen did not appear after Esc/F12 logout.");
         }
 
+        if (!await WaitForCharacterSelectReadyAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return (false, "Character swap aborted: Character Select closed before a character was chosen.");
+        }
+
         var previousName = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
         var named = preferredNames is { Count: > 0 }
             ? await FindPortraitByNameAsync(preferredNames, parkedCharacterCount, cancellationToken).ConfigureAwait(false)
             : null;
+        if (!await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return (false, "Character swap aborted: Character Select closed before a character was chosen.");
+        }
+
         var slotOffset = named?.Offset ?? PickParkedSlotOffset(randomize, parkedCharacterCount);
         _pendingSlot = (slotOffset, _utcNow());
         var portraitX = DeterministicCharSlotOnePoint.X + (slotOffset * CharacterSlotStrideX);
@@ -125,9 +137,9 @@ public sealed partial class Gw2TradingPostUiDriver
         var seen = new List<string>();
         for (var offset = 0; offset < Math.Clamp(parkedCharacterCount, 1, 5); offset++)
         {
-            if (IsPaused)
+            if (IsPaused || !await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false))
             {
-                return null;
+                return null; // left Character Select: the next click would land in the world
             }
 
             await _input.ClickAsync(DeterministicCharSlotOnePoint.X + (offset * CharacterSlotStrideX), DeterministicCharSlotOnePoint.Y, cancellationToken).ConfigureAwait(false);
@@ -135,8 +147,7 @@ public sealed partial class Gw2TradingPostUiDriver
             var name = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
             if (name is null)
             {
-                // Right after a fresh launch Character Select is still fading in: no name was read on any portrait in
-                // five launches on 22 Nov. One more read after a full settle.
+                // The name may still be fading in. One more read after a full settle.
                 await SettleAsync(cancellationToken).ConfigureAwait(false);
                 name = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -211,7 +222,8 @@ public sealed partial class Gw2TradingPostUiDriver
         try
         {
             var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
-            if (frame.Pixels.Length == 0)
+            // In the world this spot shows nameplates: on 22 Nov "Black Lion Tre" was read there as the character.
+            if (frame.Pixels.Length == 0 || await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false) is null)
             {
                 return null;
             }
@@ -270,7 +282,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     var (x, y) = OcrBoxCenter(ocrLogout);
                     await _input.ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
                     await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-                    await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+                    await ConfirmLogoutIfStillShownAsync(cancellationToken).ConfigureAwait(false);
                     await WaitAfterLogoutClickAsync(cancellationToken).ConfigureAwait(false);
                     return (true, "Logged out to Character Select cleanly before closing Guild Wars 2.");
                 }
@@ -287,7 +299,7 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             await ClickCenterAsync(logoutBtn, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-            await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+            await ConfirmLogoutIfStillShownAsync(cancellationToken).ConfigureAwait(false);
             await WaitAfterLogoutClickAsync(cancellationToken).ConfigureAwait(false);
             return (true, "Logged out cleanly before closing Guild Wars 2.");
         }
@@ -304,6 +316,74 @@ public sealed partial class Gw2TradingPostUiDriver
             await _input.ClickAsync(DeterministicRestPoint.X, DeterministicRestPoint.Y, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Enter confirms a logout prompt, but only while the menu is still up: without it Enter opens chat, and on Character
+    /// Select it enters the selected character.
+    /// </summary>
+    private async Task ConfirmLogoutIfStillShownAsync(CancellationToken cancellationToken)
+    {
+        if (await TryFindOnceAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> IsCharacterSelectShownAsync(CancellationToken cancellationToken)
+    {
+        var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+        return await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false) is not null;
+    }
+
+    /// <summary>
+    /// Waits until Character Select has finished loading: the selected name reads the same twice, half a second apart.
+    /// Its Play button shows well before that, and clicks made then are taken late and together: on every fresh launch
+    /// from 22 to 24 Nov the first portrait click entered the last played character, and the other portrait clicks landed
+    /// in the world. False when the screen is gone. A name that never reads only costs the wait.
+    /// </summary>
+    private async Task<bool> WaitForCharacterSelectReadyAsync(CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return true;
+        }
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(_requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs * 2, 20_000) : _uiWaitMs);
+        string? lastName = null;
+        var missing = 0;
+        while (!IsPaused)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (++missing >= 3)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                missing = 0;
+                var name = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+                if (name is not null && name == lastName)
+                {
+                    return true;
+                }
+
+                lastName = name;
+                if (DateTimeOffset.UtcNow >= deadline)
+                {
+                    _logger.LogInformation("Character Select: the selected name did not become readable; going on without it.");
+                    await SaveDiagnosticFrameAsync("character-select-unread", cancellationToken).ConfigureAwait(false);
+                    return true;
+                }
+            }
+
+            await Task.Delay(_requireTemplateFilesOnDisk ? 500 : _pollMs, cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
     }
 
     private Task WaitAfterLogoutClickAsync(CancellationToken cancellationToken) =>
@@ -346,7 +426,11 @@ public sealed partial class Gw2TradingPostUiDriver
         CharacterEntries++;
         // Play only, never Enter: the world can load before the key lands, and Enter there opens chat, so the next "F"
         // was typed into chat instead of opening the trader (seen live on 23 Nov).
-        await ClickCenterAsync(playBtn, cancellationToken).ConfigureAwait(false);
+        if (await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await ClickCenterAsync(playBtn, cancellationToken).ConfigureAwait(false);
+        }
+
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(_requireTemplateFilesOnDisk ? Math.Max(verifyDelayMs, 5_000) : verifyDelayMs);
         TemplateMatch? stillCharSelect;
         do

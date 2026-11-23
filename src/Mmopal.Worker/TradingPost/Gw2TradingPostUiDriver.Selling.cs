@@ -69,6 +69,11 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         var results = new List<SellPassItemResult>(targets.Length);
+        if (!await ReadyTradingPostAsync("sell pass", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
         var sellTab = await TryFindOnceAsync("items_tab.png", SellTabRegion, 0.72m, cancellationToken).ConfigureAwait(false);
         if (sellTab is not null)
         {
@@ -94,6 +99,12 @@ public sealed partial class Gw2TradingPostUiDriver
                 if (IsPaused || await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, "Paused or error popup active."));
+                    break;
+                }
+
+                if (!await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    _logger.LogWarning("The Trading Post closed during the sell pass; the rest is listed next cycle.");
                     break;
                 }
 

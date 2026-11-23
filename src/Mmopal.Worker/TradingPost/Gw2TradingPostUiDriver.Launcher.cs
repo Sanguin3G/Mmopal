@@ -220,7 +220,11 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogInformation("Launcher PLAY button detected at ({X}, {Y}); launching GW2.", clickPlay.X, clickPlay.Y);
             await _input.ClickAsync(clickPlay.X, clickPlay.Y, cancellationToken).ConfigureAwait(false);
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
-            await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+            if (!IsGame3DWindowActive())
+            {
+                await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false); // the launcher only, never the game
+            }
+
             advanced = true;
             hadLauncherActivity = true;
         }
@@ -271,6 +275,11 @@ public sealed partial class Gw2TradingPostUiDriver
             // TP), so with several parked characters enter a different one, using the same rule as the AFK swap.
             // A swap already chose its slot; otherwise prefer the parked character holding the most unsold stock
             // (never the one the game just left, which may be the one that failed).
+            if (!await WaitForCharacterSelectReadyAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return await EnteredWithoutChoosingAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             int? chosen = _pendingSlot is { } pending && _utcNow() - pending.At < TimeSpan.FromMinutes(3)
                 ? pending.Offset
                 : null;
@@ -281,6 +290,11 @@ public sealed partial class Gw2TradingPostUiDriver
             {
                 chosen = (await FindPortraitByNameAsync(preferred, _settings.ParkedCharacterCount, cancellationToken).ConfigureAwait(false))?.Offset;
                 byStock = chosen is not null;
+            }
+
+            if (!await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return await EnteredWithoutChoosingAsync(cancellationToken).ConfigureAwait(false);
             }
 
             var slotOffset = chosen ?? PickParkedSlotOffset(_settings.RandomizeCharacterSelection, _settings.ParkedCharacterCount);
@@ -320,6 +334,17 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         return advanced;
+    }
+
+    /// <summary>Character Select closed before a portrait was chosen: the game entered a character on its own.</summary>
+    private async Task<bool> EnteredWithoutChoosingAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogWarning("Character Select closed before a character was chosen; continuing with whichever character is entered.");
+        CharacterEntries++;
+        CurrentCharacterLabel = "the last played character";
+        CurrentCharacterName = null;
+        await WaitForInWorldAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private async Task<LauncherFrameSnapshot> InspectLauncherFrameAsync(

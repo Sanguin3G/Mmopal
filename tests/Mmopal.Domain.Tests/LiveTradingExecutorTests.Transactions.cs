@@ -76,6 +76,49 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Contains((191, 712), input.Clicks);
     }
 
+    [Fact]
+    public async Task Nothing_is_typed_while_the_trading_post_is_not_on_screen()
+    {
+        // 24 Nov: the TP had closed and the sell pass typed on. Backspace replied in chat, and item names were said in it.
+        var input = new FakeInputController();
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(),
+            new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["cog.png"] = new(280, 190, 20, 20, 0.71m), // a lookalike in the world is not enough
+                ["transactions.png"] = new(860, 120, 60, 60, 0.90m),
+            }),
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            proveTradingPost: true);
+
+        var listed = await driver.SellInventoryPassDetailedAsync(["Arms of the People"], 3, 1, 2);
+        var cancelled = await driver.CancelSellListingsAsync(
+            [new SellRelist(new(TransactionType.Sell, "Pyre Dye", 13_988, 1, DateTimeOffset.UtcNow, 9_208, null), 9_207, "test")],
+            []);
+
+        Assert.Empty(listed);
+        Assert.Empty(cancelled);
+        Assert.Empty(input.TextsSent);
+        Assert.DoesNotContain("enter", input.KeyPresses);
+        Assert.DoesNotContain("backspace", input.KeyPresses);
+    }
+
+    [Theory]
+    [InlineData("Arms of the People", "Arms of the People", "Holds")]
+    [InlineData("Supeior Rune of the Renegade", "Superior Rune of the Renegade", "Holds")]
+    [InlineData("15 Slot Linen BagArms of the People", "Arms of the People", "Appended")]
+    [InlineData("verberating Infusion (Purple)", "Polysaturating Reverberating Infusion (Purple)", "HoldsCutOff")]
+    [InlineData("15 Slot Linen Bag", "Arms of the People", "Other")]
+    [InlineData("L", "Lord Taeres's Shadow", "Other")] // 23 Nov: only the first letter arrived
+    public void The_search_box_text_decides_whether_enter_is_pressed(string read, string name, string expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.ClassifySearchBox([read], name).ToString());
+
     [Theory]
     [InlineData("Wni Black Terrier", "Mini Black Terrier Pup", true)]          // 23 Nov read
     [InlineData("Supeior Rune of the Renegad", "Superior Rune of the Revenant", false)] // closer to another order
