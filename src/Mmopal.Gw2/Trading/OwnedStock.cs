@@ -2,16 +2,18 @@ using Mmopal.Contracts;
 
 namespace Mmopal.Gw2;
 
-/// <summary>A live buy order Mmopal placed: the item and the unit prices the order could fill at.</summary>
-public sealed record PlacedBuyOrder(string ItemName, long PlannedUnitCopper, long? TypedUnitCopper, DateTimeOffset PlacedAt);
+/// <summary>A live buy order Mmopal placed: the item and when the placing finished.</summary>
+public sealed record PlacedBuyOrder(string ItemName, DateTimeOffset PlacedAt);
 
 /// <summary>
 /// How many units of each item Mmopal itself still holds, so the sell pass never lists the player's own copies.
 /// The sell dialog lists a whole bag stack, and an item counted as a flip item only because it was on the shopping
 /// list (or once ordered by Mmopal) would take personal copies with it: food, infusions, a legendary lying around.
-/// Units bought = buy fills at a price one of Mmopal's orders for that item was placed at (the GW2 history records
-/// the order's unit price); minus units sold since the first such fill; minus units listed now. Listings the player
-/// cancels by hand return to the count, so Mmopal keeps trading its own units.
+/// An order is Mmopal's when GW2 records it as created while Mmopal was placing one for that item. Over 15-23 Nov all
+/// 707 fills matched that way, within 15 s; matching prices missed 26 of them (the typed price was not recorded), which
+/// left ~16 of Mmopal's units unsold on one character. Units bought = those fills; minus units sold since the first
+/// one; minus units listed now. Listings the player cancels by hand return to the count, so Mmopal keeps trading its
+/// own units. A negative count means the player also listed or sold copies of their own.
 /// </summary>
 public static class OwnedStock
 {
@@ -20,16 +22,9 @@ public static class OwnedStock
         IEnumerable<Gw2LedgerTransaction> history,
         IEnumerable<Transaction> currentOrders)
     {
-        var pricesByItem = placedOrders
+        var placedByItem = placedOrders
             .GroupBy(order => ItemNameNormalizer.Normalize(order.ItemName), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group
-                    .SelectMany(order => order.TypedUnitCopper is { } typed
-                        ? new[] { (Price: order.PlannedUnitCopper, order.PlacedAt), (Price: typed, order.PlacedAt) }
-                        : new[] { (Price: order.PlannedUnitCopper, order.PlacedAt) })
-                    .ToArray(),
-                StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(group => group.Key, group => group.Select(order => order.PlacedAt).ToArray(), StringComparer.OrdinalIgnoreCase);
 
         var rows = history.GroupBy(row => (row.Kind, row.Id)).Select(group => group.First()).ToArray();
         var held = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
@@ -37,8 +32,7 @@ public static class OwnedStock
         foreach (var fill in rows.Where(row => row.Kind == TransactionType.Buy).OrderBy(row => row.PurchasedAt))
         {
             var key = ItemNameNormalizer.Normalize(fill.ItemName);
-            if (!pricesByItem.TryGetValue(key, out var prices) ||
-                !prices.Any(order => order.Price == fill.UnitPriceCopper && order.PlacedAt <= fill.PurchasedAt.AddMinutes(10)))
+            if (!placedByItem.TryGetValue(key, out var placedAt) || !placedAt.Any(at => CreatedWith(fill.CreatedAt, at)))
             {
                 continue; // a personal purchase (or one Mmopal did not place)
             }
@@ -65,17 +59,33 @@ public static class OwnedStock
             }
         }
 
-        return held.ToDictionary(pair => pair.Key, pair => Math.Max(0, pair.Value), StringComparer.OrdinalIgnoreCase);
+        return held;
     }
 
     /// <summary>
-    /// True when a current buy order is one Mmopal placed: same item, at a price one of its orders was placed at. Buy
-    /// orders the player placed by hand are never cancelled by Outbid Refresh.
+    /// How far GW2's creation time may be from the moment the order was confirmed on screen. Measured: under 15 s; the
+    /// rest allows for a PC clock that is a little off.
+    /// </summary>
+    private static readonly TimeSpan CreationWindow = TimeSpan.FromSeconds(90);
+
+    /// <summary>True when an order GW2 created at <paramref name="created"/> is the one placed at <paramref name="placedAt"/>.</summary>
+    public static bool CreatedWith(DateTimeOffset created, DateTimeOffset placedAt) => (created - placedAt).Duration() <= CreationWindow;
+
+    /// <summary>
+    /// True when a current buy order is one Mmopal placed: same item, created when Mmopal placed one. Buy orders the
+    /// player placed by hand are never cancelled by Outbid Refresh.
     /// </summary>
     public static bool IsMmopalsOrder(Transaction order, IEnumerable<PlacedBuyOrder> placedOrders) =>
         placedOrders.Any(placed =>
-            string.Equals(ItemNameNormalizer.Normalize(placed.ItemName), ItemNameNormalizer.Normalize(order.ItemName), StringComparison.OrdinalIgnoreCase) &&
-            (placed.PlannedUnitCopper == order.PriceCopper || placed.TypedUnitCopper == order.PriceCopper));
+            CreatedWith(order.Created, placed.PlacedAt) &&
+            string.Equals(ItemNameNormalizer.Normalize(placed.ItemName), ItemNameNormalizer.Normalize(order.ItemName), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// True when every current listing of <paramref name="itemName"/> is Mmopal's: it bought at least as many units as
+    /// were sold and are listed, so cancelling one to relist it cannot touch a listing the player made.
+    /// </summary>
+    public static bool ListingsAreMmopals(string itemName, IReadOnlyDictionary<string, long> heldByMmopal) =>
+        heldByMmopal.TryGetValue(ItemNameNormalizer.Normalize(itemName), out var held) && held >= 0;
 
     /// <summary>
     /// True when listing this character's whole stack of <paramref name="itemName"/> sells only Mmopal's units:

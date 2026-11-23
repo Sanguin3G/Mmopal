@@ -61,7 +61,28 @@ public sealed class PendingSellInventoryTracker
     private readonly Dictionary<string, PendingEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> _suppressedUntilUtc = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly Dictionary<string, DateTimeOffset> _listedAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    // The bags and listings the API reports are up to ~5 min old: a just-listed item still shows in the bags, and an item
+    // in no bag this long after pickup is not there any more. The 22-23 Nov run searched 146 times for such items.
+    private static readonly TimeSpan ApiLag = TimeSpan.FromMinutes(6);
+    private static readonly TimeSpan UnseenDropAge = TimeSpan.FromMinutes(10);
+
     public int Count => _entries.Count;
+
+    /// <summary>True when Mmopal listed the item so recently that the API may not show that listing yet.</summary>
+    public bool WasJustListed(string itemName, DateTimeOffset nowUtc) =>
+        _listedAtUtc.TryGetValue(itemName.Trim(), out var listedAt) && nowUtc - listedAt < ApiLag;
+
+    /// <summary>Drops queued items that no character's bags have shown for a while (sold, deposited or moved by hand).</summary>
+    public void DropUnseen(IEnumerable<string> itemsInBags, DateTimeOffset nowUtc)
+    {
+        var seen = itemsInBags.Select(item => item.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in _entries.Values.Where(entry => !seen.Contains(entry.ItemName) && nowUtc - entry.LastConfirmedUtc >= UnseenDropAge).ToArray())
+        {
+            _entries.Remove(entry.ItemName);
+        }
+    }
 
     /// <summary>After a character swap or game restart the bags are different: re-check everything.</summary>
     public void CharacterChanged(DateTimeOffset nowUtc)
@@ -106,6 +127,11 @@ public sealed class PendingSellInventoryTracker
             }
 
             var name = raw.Trim();
+            if (!_entries.ContainsKey(name) && WasJustListed(name, nowUtc))
+            {
+                continue; // the bags the API reports are from before the listing
+            }
+
             if (_suppressedUntilUtc.TryGetValue(name, out var suppressedUntil))
             {
                 if (nowUtc < suppressedUntil)
@@ -163,6 +189,7 @@ public sealed class PendingSellInventoryTracker
                 case SellPassItemOutcome.Listed:
                     _entries.Remove(name);
                     _suppressedUntilUtc.Remove(name);
+                    _listedAtUtc[name] = nowUtc;
                     break;
 
                 case SellPassItemOutcome.NotFoundInBags:

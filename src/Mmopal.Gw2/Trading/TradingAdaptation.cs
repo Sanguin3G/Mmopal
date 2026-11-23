@@ -125,16 +125,12 @@ public static class SellRelistPolicy
         {
             if (picks.Count >= maxPerPass) break;
             var name = group.Key;
-            if (group.Count() > 1)
-            {
-                // The cancel flow clicks the first Cancel button its search lists. With several of our listings that
-                // is often not the stale one: on 22 Nov Pyre Dye (3 listings) was "cancelled" twice while its 41 h old
-                // 1g 39s 88c listing stayed up, each wrong cancel losing the 5% listing fee.
-                continue;
-            }
-
-            var oldest = group.OrderBy(order => order.Created).First();
-            var age = nowUtc - oldest.Created;
+            // The cancel flow clicks the first Cancel button its search lists. With several of our listings that is often
+            // not the stale one: on 22 Nov Pyre Dye (3 listings) was "cancelled" twice while its 41 h old 1g 39s 88c
+            // listing stayed up. So every listing must qualify (undercut, old enough), and the fee counted as lost is
+            // the most expensive one's. Skipping these items altogether left 51 of 79 listings never relisted.
+            var dearest = group.OrderByDescending(order => order.PriceCopper).First();
+            var age = nowUtc - group.Max(order => order.Created);
             if (group.Any(order => order.MinimumSellPriceCopper is not { } ask || ask <= 0 || ask >= order.PriceCopper))
             {
                 continue; // one of our listings is at (or is) the lowest ask, or the market is unknown: it can still sell
@@ -148,9 +144,9 @@ public static class SellRelistPolicy
                 continue;
             }
 
-            var lowestAsk = oldest.MinimumSellPriceCopper!.Value;
+            var lowestAsk = dearest.MinimumSellPriceCopper!.Value;
             var newPrice = Math.Max(1, lowestAsk - Math.Max(0, undercutCopper));
-            var lostFee = TradingIncomeAnalytics.CalculateListingFee(oldest.PriceCopper);
+            var lostFee = TradingIncomeAnalytics.CalculateListingFee(dearest.PriceCopper);
             var newNet = TradingIncomeAnalytics.CalculateNetSaleUnitPrice(newPrice);
             if (newNet < paid + lostFee)
             {
@@ -158,9 +154,9 @@ public static class SellRelistPolicy
             }
 
             picks.Add(new SellRelist(
-                oldest,
+                dearest,
                 newPrice,
-                $"listed {(int)age.TotalHours} h at {Coins(oldest.PriceCopper)}, undercut to {Coins(lowestAsk)}; " +
+                $"listed {(int)age.TotalHours} h at {Coins(dearest.PriceCopper)}, undercut to {Coins(lowestAsk)}; " +
                 $"relisting at {Coins(newPrice)} still nets {Coins(newNet)} vs {Coins(paid)} paid + {Coins(lostFee)} lost fee"));
         }
 

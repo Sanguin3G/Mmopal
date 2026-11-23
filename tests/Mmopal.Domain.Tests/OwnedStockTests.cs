@@ -10,22 +10,25 @@ public sealed class OwnedStockTests
     private static Gw2LedgerTransaction Buy(long id, string item, long price, long qty, double hours) =>
         new(id, TransactionType.Buy, 1, item, price, qty, T0.AddHours(hours - 1), T0.AddHours(hours));
 
+    // Mmopal's placing finished a few seconds before GW2 recorded the order.
+    private static PlacedBuyOrder Placed(string item, double filledAtHours) => new(item, T0.AddHours(filledAtHours - 1).AddSeconds(-4));
+
     private static Gw2LedgerTransaction Sell(long id, string item, long price, long qty, double hours) =>
         new(id, TransactionType.Sell, 1, item, price, qty, T0.AddHours(hours - 1), T0.AddHours(hours));
 
     [Fact]
-    public void Only_fills_at_Mmopals_order_prices_count_minus_sold_and_listed_units()
+    public void Only_fills_of_orders_created_by_Mmopal_count_minus_sold_and_listed_units()
     {
         PlacedBuyOrder[] placed =
         [
-            new("Twin Sisters", 4_500, 4_557, T0),          // typed 45s 57c
-            new("Plate of Spicy Moa Wings", 5_135, null, T0),
+            Placed("Twin Sisters", 1),
+            Placed("Plate of Spicy Moa Wings", 1),
         ];
         Gw2LedgerTransaction[] history =
         [
             Buy(1, "Twin Sisters", 4_557, 3, 1),            // Mmopal's fill
             Buy(1, "Twin Sisters", 4_557, 3, 1),            // same row from the newest page: counted once
-            Buy(2, "Twin Sisters", 3_900, 5, 2),            // bought by hand at another price
+            Buy(2, "Twin Sisters", 3_900, 5, 2),            // ordered by hand an hour later
             Sell(3, "Twin Sisters", 6_600, 1, 3),
             Buy(4, "Plate of Spicy Moa Wings", 5_135, 1, 1),
             Buy(5, "+8 Agony Infusion", 25_000, 1, 1),      // never ordered by Mmopal
@@ -41,18 +44,19 @@ public sealed class OwnedStockTests
     }
 
     [Fact]
-    public void Only_buy_orders_at_Mmopals_prices_are_its_own()
+    public void Only_buy_orders_created_while_Mmopal_placed_one_are_its_own()
     {
-        PlacedBuyOrder[] placed = [new("Valkyrie Draconic Coat", 7_811, null, T0)];
+        PlacedBuyOrder[] placed = [new("Valkyrie Draconic Coat", T0.AddSeconds(-4))];
 
         Assert.True(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Valkyrie Draconic Coat", 7_811, 15, T0, null, 7_811), placed));
+        Assert.False(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Valkyrie Draconic Coat", 7_811, 1, T0.AddHours(3), null, 7_811), placed)); // by hand, same price
         Assert.False(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Unopened Endless Mystery Tonic", 40_003, 21, T0, null, 60_000), placed));
     }
 
     [Fact]
     public void A_listing_cancelled_by_hand_returns_to_Mmopals_count()
     {
-        PlacedBuyOrder[] placed = [new("Ebonblade", 2_036, null, T0)];
+        PlacedBuyOrder[] placed = [Placed("Ebonblade", 1)];
         Gw2LedgerTransaction[] history = [Buy(1, "Ebonblade", 2_036, 2, 1)];
 
         var whileListed = OwnedStock.UnitsHeldByMmopal(placed, history, [new(TransactionType.Sell, "Ebonblade", 3_912, 2, T0.AddHours(2), null, null)]);
@@ -60,5 +64,11 @@ public sealed class OwnedStockTests
 
         Assert.Equal(0, whileListed[ItemNameNormalizer.Normalize("Ebonblade")]);
         Assert.True(OwnedStock.StackIsMmopals("Ebonblade", 2, afterCancel));
+        Assert.True(OwnedStock.ListingsAreMmopals("Ebonblade", whileListed));
+
+        // A third one listed by the player: none of the listings may be cancelled for relisting.
+        var withOwn = OwnedStock.UnitsHeldByMmopal(placed, history, [new(TransactionType.Sell, "Ebonblade", 3_912, 3, T0.AddHours(2), null, null)]);
+        Assert.False(OwnedStock.ListingsAreMmopals("Ebonblade", withOwn));
+        Assert.False(OwnedStock.ListingsAreMmopals("Holographic Super Cheese", withOwn));
     }
 }

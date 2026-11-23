@@ -77,6 +77,41 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
+    public async Task CollectDeliveryBoxAsync_ReadsAnEmptyBoxAsEmptyNotLocked()
+    {
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["take_all.png"] = new(161, 704, 61, 16, 1.00m)
+        });
+        var locator = new FakeUiTextLocator(region => region.X == 60
+            ?
+            [
+                new OcrTextBox("Delivery Box", 103, 475, 86, 15),
+                new OcrTextBox("When you buy or sell on the Trading", 80, 538, 220, 15),
+                new OcrTextBox("Speak to a Black Lion Trading", 88, 558, 208, 15),
+                new OcrTextBox("Company NPC to pick up your", 87, 578, 210, 15)
+            ]
+            : Array.Empty<OcrTextBox>());
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            templateRoot: string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        Assert.False(await driver.CollectDeliveryBoxAsync());
+        Assert.True(driver.DeliveryLooksEmpty);
+        Assert.False(driver.DeliveryNeedsTraderNpc);
+    }
+
+    [Fact]
     public void SelectSafeOutbidCancels_skips_orders_whose_search_would_show_several_of_our_buys()
     {
         var now = DateTimeOffset.UtcNow;
@@ -98,6 +133,33 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
+    public void SelectSafeOutbidCancels_passes_over_given_up_items_and_the_players_orders()
+    {
+        var now = new DateTimeOffset(2026, 11, 23, 3, 0, 0, TimeSpan.Zero);
+        var placed = now.AddHours(-2);
+        Transaction[] orders =
+        [
+            new(TransactionType.Buy, "Flare Dye", 900, 2, placed, null, 950),              // its search never confirms
+            new(TransactionType.Buy, "Pyre Dye", 7_000, 2, placed, null, 7_100),           // ours, but the player bids on it too
+            new(TransactionType.Buy, "Pyre Dye", 6_000, 5, placed, null, 7_100),           // placed by hand
+            new(TransactionType.Buy, "Ebonblade", 2_000, 2, placed, null, 2_100),          // two of ours, both outbid:
+            new(TransactionType.Buy, "Ebonblade", 1_900, 2, placed, null, 2_100),          // either may be cancelled
+        ];
+
+        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(
+            orders,
+            maxCancelsPerPass: 1,
+            now,
+            out var ambiguous,
+            out _,
+            order => order.Quantity != 5,
+            name => name == "Flare Dye");
+
+        Assert.Equal("Ebonblade", Assert.Single(safe).ItemName);
+        Assert.Equal(["Pyre Dye"], ambiguous);
+    }
+
+    [Fact]
     public void SelectSafeOutbidCancels_keeps_young_orders_so_they_can_fill()
     {
         var now = new DateTimeOffset(2026, 11, 20, 6, 50, 0, TimeSpan.Zero);
@@ -116,15 +178,15 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
-    public void SelectSafeOutbidCancels_also_picks_top_bid_orders_unfilled_for_two_days()
+    public void SelectSafeOutbidCancels_also_picks_top_bid_orders_unfilled_for_a_day()
     {
         var now = new DateTimeOffset(2026, 11, 22, 16, 0, 0, TimeSpan.Zero);
         Transaction[] orders =
         [
             // 22 Nov: 15x Valkyrie Draconic Coat at the top bid for 62 h.
             new(TransactionType.Buy, "Valkyrie Draconic Coat", 7_811, 15, now.AddHours(-62), null, 7_811),
-            // At the top for a day: still has time to fill.
-            new(TransactionType.Buy, "Carrion Noble Boots", 1_214, 2, now.AddHours(-24), null, 1_214)
+            // At the top for most of a day: still has time to fill.
+            new(TransactionType.Buy, "Carrion Noble Boots", 1_214, 2, now.AddHours(-20), null, 1_214)
         ];
 
         var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, maxCancelsPerPass: 5, now, out _, out _);

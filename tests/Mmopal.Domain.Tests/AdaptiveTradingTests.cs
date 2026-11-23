@@ -54,7 +54,7 @@ public sealed class AdaptiveTradingTests
         new(TransactionType.Sell, name, price, 1, Now.AddHours(-hoursAgo), lowestAsk, null);
 
     [Fact]
-    public void Relist_skips_items_with_several_of_our_listings()
+    public void Relist_takes_items_with_several_listings_only_when_every_one_qualifies()
     {
         // Pyre Dye, 22 Nov: three listings; the cancel flow clicks the first Cancel button its search shows, which
         // was not the stale one, twice.
@@ -64,13 +64,37 @@ public sealed class AdaptiveTradingTests
             Listing("Pyre Dye", 12_040, 9_208, 38),
             Listing("Pyre Dye", 9_208, 9_208, 1),
             Listing("Ebonblade", 3_912, 3_686, 36),
+            Listing("Ebonblade", 3_800, 3_686, 14),
         };
         var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase) { ["Pyre Dye"] = 6_996, ["Ebonblade"] = 2_036 };
         var traded = new HashSet<string>(["Pyre Dye", "Ebonblade"], StringComparer.OrdinalIgnoreCase);
 
         var picks = SellRelistPolicy.Select(orders, paid, traded, new Dictionary<string, DateTimeOffset>(), undercutCopper: 1, Now, maxPerPass: 5);
 
-        Assert.Equal("Ebonblade", Assert.Single(picks).Listing.ItemName);
+        var pick = Assert.Single(picks);
+        Assert.Equal("Ebonblade", pick.Listing.ItemName);
+        Assert.Equal(3_912, pick.Listing.PriceCopper); // the fee counted as lost is the dearest listing's
+    }
+
+    [Fact]
+    public void Sell_queue_forgets_items_no_bag_shows_and_ignores_bags_older_than_a_listing()
+    {
+        var tracker = new PendingSellInventoryTracker();
+        tracker.RecordDeliveryPickup(["Abyss Dye", "Flame Dye"], Now);
+
+        tracker.DropUnseen([], Now.AddMinutes(5)); // the API's bags lag
+        Assert.Equal(2, tracker.Count);
+
+        tracker.DropUnseen(["Flame Dye"], Now.AddMinutes(11));
+        Assert.Equal(["Flame Dye"], tracker.GetReadyTargets(Now.AddMinutes(11), 5));
+
+        tracker.RecordSellPassResults([new SellPassItemResult("Flame Dye", SellPassItemOutcome.Listed)], Now.AddMinutes(12));
+        tracker.SyncFromCharacterInventory(["Flame Dye"], Now.AddMinutes(14));
+        Assert.Empty(tracker.GetReadyTargets(Now.AddMinutes(14), 5));
+        Assert.True(tracker.WasJustListed("Flame Dye", Now.AddMinutes(14)));
+
+        tracker.SyncFromCharacterInventory(["Flame Dye"], Now.AddMinutes(20)); // another stack really is there
+        Assert.Equal(["Flame Dye"], tracker.GetReadyTargets(Now.AddMinutes(20), 5));
     }
 
     [Fact]

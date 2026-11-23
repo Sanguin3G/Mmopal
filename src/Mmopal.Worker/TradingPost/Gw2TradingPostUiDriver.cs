@@ -28,6 +28,10 @@ public sealed partial class Gw2TradingPostUiDriver
     // "Nika's" or "SWkfio•r of ttk"; this tight crop read "Nika's Leggings" and "Superior Rune of the Renegade" on the
     // same frames (22 Nov). The filter chip above the list was no better ("Search : Mlka± L—ings").
     private static readonly CaptureRegion SearchFirstRowNameRegion = new(385, 258, 300, 28);
+    // Short names next to empty space or a price defeat the OCR in the wide crop ("Flare Dye", "Maw of the Damned"): 21
+    // items could not be confirmed on 22-23 Nov, so their outbid orders were never cancelled. These crops read them.
+    private static readonly CaptureRegion SearchFirstRowTightRegion = new(388, 262, 200, 20);
+    private static readonly CaptureRegion SearchFirstRowShortRegion = new(388, 258, 120, 28);
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
     private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
     // Rows include their "Max. Price" / "Total Price:" labels: on live frames Windows OCR read nothing from tighter
@@ -46,10 +50,10 @@ public sealed partial class Gw2TradingPostUiDriver
     // prints "Listing Fee" / "Exchange Fee" from x ~658, which would garble the read.
     private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 380, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
-    // A buy order still at the top bid after this long is not filling: on 22 Nov 14 orders were 1-3 days old (15x
-    // Valkyrie Draconic Coat 62 h at the top) while buy orders held ~374g, half the net worth, and new buys waited on
-    // the gold cap. Cancelling a buy order is free.
-    internal static readonly TimeSpan StaleBuyOrderAge = TimeSpan.FromHours(48);
+    // A buy order still at the top bid after this long is not filling: of the 348 fills placed 15-21 Nov, 97% (98% of the
+    // gold) filled within 24 h, while on 23 Nov ~333g of the 427g in buy orders was older than that and the gold cap
+    // blocked buys in 316 of 322 cycles. Cancelling a buy order is free.
+    internal static readonly TimeSpan StaleBuyOrderAge = TimeSpan.FromHours(24);
 
     // Per item: search confirmations seen / missed. Some names never confirm on screen (Tyria's Best Nougat Center
     // 24 of 24, Unstable Rift Motivation 22 of 22), and each miss waited the full 7.5 s: 41 min in a 7 h session.
@@ -181,6 +185,9 @@ public sealed partial class Gw2TradingPostUiDriver
 
     /// <summary>True when the last <see cref="CollectDeliveryBoxAsync"/> found the box locked to a trader NPC.</summary>
     public bool DeliveryNeedsTraderNpc { get; private set; }
+
+    /// <summary>The last Delivery Box read showed the text of an empty box.</summary>
+    public bool DeliveryLooksEmpty { get; private set; }
 
     /// <summary>When a "lost its connection ... wait a few minutes" message box was last dismissed, if ever.</summary>
     public DateTimeOffset? ServerDisconnectSeenUtc { get; set; }

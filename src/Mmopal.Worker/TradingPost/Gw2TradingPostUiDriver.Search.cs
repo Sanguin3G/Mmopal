@@ -208,7 +208,7 @@ public sealed partial class Gw2TradingPostUiDriver
     /// </summary>
     private async Task<bool> SearchItemAsync(string itemName, CancellationToken cancellationToken, bool requireListedName = false)
     {
-        if (requireListedName && _unconfirmedCancelSearches.GetValueOrDefault(itemName) >= UnconfirmedCancelSearchesBeforeSkip)
+        if (requireListedName && CancelSearchGivenUp(itemName))
         {
             return false; // given up for this session (logged when it happened)
         }
@@ -272,8 +272,6 @@ public sealed partial class Gw2TradingPostUiDriver
         return true;
     }
 
-
-
     /// <summary>
     /// On high ping the previous search's rows stay on screen for a while after Enter, and the "Item" header is
     /// always visible, so without this the next click lands on a stale row (a previous, similarly named item, or
@@ -309,9 +307,18 @@ public sealed partial class Gw2TradingPostUiDriver
                 return false;
             }
 
-            var texts = (await ReadTextVariantsAsync(SearchFirstRowNameRegion, cancellationToken).ConfigureAwait(false))
-                .Concat(await ReadTextVariantsAsync(SearchResultsListRegion, cancellationToken).ConfigureAwait(false));
-            if (texts.Any(text => FuzzyContains(NormalizeItemName(text), query)))
+            var shown = false;
+            foreach (var region in SearchNameRegions(query))
+            {
+                var texts = await ReadTextVariantsAsync(region, cancellationToken).ConfigureAwait(false);
+                if (texts.Any(text => FuzzyContains(NormalizeItemName(text), query)))
+                {
+                    shown = true;
+                    break;
+                }
+            }
+
+            if (shown)
             {
                 _searchConfirmStats[query] = (stats.Seen + 1, stats.Missed);
                 var waited = (_utcNow() - started).TotalMilliseconds;
@@ -344,7 +351,23 @@ public sealed partial class Gw2TradingPostUiDriver
         }
     }
 
-    /// <summary>Two misses and no confirmation yet: the name does not read on screen, so waiting longer will not help.</summary>
+    /// <summary>Where to read the searched name, narrowest crop that can hold it first.</summary>
+    private static IEnumerable<CaptureRegion> SearchNameRegions(string normalizedName)
+    {
+        if (normalizedName.Length <= 14)
+        {
+            yield return SearchFirstRowShortRegion;
+        }
+
+        if (normalizedName.Length <= 26)
+        {
+            yield return SearchFirstRowTightRegion;
+        }
+
+        yield return SearchFirstRowNameRegion;
+        yield return SearchResultsListRegion;
+    }
+
     /// <summary>
     /// Short wait once misses clearly outnumber confirmations. Requiring zero confirmations kept the full 7.5 s wait for
     /// names read only now and then: 222 full waits (~28 min) in the 21-22 Nov 10 h session, Amber Quantic Dipole

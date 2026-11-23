@@ -23,13 +23,24 @@ public sealed class CharacterStockTests
     }
 
     [Fact]
-    public void HeldByItem_adds_up_flip_items_across_characters_and_ignores_the_rest()
+    public void Stock_counts_only_units_that_are_Mmopals()
     {
-        var held = CharacterStock.HeldByItem(Bags, new Dictionary<int, string> { [1] = "Twin Sisters", [2] = "Pyre Dye" });
+        var units = new Dictionary<string, IReadOnlyDictionary<string, long>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Garry Vakarian"] = new Dictionary<string, long> { ["Twin Sisters"] = 8, ["Pyre Dye"] = 1 }, // 6 of the sisters are the player's
+            ["Johanne Shepard"] = new Dictionary<string, long> { ["Twin Sisters"] = 2 },
+        };
+        var mine = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ItemNameNormalizer.Normalize("Twin Sisters")] = 2,
+            [ItemNameNormalizer.Normalize("Pyre Dye")] = 1,
+        };
 
-        Assert.Equal(10, held["twin sisters"]);
-        Assert.Equal(1, held["Pyre Dye"]);
-        Assert.Equal(2, held.Count); // item 99 is not a flip item
+        Assert.Equal([("Johanne Shepard", 2L), ("Garry Vakarian", 1L)], CharacterStock.Rank(units, mine));
+        Assert.Equal([("Garry Vakarian", 9L), ("Johanne Shepard", 2L)], CharacterStock.Rank(units, null)); // not read yet
+
+        Assert.Equal(2, CharacterStock.HeldByItem(units, mine)["twin sisters"]);
+        Assert.Equal(10, CharacterStock.HeldByItem(units, null)["Twin Sisters"]);
     }
 
     [Theory]

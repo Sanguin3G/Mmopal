@@ -34,7 +34,7 @@ dotnet build Mmopal.sln -p:UseSharedCompilation=false -m:1 --nologo
 
 ## Working rules
 
-- Never commit `.codex/`. Commits end with a `Co-Authored-By:` line for the agent that wrote them.
+- Never commit `.codex/`. No agent credit in commits or files: no `Co-Authored-By:` or "generated with" lines.
 - Keep `docs/` and the in-app Guide in step with behaviour changes.
 - Live-session evidence lives in `%LOCALAPPDATA%\Mmopal\logs\mmopal-YYYYMMDD.jsonl` (UTC), the SQLite DB
   `%LOCALAPPDATA%\Mmopal\mmopal.db` (ledger, equity snapshots) and `screenshots\` (diagnostic frames). Analyse

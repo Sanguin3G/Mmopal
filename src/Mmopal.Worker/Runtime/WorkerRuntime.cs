@@ -35,6 +35,9 @@ public sealed partial class WorkerRuntime
     private readonly Dictionary<string, DateTimeOffset> _relistedAtUtc = new(StringComparer.OrdinalIgnoreCase);
     // First time the Delivery Box was still locked after reopening at the trader on the current character.
     private DateTimeOffset? _deliveryLockedSinceUtc;
+    // Since when the box has looked empty on screen while the API still reports something to collect.
+    private DateTimeOffset? _deliveryEmptySinceUtc;
+    private static readonly TimeSpan DeliveryEmptyMeansLocked = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan DeliveryStuckBeforeSwap = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan MinTimeBetweenDeliverySwaps = TimeSpan.FromMinutes(60);
     // Logging out and in repeatedly gets the account disconnected by the server ("lost its connection ... wait a

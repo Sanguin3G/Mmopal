@@ -576,6 +576,28 @@ public sealed class TradingCycleController
                 continue;
             }
 
+            // Another item's order, created at that moment at the typed price: the wrong item was ordered (22 Nov: Infusion
+            // "(Red)" for "(Purple)", 190g). Say so at once, and do not buy through that search again this run.
+            var mistaken = orderPrices.Length > 0
+                ? null
+                : transactions.FirstOrDefault(tx =>
+                    tx.Type == TransactionType.Buy &&
+                    tx.PriceCopper == placed.Price &&
+                    OwnedStock.CreatedWith(tx.Created, placed.PlacedAt) &&
+                    !_placedPrices.Values.Any(other => string.Equals(other.Name, tx.ItemName?.Trim(), StringComparison.OrdinalIgnoreCase)));
+            if (mistaken is not null && _searchMismatches.TryAdd(key, mistaken.ItemName.Trim()))
+            {
+                _placedPrices.TryRemove(key, out _);
+                _logger.LogWarning(
+                    "Order audit: '{Item}' was ordered at {Price}, but the API shows that order as {Quantity}x '{Other}'. Cancel it in game if you do not want it; Mmopal will not buy '{Item}' again this run.",
+                    placed.Name,
+                    MarketScanItem.FormatCoins(placed.Price),
+                    mistaken.Quantity,
+                    mistaken.ItemName,
+                    placed.Name);
+                continue;
+            }
+
             if (now - placed.PlacedAt < TimeSpan.FromMinutes(7))
             {
                 continue;

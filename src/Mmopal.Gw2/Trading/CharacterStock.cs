@@ -12,12 +12,18 @@ public static class CharacterStock
     /// <summary>A character needs at least this many flip items before a swap is made just to list them.</summary>
     public const int MinItemsForStockSwap = 5;
 
-    /// <summary>Characters holding flip items, most items first (name order breaks ties).</summary>
+    /// <summary>
+    /// Characters holding flip items that can be listed, most items first (name order breaks ties). Stacks that hold
+    /// copies of the player's own are left out: on 22-23 Nov swaps kept choosing a character for ~16 units it was not
+    /// allowed to list. <paramref name="heldByMmopal"/> null (not read yet) counts everything.
+    /// </summary>
     public static IReadOnlyList<(string Name, long Items)> Rank(
-        IReadOnlyDictionary<string, IReadOnlyDictionary<int, long>> bagsByCharacter,
-        IReadOnlySet<int> flipItemIds) =>
-        bagsByCharacter
-            .Select(pair => (Name: pair.Key, Items: pair.Value.Where(item => flipItemIds.Contains(item.Key)).Sum(item => item.Value)))
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> unitsByCharacter,
+        IReadOnlyDictionary<string, long>? heldByMmopal) =>
+        unitsByCharacter
+            .Select(pair => (
+                Name: pair.Key,
+                Items: pair.Value.Where(item => heldByMmopal is null || OwnedStock.StackIsMmopals(item.Key, item.Value, heldByMmopal)).Sum(item => item.Value)))
             .Where(entry => entry.Items > 0)
             .OrderByDescending(entry => entry.Items)
             .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
@@ -43,22 +49,24 @@ public static class CharacterStock
     /// <summary>A character holding at least this many flip items lists twice as many per sell pass.</summary>
     public const int BacklogItemsForBiggerSellPass = 10;
 
-    /// <summary>Unsold units of each flip item across all characters' bags, by item name.</summary>
+    /// <summary>
+    /// Unsold units of each flip item across all characters' bags, by item name: at most the units that are Mmopal's, so
+    /// the player's own copies do not stop Mmopal from buying the item.
+    /// </summary>
     public static IReadOnlyDictionary<string, long> HeldByItem(
-        IReadOnlyDictionary<string, IReadOnlyDictionary<int, long>> bagsByCharacter,
-        IReadOnlyDictionary<int, string> flipItemNames)
-    {
-        var held = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (itemId, count) in bagsByCharacter.Values.SelectMany(bag => bag))
-        {
-            if (flipItemNames.TryGetValue(itemId, out var name))
-            {
-                held[name] = held.GetValueOrDefault(name) + count;
-            }
-        }
-
-        return held;
-    }
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> unitsByCharacter,
+        IReadOnlyDictionary<string, long>? heldByMmopal) =>
+        unitsByCharacter.Values
+            .SelectMany(units => units)
+            .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var inBags = group.Sum(item => item.Value);
+                    return heldByMmopal is null ? inBags : Math.Clamp(heldByMmopal.GetValueOrDefault(ItemNameNormalizer.Normalize(group.Key)), 0, inBags);
+                },
+                StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Names of the flip items each character holds, by character.</summary>
     public static IReadOnlyDictionary<string, IReadOnlySet<string>> ItemsByCharacter(

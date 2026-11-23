@@ -176,7 +176,7 @@ public sealed partial class WorkerRuntime
 
         if (driver is not null && session.Client.RelistStaleUndercutSells && result.Market is not null)
         {
-            await RelistStaleUndercutSellsAsync(driver, result.Market.Transactions, session.CandidateNames, session.Request.UndercutBufferMinCopper, session.Report, cancellationToken).ConfigureAwait(false);
+            await RelistStaleUndercutSellsAsync(session, driver, result.Market.Transactions, cancellationToken).ConfigureAwait(false);
         }
 
         if (IsPauseRequested) return CycleStep.NextCycle;
@@ -457,7 +457,6 @@ public sealed partial class WorkerRuntime
 
         var readyTargets = ReadyTargetsHere(session, driver, maxPerPass);
         IReadOnlyDictionary<string, SellPricing> sellPricing;
-        readyTargets = KeepMmopalStacks(session, readyTargets, driver.CurrentCharacterName);
         (readyTargets, sellPricing) = await KeepProfitableSellTargetsAsync(readyTargets, session.Candidates, request.UndercutBufferMinCopper, cancellationToken).ConfigureAwait(false);
         sellPricing = WithOwnListings(sellPricing, session.LastKnownActiveOrders);
         if (readyTargets.Count == 0)
@@ -495,11 +494,17 @@ public sealed partial class WorkerRuntime
         return soldCount;
     }
 
-    /// <summary>Queued sell targets this character holds (or that no bag shows yet), up to the per-pass limit.</summary>
+    /// <summary>
+    /// Queued sell targets this character holds (or that no bag shows yet) and whose stack here is all Mmopal's, up to
+    /// the per-pass limit.
+    /// </summary>
     private IReadOnlyList<string> ReadyTargetsHere(TradingSession session, Gw2TradingPostUiDriver driver, int maxPerPass) =>
-        CharacterStock.ListableHere(
-                session.SellQueue.GetReadyTargets(_utcNow(), int.MaxValue),
-                session.FlipItemsByCharacter,
+        KeepMmopalStacks(
+                session,
+                CharacterStock.ListableHere(
+                    session.SellQueue.GetReadyTargets(_utcNow(), int.MaxValue),
+                    session.FlipItemsByCharacter,
+                    driver.CurrentCharacterName),
                 driver.CurrentCharacterName)
             .Take(maxPerPass)
             .ToArray();
@@ -513,14 +518,13 @@ public sealed partial class WorkerRuntime
     {
         // Only Mmopal's own buy orders are cancelled; orders placed by hand stay, outbid or old.
         var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
-            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlannedUnitCopper, order.TypedUnitCopper, order.PlacedAt))
+            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt))
             .ToArray();
-        var cancellable = orders
-            .Where(order => order.Type != TransactionType.Buy || OwnedStock.IsMmopalsOrder(order, placed))
-            .ToArray();
+        // The driver still sees the hand-placed orders: a search that lists one of them next to ours is not safe.
         var canceledOutbidBuys = await driver.CancelOutbidBuyOrdersAsync(
-            cancellable,
+            orders,
             Math.Max(1, session.Profile.MaxOverbidUpdatesPerPass),
+            order => OwnedStock.IsMmopalsOrder(order, placed),
             cancellationToken);
         _buyCompetition.PauseSlowItems(driver.LastCanceledStaleItems, _utcNow());
         foreach (var paused in _buyCompetition.RecordOutbidCancels(driver.LastCanceledOutbidItems, _utcNow()))

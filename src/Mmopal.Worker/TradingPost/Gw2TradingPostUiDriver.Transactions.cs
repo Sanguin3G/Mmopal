@@ -12,8 +12,11 @@ public sealed partial class Gw2TradingPostUiDriver
     /// <summary>
     /// Picks outbid buy orders that can be canceled safely. The cancel flow searches the item name in
     /// My Transactions and clicks the first Cancel button, so an order is skipped whenever that search would
-    /// list more than one of our buy orders (a duplicate order for the same item, or another item whose name
-    /// contains this one) — otherwise the click could cancel the wrong order.
+    /// list a buy order that must stay (a duplicate order for the same item, or another item whose name contains
+    /// this one, that is the player's, still at the top bid or young) — the click could cancel that one instead.
+    /// <paramref name="mayCancel"/> is true for Mmopal's own orders; <paramref name="givenUp"/> for items whose cancel
+    /// search cannot be confirmed, which would otherwise fill the per-pass slots every cycle (21 such items stopped
+    /// Outbid Refresh altogether on 22-23 Nov).
     /// Orders younger than <see cref="MinOrderAgeBeforeOutbidCancel"/> are kept: competing bots undercut by a few
     /// copper within minutes, and cancelling on every undercut meant no buy order ever stayed up long enough to fill.
     /// </summary>
@@ -22,38 +25,41 @@ public sealed partial class Gw2TradingPostUiDriver
         int maxCancelsPerPass,
         DateTimeOffset nowUtc,
         out IReadOnlyList<string> ambiguousNames,
-        out int keptYoungCount)
+        out int keptYoungCount,
+        Func<Transaction, bool>? mayCancel = null,
+        Func<string, bool>? givenUp = null)
     {
-        var buyNames = transactions
+        var buys = transactions
             .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
-            .Select(tx => tx.ItemName.Trim())
             .ToArray();
+        bool IsDue(Transaction tx) =>
+            (tx.MinimumBuyPriceCopper is { } topBid && topBid > tx.PriceCopper) || nowUtc - tx.Created >= StaleBuyOrderAge;
+        bool IsOldEnough(Transaction tx) => nowUtc - tx.Created >= MinOrderAgeBeforeOutbidCancel;
+        bool IsOurs(Transaction tx) => mayCancel?.Invoke(tx) ?? true;
         var skipped = new List<string>();
         var safe = new List<Transaction>();
         keptYoungCount = 0;
-        foreach (var tx in transactions)
+        foreach (var tx in buys)
         {
             if (safe.Count >= maxCancelsPerPass) break;
-            if (tx.Type != TransactionType.Buy || string.IsNullOrWhiteSpace(tx.ItemName))
+            if (!IsOurs(tx) || !IsDue(tx))
             {
-                continue;
+                continue; // the player's order, or at the top bid and recent enough to fill
             }
 
-            var outbid = tx.MinimumBuyPriceCopper is { } topBid && topBid > tx.PriceCopper;
-            if (!outbid && nowUtc - tx.Created < StaleBuyOrderAge)
-            {
-                continue; // at the top bid and recent enough to fill
-            }
-
-            if (nowUtc - tx.Created < MinOrderAgeBeforeOutbidCancel)
+            if (!IsOldEnough(tx))
             {
                 keptYoungCount++;
                 continue;
             }
 
             var name = tx.ItemName.Trim();
-            var searchHits = buyNames.Count(other => other.Contains(name, StringComparison.OrdinalIgnoreCase));
-            if (searchHits > 1)
+            if (givenUp?.Invoke(name) == true)
+            {
+                continue;
+            }
+
+            if (buys.Any(other => other.ItemName.Contains(name, StringComparison.OrdinalIgnoreCase) && !(IsOurs(other) && IsDue(other) && IsOldEnough(other))))
             {
                 if (!skipped.Contains(name, StringComparer.OrdinalIgnoreCase)) skipped.Add(name);
                 continue;
@@ -66,9 +72,14 @@ public sealed partial class Gw2TradingPostUiDriver
         return safe.ToArray();
     }
 
+    /// <summary>The cancel search for this item was never confirmed on screen; not tried again this session.</summary>
+    private bool CancelSearchGivenUp(string itemName) =>
+        _unconfirmedCancelSearches.GetValueOrDefault(itemName) >= UnconfirmedCancelSearchesBeforeSkip;
+
     public async Task<int> CancelOutbidBuyOrdersAsync(
         IReadOnlyList<Transaction> transactions,
         int maxCancelsPerPass,
+        Func<Transaction, bool>? mayCancel = null,
         CancellationToken cancellationToken = default)
     {
         if (maxCancelsPerPass <= 0 || transactions.Count == 0)
@@ -87,7 +98,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
         LastCanceledOutbidItems = Array.Empty<string>();
         LastCanceledStaleItems = Array.Empty<string>();
-        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung);
+        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp);
         if (keptYoung > 0)
         {
             _logger.LogInformation(
@@ -100,7 +111,7 @@ public sealed partial class Gw2TradingPostUiDriver
         foreach (var name in ambiguousNames.Where(name => _ambiguousOutbidLogged.Add(name)))
         {
             _logger.LogInformation(
-                "Outbid Refresh skips {Item} this session: searching it would list more than one of your buy orders, so the first Cancel button might not be the outbid one. Cancel the extra order in game so Outbid Refresh can manage it.",
+                "Outbid Refresh skips {Item} for now: searching it would also list a buy order that stays, so the first Cancel button might not be the outbid one.",
                 name);
         }
 
@@ -173,7 +184,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
-        LastCanceledOutbidItems = canceledNames;
+        LastCanceledOutbidItems = canceledNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         LastCanceledStaleItems = staleNames;
         return canceledNames.Count + staleNames.Count;
     }

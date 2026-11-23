@@ -218,6 +218,7 @@ public sealed partial class Gw2TradingPostUiDriver
     public async Task<bool> CollectDeliveryBoxAsync(CancellationToken cancellationToken = default)
     {
         DeliveryNeedsTraderNpc = false;
+        DeliveryLooksEmpty = false;
         await DismissTransientPopupAsync("Delivery Box", cancellationToken).ConfigureAwait(false);
         var takeAll = await TryFindOnceAsync("take_all.png", CaptureRegion.FullScreen1024x768, 0.72m, cancellationToken).ConfigureAwait(false);
         if (takeAll is null && _textLocator is not null)
@@ -240,6 +241,15 @@ public sealed partial class Gw2TradingPostUiDriver
         if (_textLocator is not null)
         {
             var panelText = NormalizeItemName(string.Join(" ", await ReadTextVariantsAsync(DeliveryPanelRegion, cancellationToken).ConfigureAwait(false)));
+            if (FuzzyContains(panelText, "whenyoubuyorsell"))
+            {
+                // An empty box explains itself with the same "speak to a Black Lion Trading Company NPC" words. It was read
+                // as locked while the API still showed a box collected minutes before: 26 TP reopens (22 min) on 22-23 Nov.
+                DeliveryLooksEmpty = true;
+                _logger.LogInformation("Delivery Box is empty on screen; the API still shows what was already collected.");
+                return false;
+            }
+
             if (FuzzyContains(panelText, "blackliontradingcompanynpc") || FuzzyContains(panelText, "pickupyouritems"))
             {
                 DeliveryNeedsTraderNpc = true;

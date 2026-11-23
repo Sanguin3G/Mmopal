@@ -598,14 +598,14 @@ public sealed partial class LiveTradingExecutorTests
     [Fact]
     public void CharacterStock_ranks_characters_by_flip_items_and_picks_a_stock_swap_target()
     {
-        var bags = new Dictionary<string, IReadOnlyDictionary<int, long>>(StringComparer.OrdinalIgnoreCase)
+        var units = new Dictionary<string, IReadOnlyDictionary<string, long>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Mesmerising Rizzo"] = new Dictionary<int, long> { [1] = 40, [2] = 20, [99] = 500 },
-            ["Johanne Shepard"] = new Dictionary<int, long> { [1] = 24 },
-            ["Big Cheetos"] = new Dictionary<int, long> { [99] = 3 },
+            ["Mesmerising Rizzo"] = new Dictionary<string, long> { ["Twin Sisters"] = 40, ["Pyre Dye"] = 20 },
+            ["Johanne Shepard"] = new Dictionary<string, long> { ["Twin Sisters"] = 24 },
+            ["Big Cheetos"] = new Dictionary<string, long>(),
         };
 
-        var ranked = CharacterStock.Rank(bags, new HashSet<int> { 1, 2 });
+        var ranked = CharacterStock.Rank(units, null);
 
         Assert.Equal(["Mesmerising Rizzo", "Johanne Shepard"], ranked.Select(entry => entry.Name));
         Assert.Equal(60, ranked[0].Items);

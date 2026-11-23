@@ -29,6 +29,7 @@ public sealed partial class WorkerRuntime
                 if (delivery.CoinsCopper <= 0 && delivery.Items.Count == 0)
                 {
                     effectiveBalance.ClearDeliveryCleared();
+                    _deliveryEmptySinceUtc = null;
                     return (false, 0, Array.Empty<string>());
                 }
 
@@ -67,7 +68,19 @@ public sealed partial class WorkerRuntime
                     ?? (await officialData.GetBalanceAsync(cancellationToken).ConfigureAwait(false))?.Copper
                     ?? 0;
                 var collectedUi = await liveDriver.CollectDeliveryBoxAsync(cancellationToken).ConfigureAwait(false);
-                if (!collectedUi && liveDriver.DeliveryNeedsTraderNpc)
+                if (collectedUi || !liveDriver.DeliveryLooksEmpty)
+                {
+                    _deliveryEmptySinceUtc = null;
+                }
+                else
+                {
+                    _deliveryEmptySinceUtc ??= now;
+                }
+
+                // The API shows a collected box for up to ~5 min. Still "empty" on screen well after that, the box is
+                // locked after all.
+                var emptyForTooLong = _deliveryEmptySinceUtc is { } emptySince && now - emptySince >= DeliveryEmptyMeansLocked;
+                if (!collectedUi && (liveDriver.DeliveryNeedsTraderNpc || emptyForTooLong))
                 {
                     collectedUi = await UnlockDeliveryAtTraderAsync(liveDriver, cancellationToken).ConfigureAwait(false);
                 }
@@ -75,6 +88,9 @@ public sealed partial class WorkerRuntime
                 effectiveBalance.RecordTakeAllAttempt(delivery.CoinsCopper, apiWalletBaseline, collectedUi, now, delivery.Items.Count);
                 if (collectedUi)
                 {
+                    // It collected, so this character is at a trader. Left set, one locked read early on still swapped the
+                    // character 30 min later (several of 7 such swaps in the 22-23 Nov run).
+                    _deliveryLockedSinceUtc = null;
                     if (collectedFlipItems.Count > 0)
                     {
                         pendingSellTracker.RecordDeliveryPickup(collectedFlipItems, now);
@@ -262,13 +278,17 @@ public sealed partial class WorkerRuntime
 
     /// <summary>Cancels listings that have stayed undercut 12 h+ when relisting still covers cost and the lost fee.</summary>
     private async Task RelistStaleUndercutSellsAsync(
+        TradingSession session,
         Gw2TradingPostUiDriver liveDriver,
         IReadOnlyList<Transaction> orders,
-        IReadOnlySet<string> tradedItems,
-        int undercutCopper,
-        SessionReportAccumulator reportAccumulator,
         CancellationToken cancellationToken)
     {
+        // Without knowing which units are Mmopal's, a listing the player made could be the one cancelled.
+        if (session.HeldByMmopal is not { } held)
+        {
+            return;
+        }
+
         try
         {
             var now = _utcNow();
@@ -283,7 +303,18 @@ public sealed partial class WorkerRuntime
                 paid[name.Trim()] = Math.Max(cost, paid.GetValueOrDefault(name.Trim()));
             }
 
-            var picks = SellRelistPolicy.Select(orders, paid, tradedItems, _relistedAtUtc, Math.Max(1, undercutCopper), now, maxPerPass: 2);
+            // The API shows a new listing up to ~5 min late; until then it could be the one whose Cancel gets clicked.
+            var relistable = orders
+                .Where(order => !session.SellQueue.WasJustListed(order.ItemName, now) && OwnedStock.ListingsAreMmopals(order.ItemName, held))
+                .ToArray();
+            var picks = SellRelistPolicy.Select(
+                relistable,
+                paid,
+                session.CandidateNames,
+                _relistedAtUtc,
+                Math.Max(1, session.Request.UndercutBufferMinCopper),
+                now,
+                maxPerPass: 2);
             if (picks.Count == 0)
             {
                 return;
@@ -292,7 +323,7 @@ public sealed partial class WorkerRuntime
             foreach (var name in await liveDriver.CancelSellListingsAsync(picks, cancellationToken).ConfigureAwait(false))
             {
                 _relistedAtUtc[name] = now;
-                reportAccumulator.RecordTrade(now, "Relist", name, 1, 0, "Canceled", "Undercut listing cancelled for relisting; it returns via the Delivery Box.");
+                session.Report.RecordTrade(now, "Relist", name, 1, 0, "Canceled", "Undercut listing cancelled for relisting; it returns via the Delivery Box.");
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -360,11 +391,7 @@ public sealed partial class WorkerRuntime
                 .ToArray();
         }
 
-        session.FlipStockByCharacter = CharacterStock.Rank(
-            officialData.LastCharacterBagItemIds,
-            flipInfos.Select(info => info.ItemId).ToHashSet());
         var flipNamesById = flipInfos.GroupBy(info => info.ItemId).ToDictionary(group => group.Key, group => group.First().Name.Trim());
-        session.HeldFlipItems = CharacterStock.HeldByItem(officialData.LastCharacterBagItemIds, flipNamesById);
         session.FlipItemsByCharacter = CharacterStock.ItemsByCharacter(officialData.LastCharacterBagItemIds, flipNamesById);
         session.FlipUnitsByCharacter = officialData.LastCharacterBagItemIds.ToDictionary(
             pair => pair.Key,
@@ -374,6 +401,8 @@ public sealed partial class WorkerRuntime
                 .ToDictionary(group => group.Key, group => group.Sum(item => item.Value), StringComparer.OrdinalIgnoreCase),
             StringComparer.OrdinalIgnoreCase);
         await ReadHeldByMmopalAsync(session, officialData, cancellationToken).ConfigureAwait(false);
+        session.FlipStockByCharacter = CharacterStock.Rank(session.FlipUnitsByCharacter, session.HeldByMmopal);
+        session.HeldFlipItems = CharacterStock.HeldByItem(session.FlipUnitsByCharacter, session.HeldByMmopal);
         if (session.LiveDriver is { } driver)
         {
             // A launch, game restart or disconnect lands on Character Select too: enter the character holding stock.
@@ -392,7 +421,7 @@ public sealed partial class WorkerRuntime
         try
         {
             var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
-                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlannedUnitCopper, order.TypedUnitCopper, order.PlacedAt));
+                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt));
             var recent = await officialData.GetRecentHistoryAsync(_ledgerStore, cancellationToken).ConfigureAwait(false);
             session.HeldByMmopal = OwnedStock.UnitsHeldByMmopal(placed, session.LedgerHistory.Concat(recent), session.LastKnownActiveOrders);
         }
@@ -433,7 +462,7 @@ public sealed partial class WorkerRuntime
                     "Not listing {Item}: the bags hold {Stack} but only {Mine} of them were bought by Mmopal; the rest are yours, and the sell dialog would list the whole stack.",
                     item,
                     stack,
-                    held.GetValueOrDefault(ItemNameNormalizer.Normalize(item)));
+                    Math.Max(0, held.GetValueOrDefault(ItemNameNormalizer.Normalize(item))));
             }
         }
 
@@ -488,9 +517,15 @@ public sealed partial class WorkerRuntime
 
         try
         {
-            if (await ReadFlipStockAsync(session, officialData, allowedFlipNames, cancellationToken).ConfigureAwait(false) is { Length: > 0 } confirmedFlipItems)
+            var confirmedFlipItems = await ReadFlipStockAsync(session, officialData, allowedFlipNames, cancellationToken).ConfigureAwait(false);
+            if (confirmedFlipItems is not null)
             {
                 pendingSellTracker.SyncFromCharacterInventory(confirmedFlipItems, now);
+                pendingSellTracker.DropUnseen(confirmedFlipItems, now);
+            }
+
+            if (confirmedFlipItems is { Length: > 0 })
+            {
                 var seen = string.Join(", ", confirmedFlipItems.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
                 if (!string.Equals(seen, _lastLoggedBagFlipItems, StringComparison.Ordinal))
                 {
