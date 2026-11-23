@@ -120,6 +120,23 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Equal(expected, Gw2TradingPostUiDriver.ClassifySearchBox([read], name).ToString());
 
     [Theory]
+    [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Waterbreather of the", "Afflicted")]
+    [InlineData("Polysaturating Reverberating Infusion (Purple)", "Polysaturating Reverberating Infusion", "(Purple)")]
+    [InlineData("Soldier's Benthic Waterbreather of the Afflicted", "Soldier's Benthic Aquabreather of the", null)]
+    [InlineData("Superior Rune of the Ogre", "Superior Rune of the", null)] // too short to wrap: it is another title
+    public void A_wrapped_title_has_to_go_on_with_the_rest_of_the_name(string expected, string firstLine, string? rest) =>
+        Assert.Equal(rest, Gw2TradingPostUiDriver.SecondTitleLine(expected, firstLine));
+
+    [Theory]
+    [InlineData(492, 466, 26)]
+    [InlineData(466, 466, 0)]
+    [InlineData(469, 466, 0)]   // a few pixels of template jitter
+    [InlineData(230, 466, 0)]
+    [InlineData(700, 466, 0)]   // not a line of text
+    public void The_item_window_shift_follows_the_order_book_header(int anchorY, int usual, int expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.DialogShift(anchorY, usual));
+
+    [Theory]
     [InlineData("Wni Black Terrier", "Mini Black Terrier Pup", true)]          // 23 Nov read
     [InlineData("Supeior Rune of the Renegad", "Superior Rune of the Revenant", false)] // closer to another order
     [InlineData("Superior Rune of the Re", "Superior Rune of the Revenant", false)]     // undecided

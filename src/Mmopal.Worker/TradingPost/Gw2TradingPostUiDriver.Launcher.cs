@@ -229,11 +229,23 @@ public sealed partial class Gw2TradingPostUiDriver
             hadLauncherActivity = true;
         }
 
+        if (hadLauncherActivity)
+        {
+            _worldSeen = false;
+        }
+
         if (hadLauncherActivity || IsGame3DWindowActive())
         {
             var launchWaitMs = _requireTemplateFilesOnDisk
                 ? Math.Max(Math.Max(_uiWaitMs * 4, _settings.WindowWaitTimeoutSeconds * 1000), 35_000)
                 : Math.Max(_uiWaitMs * 2, 150);
+            if (_worldSeen)
+            {
+                // Nothing to load: the TP is merely closed. The in-game icon below scores 0.65-0.71 with the HUD hidden, so
+                // every reopen and swap waited the whole 35 s for it (a swap took 97 s on 24 Nov).
+                launchWaitMs = Math.Min(launchWaitMs, 1_000);
+            }
+
             var launchDeadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(launchWaitMs);
 
             while (true)
@@ -247,6 +259,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 if (DetectLauncherWhiteCard(frame) is null)
                 {
                     if (await TryFindInFrameAsync(frame, "ingame_1.png", TopHeaderRegion, 0.72m, cancellationToken).ConfigureAwait(false) is not null ||
+                        await TryFindInFrameAsync(frame, "interact.png", InGameInteractRegion, 0.72m, cancellationToken).ConfigureAwait(false) is not null ||
                         await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false))
                     {
                         break;

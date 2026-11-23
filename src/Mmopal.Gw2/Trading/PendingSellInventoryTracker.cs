@@ -198,7 +198,9 @@ public sealed class PendingSellInventoryTracker
                     break;
 
                 case SellPassItemOutcome.SkippedError:
-                    DelayNextAttempt(name, nowUtc + ErrorRetryBackoff);
+                    // 2, 4, 8, 16, then every 30 min: an item whose window cannot be used was tried every cycle (24 Nov).
+                    var errors = _entries.TryGetValue(name, out var failing) ? failing.ErrorCount++ : 0;
+                    DelayNextAttempt(name, nowUtc + TimeSpan.FromTicks(Math.Min(HeldRetryBackoff.Ticks, ErrorRetryBackoff.Ticks << Math.Min(errors, 4))));
                     break;
 
                 case SellPassItemOutcome.Held:
@@ -261,5 +263,6 @@ public sealed class PendingSellInventoryTracker
         public DateTimeOffset LastConfirmedUtc { get; set; } = lastConfirmedUtc;
         public DateTimeOffset NextEligibleAttemptUtc { get; set; } = nextEligibleAttemptUtc;
         public int MissCount { get; set; }
+        public int ErrorCount { get; set; }
     }
 }

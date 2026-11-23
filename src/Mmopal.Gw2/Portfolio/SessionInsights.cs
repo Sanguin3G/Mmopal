@@ -30,6 +30,8 @@ public static class SessionInsights
         ("total could not be read", "total-unreadable"),
         ("the dialog total", "total-mismatch"),
         ("could not be read", "price-unreadable"),
+        ("price boxes are not on screen", "price-boxes-missing"),
+        ("modal did not open", "dialog-not-open"),
         ("not detected", "button-missing"),
         ("unavailable", "screen-missing"),
         ("below break-even", "below-cost"),

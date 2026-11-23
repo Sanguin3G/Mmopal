@@ -28,35 +28,10 @@ public sealed partial class Gw2TradingPostUiDriver
         await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
         await CloseTpWindowsAndClickRestAsync(cancellationToken).ConfigureAwait(false);
 
-        // Esc reliably opens the in-game Game Menu on GW2 where logout.png sits at (409, 425).
-        await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
-        var logoutBtn = await WaitForTemplateAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, Math.Max(40, _uiWaitMs / 2), cancellationToken).ConfigureAwait(false);
-        if (logoutBtn is null)
-        {
-            await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
-            logoutBtn = await WaitForTemplateAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, Math.Max(40, _uiWaitMs / 2), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (logoutBtn is null)
-        {
-            await _input.KeyPressAsync("f12", cancellationToken).ConfigureAwait(false);
-            logoutBtn = await WaitForTemplateAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, Math.Max(40, _uiWaitMs / 2), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (logoutBtn is null)
-        {
-            return (false, "Character swap aborted: the Game Menu's Log Out button was not found.");
-        }
-
-        await ClickCenterAsync(logoutBtn, cancellationToken).ConfigureAwait(false);
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        await ConfirmLogoutIfStillShownAsync(cancellationToken).ConfigureAwait(false);
-
-        var charSelectWaitMs = _requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs * 3, 18_000) : _uiWaitMs * 2;
-        var playBtn = await WaitForCharacterSelectPlayAsync(charSelectWaitMs, cancellationToken).ConfigureAwait(false);
+        var (playBtn, logoutProblem) = await LogOutToCharacterSelectAsync(cancellationToken).ConfigureAwait(false);
         if (playBtn is null)
         {
-            return (false, "Character swap aborted: Character select screen did not appear after Esc/F12 logout.");
+            return (false, $"Character swap aborted: {logoutProblem}");
         }
 
         if (!await WaitForCharacterSelectReadyAsync(cancellationToken).ConfigureAwait(false))
@@ -243,8 +218,9 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     /// <summary>
-    /// Closes any open Trading Post dialogs, opens the Game Menu, and performs an in-game Exit to Desktop
-    /// or Log Out so character/TP state flushes cleanly before closing the game executable.
+    /// Logs out to Character Select before the game is closed, so the character's state is saved. Reports success only
+    /// when Character Select is on screen: "Exit to Desktop" used to be clicked and called clean without a look (22 Nov),
+    /// right before the game process was closed.
     /// </summary>
     public async Task<(bool LoggedOut, string Message)> GracefulLogoutAndCloseGameAsync(
         CancellationToken cancellationToken = default)
@@ -254,57 +230,75 @@ public sealed partial class Gw2TradingPostUiDriver
             return (false, "Guild Wars 2 window not active for in-game logout.");
         }
 
-        await CloseTpWindowsAndClickRestAsync(cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("escape", cancellationToken).ConfigureAwait(false);
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
-
-        if (_textLocator is not null)
+        if (await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false))
         {
-            var menuRegion = new CaptureRegion(300, 220, 420, 380);
-            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
-            if (frame.Pixels.Length > 0)
-            {
-                var lines = await _textLocator.LocateLinesAsync(frame, menuRegion, cancellationToken).ConfigureAwait(false);
-                var exitDesktop = lines.FirstOrDefault(l =>
-                    l.Text.Contains("Exit to Desktop", StringComparison.OrdinalIgnoreCase));
-                if (exitDesktop is not null)
-                {
-                    var (x, y) = OcrBoxCenter(exitDesktop);
-                    await _input.ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
-                    await WaitAfterLogoutClickAsync(cancellationToken).ConfigureAwait(false);
-                    return (true, "Clicked 'Exit to Desktop' cleanly from the in-game menu.");
-                }
+            return (true, "Already on Character Select; closing Guild Wars 2.");
+        }
 
-                var ocrLogout = lines.FirstOrDefault(l =>
-                    l.Text.Contains("Log Out", StringComparison.OrdinalIgnoreCase));
-                if (ocrLogout is not null)
-                {
-                    var (x, y) = OcrBoxCenter(ocrLogout);
-                    await _input.ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
-                    await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-                    await ConfirmLogoutIfStillShownAsync(cancellationToken).ConfigureAwait(false);
-                    await WaitAfterLogoutClickAsync(cancellationToken).ConfigureAwait(false);
-                    return (true, "Logged out to Character Select cleanly before closing Guild Wars 2.");
-                }
+        await CloseTpWindowsAndClickRestAsync(cancellationToken).ConfigureAwait(false);
+        var (characterSelect, problem) = await LogOutToCharacterSelectAsync(cancellationToken).ConfigureAwait(false);
+        return characterSelect is null
+            ? (false, $"{problem} Closing the game process directly.")
+            : (true, "Logged out to Character Select; closing Guild Wars 2.");
+    }
+
+    /// <summary>
+    /// Game Menu, Log Out, Character Select: returns its Play button once the screen is there, or what went wrong. Used by
+    /// every swap and before the game is closed.
+    /// </summary>
+    private async Task<(TemplateMatch? Play, string Problem)> LogOutToCharacterSelectAsync(CancellationToken cancellationToken)
+    {
+        // Esc opens the Game Menu; a first Esc may only close something else.
+        (int X, int Y)? logOut = null;
+        foreach (var key in new[] { "escape", "escape", "f12" })
+        {
+            await _input.KeyPressAsync(key, cancellationToken).ConfigureAwait(false);
+            logOut = await FindMenuLogOutAsync(cancellationToken).ConfigureAwait(false);
+            if (logOut is not null || IsPaused)
+            {
+                break;
             }
         }
 
-        var logoutBtn = await WaitForTemplateAsync(
-            "logout.png",
-            CaptureRegion.FullScreen1024x768,
-            0.74m,
-            Math.Max(40, _uiWaitMs / 2),
-            cancellationToken).ConfigureAwait(false);
-        if (logoutBtn is not null)
+        if (logOut is not { } point)
         {
-            await ClickCenterAsync(logoutBtn, cancellationToken).ConfigureAwait(false);
-            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-            await ConfirmLogoutIfStillShownAsync(cancellationToken).ConfigureAwait(false);
-            await WaitAfterLogoutClickAsync(cancellationToken).ConfigureAwait(false);
-            return (true, "Logged out cleanly before closing Guild Wars 2.");
+            return (null, "the Game Menu's Log Out button was not found.");
         }
 
-        return (false, "Game Menu logout button not detected; closing process directly.");
+        await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        await ConfirmLogoutAsync(cancellationToken).ConfigureAwait(false);
+
+        var waitMs = _requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs * 3, 18_000) : _uiWaitMs * 2;
+        var play = await WaitForCharacterSelectPlayAsync(waitMs, cancellationToken).ConfigureAwait(false);
+        return (play, play is null ? "Character Select did not appear after Log Out." : string.Empty);
+    }
+
+    private async Task<(int X, int Y)?> FindMenuLogOutAsync(CancellationToken cancellationToken)
+    {
+        var template = await WaitForTemplateAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, Math.Max(40, _uiWaitMs / 2), cancellationToken).ConfigureAwait(false);
+        if (template is not null)
+        {
+            return (CenterX(template), CenterY(template));
+        }
+
+        if (_textLocator is null)
+        {
+            return null;
+        }
+
+        var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+        if (frame.Pixels.Length == 0)
+        {
+            return null;
+        }
+
+        var lines = await _textLocator.LocateLinesAsync(frame, GameMenuRegion, cancellationToken).ConfigureAwait(false);
+        // Only in the Game Menu itself, which also lists Exit to Desktop.
+        return lines.Any(line => line.Text.Contains("Exit to Desktop", StringComparison.OrdinalIgnoreCase)) &&
+               lines.FirstOrDefault(line => line.Text.Trim().Equals("Log Out", StringComparison.OrdinalIgnoreCase)) is { } box
+            ? OcrBoxCenter(box)
+            : null;
     }
 
     /// <summary>Closes TP windows, then (live) clicks the rest point so the next key reaches the game, not a dialog.</summary>
@@ -319,12 +313,56 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     /// <summary>
-    /// Enter confirms a logout prompt, but only while the menu is still up: without it Enter opens chat, and on Character
-    /// Select it enters the selected character.
+    /// After Log Out the game asks "Are you sure you want to log out?" with Log Out, Character Select and Cancel: clicks
+    /// Character Select. Enter (what used to confirm it) is only pressed when the question was read and the button was
+    /// not: without the dialog Enter opens chat, and on Character Select it enters the selected character.
     /// </summary>
-    private async Task ConfirmLogoutIfStillShownAsync(CancellationToken cancellationToken)
+    private async Task ConfirmLogoutAsync(CancellationToken cancellationToken)
     {
-        if (await TryFindOnceAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, cancellationToken).ConfigureAwait(false) is not null)
+        if (_textLocator is null)
+        {
+            if (await TryFindOnceAsync("logout.png", CaptureRegion.FullScreen1024x768, 0.74m, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(Math.Max(_uiWaitMs / 2, _pollMs));
+        var sawQuestion = false;
+        while (!IsPaused)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+            if (await FindCharacterSelectPlayAsync(frame, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return;
+            }
+
+            if (frame.Pixels.Length > 0)
+            {
+                var lines = await _textLocator.LocateLinesAsync(frame, LogoutDialogRegion, cancellationToken).ConfigureAwait(false);
+                sawQuestion |= lines.Any(line => FuzzyContains(NormalizeItemName(line.Text), "areyousureyouwanttologout"));
+                var button = lines.FirstOrDefault(line => NameSimilarity(NormalizeItemName(line.Text), "characterselect") >= 0.85);
+                if (sawQuestion && button is not null)
+                {
+                    var (x, y) = OcrBoxCenter(button);
+                    _logger.LogInformation("Confirming the logout with Character Select at ({X}, {Y}).", x, y);
+                    await _input.ClickAsync(x, y, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                break;
+            }
+
+            await Task.Delay(Math.Max(_pollMs, 150), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (sawQuestion && !IsPaused)
         {
             await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
         }
@@ -386,9 +424,6 @@ public sealed partial class Gw2TradingPostUiDriver
         return false;
     }
 
-    private Task WaitAfterLogoutClickAsync(CancellationToken cancellationToken) =>
-        Task.Delay(_requireTemplateFilesOnDisk ? 2000 : 20, cancellationToken);
-
     private async Task<TemplateMatch?> WaitForCharacterSelectPlayAsync(int timeoutMs, CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(Math.Max(20, timeoutMs));
@@ -447,5 +482,6 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         await WaitForInWorldAsync(cancellationToken).ConfigureAwait(false);
+        _worldSeen = !await IsCharacterSelectShownAsync(cancellationToken).ConfigureAwait(false);
     }
 }

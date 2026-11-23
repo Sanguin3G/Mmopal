@@ -317,6 +317,7 @@ public sealed partial class WorkerRuntime
                 return (false, "Paused by operator during GW2 restart.");
             }
 
+            liveDriver.NoteGameRestarted();
             if (restarted.WindowReady)
             {
                 _ = await liveDriver.TryAdvanceLauncherOrCharacterSelectAsync(cancellationToken).ConfigureAwait(false);

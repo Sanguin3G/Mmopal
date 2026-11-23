@@ -17,8 +17,7 @@ public sealed partial class Gw2TradingPostUiDriver
             return (ItemTitleCheck.Unreadable, null);
         }
 
-        var texts = await ReadTextVariantsAsync(ItemDialogTitleRegion, cancellationToken).ConfigureAwait(false);
-        var check = ClassifyItemTitle(expectedName, texts);
+        var check = await ReadItemTitleAsync(expectedName, cancellationToken).ConfigureAwait(false);
         if (check.Result != ItemTitleCheck.Unreadable)
         {
             return check;
@@ -26,8 +25,71 @@ public sealed partial class Gw2TradingPostUiDriver
 
         // The title may still be drawing: one more read before calling it unreadable.
         await SettleAsync(cancellationToken).ConfigureAwait(false);
-        texts = await ReadTextVariantsAsync(ItemDialogTitleRegion, cancellationToken).ConfigureAwait(false);
-        return ClassifyItemTitle(expectedName, texts);
+        return await ReadItemTitleAsync(expectedName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads the title. A long one wraps ("Soldier's Benthic Waterbreather of the / Afflicted"): then the second line is
+    /// the proof, and everything below it sits lower. On 24 Nov that item was refused four times because its price boxes
+    /// were not where a one-line title leaves them, and the second seller row was read as the lowest ask.
+    /// </summary>
+    private async Task<(ItemTitleCheck Result, string? SeenTitle)> ReadItemTitleAsync(string expectedName, CancellationToken cancellationToken)
+    {
+        var texts = await ReadTextVariantsAsync(ItemDialogTitleRegion, cancellationToken).ConfigureAwait(false);
+        if (texts.Any(text => IsSameItemName(expectedName, text)))
+        {
+            if (_openDialogAnchor is { } usual)
+            {
+                _usualAnchorY[usual.Template] = usual.Y;
+            }
+
+            return ClassifyItemTitle(expectedName, texts);
+        }
+
+        if (texts.Select(text => SecondTitleLine(expectedName, text)).FirstOrDefault(rest => rest is not null) is not { } secondLine)
+        {
+            return ClassifyItemTitle(expectedName, texts);
+        }
+
+        if (_openDialogAnchor is { } anchor)
+        {
+            _dialogShiftY = DialogShift(anchor.Y, _usualAnchorY.GetValueOrDefault(anchor.Template, anchor.Y));
+        }
+
+        var both = await ReadTextVariantsAsync(ItemDialogTwoLineTitleRegion, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("The title of {Item} wraps; the item window is {Shift} px lower.", expectedName, _dialogShiftY);
+        // Without the second line it may be a longer-named relative ("... of the Dragon"): then the price has to prove it.
+        return both.Any(line => IsSameItemName(secondLine, line))
+            ? (ItemTitleCheck.Match, expectedName)
+            : (ItemTitleCheck.Unreadable, texts.FirstOrDefault());
+    }
+
+    /// <summary>How much lower than usual the item window's contents are; 0 unless it is about a line of text or two.</summary>
+    internal static int DialogShift(int anchorY, int usualAnchorY) =>
+        anchorY - usualAnchorY is >= 8 and <= 80 and var shift ? shift : 0;
+
+    /// <summary>
+    /// When <paramref name="firstLine"/> is the start of a long name up to a word boundary, the rest of the name: what
+    /// the second line of the title has to say.
+    /// </summary>
+    internal static string? SecondTitleLine(string expectedName, string firstLine)
+    {
+        var words = expectedName.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        for (var count = words.Length - 1; count >= 2; count--)
+        {
+            var start = string.Join(' ', words[..count]);
+            if (start.Length < 24)
+            {
+                return null; // a title this short does not wrap
+            }
+
+            if (NameSimilarity(NormalizeItemName(start), NormalizeItemName(firstLine)) >= 0.9 && IsSameItemName(start, firstLine))
+            {
+                return string.Join(' ', words[count..]);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -359,8 +421,11 @@ public sealed partial class Gw2TradingPostUiDriver
             return SearchBoxText.Holds;
         }
 
-        var texts = await ReadTextVariantsAsync(SearchBoxTextRegion, cancellationToken).ConfigureAwait(false);
-        return ClassifySearchBox(texts, name);
+        var box = ClassifySearchBox(await ReadTextVariantsAsync(SearchBoxTextRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false), name);
+        // Short names only read in a wider crop ("Entropy", 24 Nov).
+        return box != SearchBoxText.Other
+            ? box
+            : ClassifySearchBox(await ReadTextVariantsAsync(SearchBoxWideTextRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false), name);
     }
 
     internal static SearchBoxText ClassifySearchBox(IEnumerable<string> texts, string name)
@@ -437,7 +502,7 @@ public sealed partial class Gw2TradingPostUiDriver
             var shown = false;
             foreach (var region in SearchNameRegions(query))
             {
-                var texts = await ReadTextVariantsAsync(region, cancellationToken).ConfigureAwait(false);
+                var texts = await ReadTextVariantsAsync(region, cancellationToken, enlargeMore: region != SearchResultsListRegion).ConfigureAwait(false);
                 // Only the first row: its Cancel is the one that gets clicked.
                 var ownNames = requireListedName && region != SearchResultsListRegion ? _cancelListNames : null;
                 if (texts.Select(NormalizeItemName).Any(text =>

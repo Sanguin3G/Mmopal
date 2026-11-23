@@ -29,7 +29,7 @@ reads the orders first.
 | --- | --- |
 | Open the TP | **F** (trader), then **O**, then **F**; Esc in between closes a bank opened by mistake. |
 | Search | Only with the Trading Post proven on screen (Black Lion crest and transactions tab). Enter and Backspace are pressed only once the box shows the typed name. Then waits until the results show it. Rarely readable names get a third of the UI wait. |
-| Open a row | The title must be the item (rows 1–3 are tried). Unreadable: only goes on if the search showed the name and the live price is within 10% of the API's. |
+| Open a row | The title must be the item (rows 1–3 are tried). A title on two lines needs its second line too, and every read follows the window, which sits lower then. Unreadable: only goes on if the search showed the name and the live price is within 10% of the API's. |
 | Read the price | By digit shape (exact or nothing), else OCR. Top bid + overbid past the profitable price aborts. |
 | Type price and quantity | The Total must be the typed price × at most the ordered quantity. Re-typed once, then aborted. |
 | Place Order | Later the API's order is compared with what was typed (`Order audit: …`). |
@@ -51,7 +51,7 @@ again before selling or cancelling (`The Trading Post is not on screen before th
   (`Not listing X: the bags hold N but only M …`). Listings you cancel by hand come back into the count.
 - **Price:** lowest ask − undercut, typed and checked like a buy. Below break-even it is held and tried again in 30
   minutes.
-- **Queue:** an item missed twice waits for the next character. One that no bag has shown for 10 minutes is dropped.
+- **Queue:** a listing that fails is retried after 2, 4, 8, 16, then every 30 minutes. An item missed twice waits for the next character. One that no bag has shown for 10 minutes is dropped.
 
 `Sell pass Listed / Held / NotFoundInBags / SkippedError for X` is logged for each item.
 
@@ -76,6 +76,8 @@ to any other order of yours. An item it cannot find on screen twice is left for 
   once nothing is left to list here. With 10+ items a character lists twice as many per pass.
 - **Unread name:** when Character Select cannot be read, two listed items that only one character held tell which one it
   is (`Logged-in character is …`).
+- **Logging out:** Log Out, then **Character Select** in "Are you sure you want to log out?", found by its text. Closing the game
+  at the session cap logs out the same way first and says so if Character Select did not appear.
 - **Character Select:** nothing is clicked until the selected name reads the same twice, since it takes clicks late while
   it loads. If it closes by itself, no further portrait is clicked. Play is clicked. Enter is not pressed: it landed in the loaded world and opened chat.
 

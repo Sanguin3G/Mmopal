@@ -510,6 +510,56 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Empty(input.KeyPresses); // Never presses Enter, F, or O into the password field
     }
 
+    [Theory]
+    [InlineData(true, false)]   // the dialog's three buttons, as read live on 24 Nov
+    [InlineData(false, false)]  // no dialog: nothing may be pressed, Enter would open chat
+    [InlineData(true, true)]    // the same before the game is closed at the session cap
+    [InlineData(false, true)]
+    public async Task Logging_out_confirms_with_the_character_select_button(bool dialogShows, bool closingGame)
+    {
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher();
+        bool MenuClicked() => input.Clicks.Contains((477, 443));
+        bool Confirmed() => input.Clicks.Contains((504, 462));
+        templates.DynamicMatches["logout.png"] = () =>
+            input.KeyPresses.Contains("escape") && !MenuClicked() ? new TemplateMatch(409, 425, 137, 37, 0.91m) : null;
+        templates.DynamicMatches["charscreen_play.png"] = () => Confirmed() ? new TemplateMatch(749, 711, 71, 33, 0.99m) : null;
+        var locator = new FakeUiTextLocator(region => dialogShows && region.Y == 260 && MenuClicked() && !Confirmed()
+            ?
+            [
+                new OcrTextBox("Log Out", 312, 455, 56, 15),
+                new OcrTextBox("Are you sure you want to log out?", 381, 393, 250, 18),
+                new OcrTextBox("Character Select", 445, 455, 119, 15),
+                new OcrTextBox("Cancel", 648, 455, 46, 15)
+            ]
+            : Array.Empty<OcrTextBox>());
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+
+        if (closingGame)
+        {
+            var (loggedOut, _) = await driver.GracefulLogoutAndCloseGameAsync();
+            Assert.Equal(dialogShows, loggedOut); // only with Character Select really on screen
+        }
+        else
+        {
+            _ = await driver.RotateParkedCharacterAsync(randomize: false, parkedCharacterCount: 4);
+        }
+
+        Assert.Equal(dialogShows, Confirmed());
+        Assert.DoesNotContain("enter", input.KeyPresses);
+    }
+
     [Fact]
     public async Task RotateParkedCharacterAsync_OpensEscapeMenuFirst_ClicksTargetPortraitAndEntersWorld()
     {

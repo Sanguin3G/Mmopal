@@ -31,10 +31,13 @@ public sealed partial class Gw2TradingPostUiDriver
     // Short names next to empty space or a price defeat the OCR in the wide crop ("Flare Dye", "Maw of the Damned"): 21
     // items could not be confirmed on 22-23 Nov, so their outbid orders were never cancelled. These crops read them.
     private static readonly CaptureRegion SearchBoxTextRegion = new(72, 186, 205, 24);
+    private static readonly CaptureRegion SearchBoxWideTextRegion = new(66, 182, 220, 32);
     private static readonly CaptureRegion SearchFirstRowTightRegion = new(388, 262, 200, 20);
     private static readonly CaptureRegion SearchFirstRowShortRegion = new(388, 258, 120, 28);
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
     private static readonly CaptureRegion ItemDialogTitleRegion = new(330, 165, 500, 45);
+    // Both lines of a title that wraps.
+    private static readonly CaptureRegion ItemDialogTwoLineTitleRegion = new(330, 165, 500, 78);
     // Rows include their "Max. Price" / "Total Price:" labels: on live frames Windows OCR read nothing from tighter
     // crops of just the digits.
     private static readonly CaptureRegion ItemDialogMaxPriceRegion = new(260, 290, 400, 44);
@@ -130,6 +133,8 @@ public sealed partial class Gw2TradingPostUiDriver
     private static readonly CaptureRegion LauncherLoginOcrRegion = new(10, 340, 360, 360);
     private static readonly CaptureRegion LauncherPlayRegion = new(600, 560, 424, 208);
     private static readonly CaptureRegion LauncherPlayOcrRegion = new(540, 510, 484, 258);
+    private static readonly CaptureRegion GameMenuRegion = new(300, 220, 420, 380);
+    private static readonly CaptureRegion LogoutDialogRegion = new(130, 260, 760, 270);
     private static readonly CaptureRegion CharSelectPlayRegion = new(680, 680, 220, 88);
     private static readonly CaptureRegion CharSelectBottomBarRegion = new(0, 680, 1024, 88);
     // Large name of the selected character on the left of Character Select (e.g. "Mesmerising Rizzo" at ~57,400).
@@ -199,6 +204,20 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     private bool IsPaused => _isPaused?.Invoke() == true;
+
+    // A two-line title pushes the rest of the item window down. The regions are measured on one-line titles, so they
+    // follow the order book's header: where it usually is, and how much lower it is now.
+    private readonly Dictionary<string, int> _usualAnchorY = new(StringComparer.Ordinal) { ["currentBuyers.png"] = 452, ["currentSellers.png"] = 466 };
+    private (string Template, int Y)? _openDialogAnchor;
+    private int _dialogShiftY;
+
+    private CaptureRegion InDialog(CaptureRegion region) => region with { Y = region.Y + _dialogShiftY };
+
+    // The game world has been on screen since the last launcher or Character Select.
+    private bool _worldSeen;
+
+    /// <summary>The game was started again: its loading has to be waited for like on a first launch.</summary>
+    public void NoteGameRestarted() => _worldSeen = false;
 
     /// <summary>
     /// True when the last <see cref="EnsureTradingPostOpenAsync"/> exhausted its key attempts on an in-world

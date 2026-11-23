@@ -90,6 +90,7 @@ public sealed partial class Gw2TradingPostUiDriver
         await EnsureGameWindowAsync(cancellationToken).ConfigureAwait(false);
         if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false))
         {
+            _worldSeen = true;
             return (true, "Trading Post is open.");
         }
 
@@ -104,6 +105,7 @@ public sealed partial class Gw2TradingPostUiDriver
             if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
                 await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false))
             {
+                _worldSeen = true;
                 return (true, "Entered world and Trading Post is open.");
             }
         }
@@ -177,9 +179,7 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogInformation("Opening Trading Post (attempt {Attempt}/3 with key '{Key}').", attempt, keyToPress);
             await _input.KeyPressAsync(keyToPress, cancellationToken).ConfigureAwait(false);
 
-            if (await WaitForTradingPostOrSidebarAsync(cancellationToken).ConfigureAwait(false) &&
-                (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
-                 await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false)))
+            if (await WaitForTradingPostAfterKeyAsync(cancellationToken).ConfigureAwait(false))
             {
                 LastTradingPostOpenFailed = false;
                 return (true, $"Trading Post opened via '{keyToPress}' on attempt {attempt}.");
@@ -338,12 +338,14 @@ public sealed partial class Gw2TradingPostUiDriver
             anchor = await WaitForTemplateAsync(anchorTemplate, CaptureRegion.FullScreen1024x768, minScore, _uiWaitMs, cancellationToken).ConfigureAwait(false);
         }
 
+        _dialogShiftY = 0;
+        _openDialogAnchor = anchor is null ? null : (anchorTemplate, anchor.Y);
         return anchor;
     }
 
     private async Task<TemplateMatch?> FindPriceSpinnerArrowAsync(string templateFileName, CancellationToken cancellationToken)
     {
-        var scoped = await TryFindOnceAsync(templateFileName, ModalPriceSpinnerRegion, 0.75m, cancellationToken).ConfigureAwait(false);
+        var scoped = await TryFindOnceAsync(templateFileName, InDialog(ModalPriceSpinnerRegion), 0.75m, cancellationToken).ConfigureAwait(false);
         if (scoped is not null || _requireTemplateFilesOnDisk)
         {
             return scoped;
@@ -457,15 +459,27 @@ public sealed partial class Gw2TradingPostUiDriver
         }
     }
 
-    private async Task<bool> WaitForTradingPostOrSidebarAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// After F or O: waits until the Trading Post is there, switching over from the Gem Store when that opened. Keeps
+    /// looking for the whole UI wait: one look at a window still sliding open used to count as failed within a second,
+    /// and the Esc and O that followed closed the trader's window again (after nearly every swap on 22-24 Nov).
+    /// </summary>
+    private async Task<bool> WaitForTradingPostAfterKeyAsync(CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(_uiWaitMs);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (IsPaused) return false;
-            if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false) ||
-                await TryFindOnceAsync("tradingpost_tab.png", LeftSidebarTpTabRegion, 0.68m, cancellationToken).ConfigureAwait(false) is not null)
+            if (await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            // Live, the sidebar icon only counts next to the Black Lion crest.
+            if ((!_proveTradingPost ||
+                 await TryFindOnceAsync("black_lion.png", BlackLionCrestRegion, 0.85m, cancellationToken).ConfigureAwait(false) is not null) &&
+                await TrySwitchFromBlackLionToTradingPostAsync(cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -498,6 +512,7 @@ public sealed partial class Gw2TradingPostUiDriver
                  await IsTradingPostOpenAndActiveAsync(cancellationToken).ConfigureAwait(false)))
             {
                 inWorldSince ??= DateTimeOffset.UtcNow;
+                _worldSeen = true;
                 if (DateTimeOffset.UtcNow - inWorldSince >= settledFor)
                 {
                     return;

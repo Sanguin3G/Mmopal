@@ -14,7 +14,7 @@ public sealed partial class Gw2TradingPostUiDriver
     /// units ("69. 95." is 69s 95c, "2,721.69." is 2,721g 69s), so each reading is resolved against the API hint.
     /// </summary>
     private Task<long?> ReadTopBuyerPriceAsync(long hintCopper, CancellationToken cancellationToken) =>
-        ReadTopListPriceAsync(BuyersListRegion, BuyersPriceColumnMinX, hintCopper, cancellationToken);
+        ReadTopListPriceAsync(InDialog(BuyersListRegion), BuyersPriceColumnMinX, hintCopper, cancellationToken);
 
     private async Task<long?> ReadTopListPriceAsync(CaptureRegion listRegion, int priceColumnMinX, long hintCopper, CancellationToken cancellationToken)
     {
@@ -141,6 +141,7 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             if (!await TypeDialogPriceAsync(unitCopper, cancellationToken).ConfigureAwait(false))
             {
+                await SaveDiagnosticFrameAsync("price-boxes-missing", cancellationToken).ConfigureAwait(false);
                 return (false, "the price boxes are not on screen, so nothing was typed.");
             }
 
@@ -152,7 +153,7 @@ public sealed partial class Gw2TradingPostUiDriver
                               (attempt == 1 ? "." : $" after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)})."));
             }
 
-            var texts = await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false);
+            var texts = await ReadJoinedTextVariantsAsync(InDialog(ItemDialogTotalPriceRegion), cancellationToken).ConfigureAwait(false);
             var totals = texts
                 .Select(ParseTotalPrice)
                 .Where(total => total is > 0)
@@ -175,7 +176,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 // OCR confirmed what the digit shapes could not read: learn the unknown shapes for next time.
                 // Only when two OCR reads agree on it: a learned shape is kept for good, so its label must be right.
                 if (glyphs.Frame is { } frame && glyphs.Reading is null && totals.Count(total => total == ocrTotal) >= 2 &&
-                    CoinPriceReader.LearnFromConfirmed(frame, GlyphTotalRegion, ocrTotal) is var learned and > 0)
+                    CoinPriceReader.LearnFromConfirmed(frame, InDialog(GlyphTotalRegion), ocrTotal) is var learned and > 0)
                 {
                     _logger.LogInformation("Learned {Count} new digit shape(s) from the confirmed total {Total}.", learned, MarketScanItem.FormatCoins(ocrTotal));
                 }
@@ -234,7 +235,7 @@ public sealed partial class Gw2TradingPostUiDriver
         try
         {
             var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
-            return frame.Pixels.Length == 0 ? (null, null) : (CoinPriceReader.ReadFirst(frame, GlyphTotalRegion), frame);
+            return frame.Pixels.Length == 0 ? (null, null) : (CoinPriceReader.ReadFirst(frame, InDialog(GlyphTotalRegion)), frame);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -425,7 +426,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 await Task.Delay(Math.Max(150, _settleMs / 3), cancellationToken).ConfigureAwait(false);
             }
 
-            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogTotalPriceRegion, cancellationToken).ConfigureAwait(false))
+            foreach (var text in await ReadJoinedTextVariantsAsync(InDialog(ItemDialogTotalPriceRegion), cancellationToken).ConfigureAwait(false))
             {
                 if (ParseTotalPrice(text) is { } total && quantity > 0 && total % quantity == 0)
                 {
@@ -433,7 +434,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 }
             }
 
-            foreach (var text in await ReadJoinedTextVariantsAsync(ItemDialogMaxPriceRegion, cancellationToken).ConfigureAwait(false))
+            foreach (var text in await ReadJoinedTextVariantsAsync(InDialog(ItemDialogMaxPriceRegion), cancellationToken).ConfigureAwait(false))
             {
                 fromBoxes ??= ParseDialogPrice(text);
             }
@@ -455,9 +456,9 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     /// <summary>OCR lines of a region, first from the raw frame and then from a contrast-enhanced 2x copy.</summary>
-    private async Task<IReadOnlyList<string>> ReadTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<string>> ReadTextVariantsAsync(CaptureRegion region, CancellationToken cancellationToken, bool enlargeMore = false)
     {
-        var variants = await ReadOcrLineVariantsAsync(region, cancellationToken).ConfigureAwait(false);
+        var variants = await ReadOcrLineVariantsAsync(region, cancellationToken, enlargeMore).ConfigureAwait(false);
         return variants
             .SelectMany(lines => lines.OrderBy(line => line.Y).Select(line => line.Text))
             .ToArray();
@@ -467,7 +468,7 @@ public sealed partial class Gw2TradingPostUiDriver
     /// The region's OCR lines from the raw frame, then from the contrast-enhanced copy when one can be built. The
     /// enhanced lines keep the enhanced frame's coordinates; callers only use them for ordering.
     /// </summary>
-    private async Task<IReadOnlyList<IReadOnlyList<OcrTextBox>>> ReadOcrLineVariantsAsync(CaptureRegion region, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<IReadOnlyList<OcrTextBox>>> ReadOcrLineVariantsAsync(CaptureRegion region, CancellationToken cancellationToken, bool enlargeMore = false)
     {
         if (_textLocator is null)
         {
@@ -489,6 +490,11 @@ public sealed partial class Gw2TradingPostUiDriver
             if (FrameVision.EnhanceTextContrast(frame, region) is { } enhanced)
             {
                 variants.Add(await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false));
+            }
+
+            if (enlargeMore && FrameVision.EnhanceTextContrast(frame, region, 3) is { } larger)
+            {
+                variants.Add(await _textLocator.LocateLinesAsync(larger, larger.Region, cancellationToken).ConfigureAwait(false));
             }
 
             return variants;
