@@ -114,10 +114,12 @@ public sealed partial class WorkerRuntime
             return CycleStep.EndSession;
         }
 
+        MarkStep(session, "pause");
         var driver = session.LiveDriver;
         if (driver is not null)
         {
             var opened = await OpenTradingPostAndCollectDeliveryAsync(session, driver, cancellationToken);
+            MarkStep(session, "open and collect");
             if (opened != CycleStep.Proceed)
             {
                 return opened;
@@ -134,6 +136,7 @@ public sealed partial class WorkerRuntime
 
         await RescanShoppingListIfDueAsync(session, cancellationToken);
         var cycleCandidates = await CandidatesForCycleAsync(session, portfolioGuidance, cancellationToken);
+        MarkStep(session, "sync and plan");
 
         if (IsPauseRequested) return CycleStep.NextCycle;
 
@@ -146,6 +149,7 @@ public sealed partial class WorkerRuntime
             cancellationToken,
             () => IsPauseRequested);
         RecordCycleResult(session, result);
+        MarkStep(session, "buy");
 
         if (IsPauseRequested)
         {
@@ -156,12 +160,14 @@ public sealed partial class WorkerRuntime
         var soldCount = 0;
         if (driver is not null && session.Request.EnableInventorySellPass)
         {
-            if (await RunSellPassAsync(session, driver, cancellationToken) is not { } listed)
+            var listed = await RunSellPassAsync(session, driver, cancellationToken);
+            MarkStep(session, "sell");
+            if (listed is not { } listedCount)
             {
                 return CycleStep.NextCycle;
             }
 
-            soldCount = listed;
+            soldCount = listedCount;
         }
 
         if (IsPauseRequested) return CycleStep.NextCycle;
@@ -170,6 +176,7 @@ public sealed partial class WorkerRuntime
         if (driver is not null && session.Request.EnableOutbidBuyRefresh && result.Market is not null)
         {
             canceledOutbidBuys = await RefreshOutbidBuysAsync(session, driver, result.Market.Transactions, cancellationToken);
+            MarkStep(session, "cancel");
         }
 
         if (IsPauseRequested) return CycleStep.NextCycle;
@@ -177,18 +184,21 @@ public sealed partial class WorkerRuntime
         if (driver is not null && session.Client.RelistStaleUndercutSells && result.Market is not null)
         {
             await RelistStaleUndercutSellsAsync(session, driver, result.Market.Transactions, cancellationToken).ConfigureAwait(false);
+            MarkStep(session, "relist");
         }
 
         if (IsPauseRequested) return CycleStep.NextCycle;
 
         var now = _utcNow();
         var (swapped, characterSwapDue) = await SwapCharacterIfDueAsync(session, now, cancellationToken);
+        MarkStep(session, "swap");
         if (swapped != CycleStep.Proceed)
         {
             return swapped;
         }
 
         ReportCycleStatus(session, result, portfolioGuidance, soldCount, canceledOutbidBuys, characterSwapDue, now);
+        await SaveCycleMetricsAsync(session, result, cancellationToken).ConfigureAwait(false);
 
         var recovered = await RecoverFailedCycleAsync(session, result, cancellationToken);
         if (recovered != CycleStep.Proceed)
@@ -381,6 +391,7 @@ public sealed partial class WorkerRuntime
                 TradingActionKind.CancelSellOrder => "Cancel Sell",
                 _ => actionResult.Action.Kind.ToString()
             };
+            RecordBuyEvent(session, actionResult);
             report.RecordTrade(
                 actionResult.CompletedAt,
                 actionType,
@@ -477,6 +488,7 @@ public sealed partial class WorkerRuntime
         foreach (var outcome in sellResults)
         {
             _logger.LogInformation("Sell pass {Outcome} for {Item}: {Details}", outcome.Outcome, outcome.ItemName, outcome.Details ?? "-");
+            RecordSellEvent(session, outcome);
             if (outcome.Outcome == SellPassItemOutcome.Listed)
             {
                 soldCount++;
@@ -484,8 +496,8 @@ public sealed partial class WorkerRuntime
                     postSellNow,
                     "Sell Listing",
                     outcome.ItemName,
-                    1,
-                    0,
+                    UnitsHere(session, driver, outcome.ItemName),
+                    outcome.UnitCopper ?? 0,
                     "Completed",
                     outcome.Details ?? "Sell order listed from bags.");
             }
@@ -493,6 +505,12 @@ public sealed partial class WorkerRuntime
 
         return soldCount;
     }
+
+    /// <summary>Size of the listed stack: the dialog lists all of it (1 when the bags were not read yet).</summary>
+    private static long UnitsHere(TradingSession session, Gw2TradingPostUiDriver driver, string item) =>
+        Math.Max(1, session.FlipUnitsByCharacter
+            .FirstOrDefault(pair => CharacterStock.NamesMatch(pair.Key, driver.CurrentCharacterName)).Value?
+            .GetValueOrDefault(item.Trim()) ?? 1);
 
     /// <summary>
     /// Queued sell targets this character holds (or that no bag shows yet) and whose stack here is all Mmopal's, up to
@@ -536,19 +554,24 @@ public sealed partial class WorkerRuntime
                 BuyCompetitionTracker.OutbidCancelsBeforePause);
         }
 
-        if (canceledOutbidBuys > 0)
+        foreach (var (item, outcome, note) in driver.LastCanceledOutbidItems.Select(item => (item, "outbid", "outbid"))
+                     .Concat(driver.LastCanceledStaleItems.Select(item => (item, "unfilled", "unfilled for a day"))))
         {
-            session.Report.RecordTrade(
-                _utcNow(),
-                "Outbid Refresh",
-                $"{canceledOutbidBuys} outbid buy order(s)",
-                canceledOutbidBuys,
-                0,
-                "Canceled",
-                "Cleared outbid buy order(s) for fresh bidding.");
+            RecordEvent(session, "cancel", outcome, item, activity: $"Cancelled the buy order for {item} ({note})");
+            session.Report.RecordTrade(_utcNow(), "Outbid Refresh", item, 1, 0, "Canceled", $"Buy order cancelled: {note}.");
         }
 
+        RecordUnconfirmedCancels(session, driver);
+
         return canceledOutbidBuys;
+    }
+
+    private void RecordUnconfirmedCancels(TradingSession session, Gw2TradingPostUiDriver driver)
+    {
+        foreach (var item in driver.TakeUnconfirmedCancels())
+        {
+            RecordEvent(session, "cancel", "unconfirmed", item);
+        }
     }
 
     /// <summary>
@@ -603,6 +626,12 @@ public sealed partial class WorkerRuntime
             if (swapped)
             {
                 session.Report.RecordCharacterSwap(_utcNow(), true, swapMsg);
+                RecordEvent(
+                    session,
+                    "swap",
+                    deliveryStuckSwap ? "delivery-locked" : stockSwapTarget is not null && !session.AfkSwap.IsDue(now) ? "stock" : "schedule",
+                    detail: swapMsg,
+                    activity: $"Swapped to {driver.CurrentCharacterLabel ?? "another character"}");
                 session.SellQueue.CharacterChanged(_utcNow());
             }
             else

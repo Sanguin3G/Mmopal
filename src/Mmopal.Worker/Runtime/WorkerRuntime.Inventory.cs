@@ -85,12 +85,25 @@ public sealed partial class WorkerRuntime
                     collectedUi = await UnlockDeliveryAtTraderAsync(liveDriver, cancellationToken).ConfigureAwait(false);
                 }
 
+                if (!collectedUi)
+                {
+                    RecordEvent(session, "delivery", liveDriver.DeliveryNeedsTraderNpc ? "locked" : liveDriver.DeliveryLooksEmpty ? "already-empty" : "not-collected");
+                }
+
                 effectiveBalance.RecordTakeAllAttempt(delivery.CoinsCopper, apiWalletBaseline, collectedUi, now, delivery.Items.Count);
                 if (collectedUi)
                 {
                     // It collected, so this character is at a trader. Left set, one locked read early on still swapped the
                     // character 30 min later (several of 7 such swaps in the 22-23 Nov run).
                     _deliveryLockedSinceUtc = null;
+                    session.Measured.Collected.UnionWith(collectedFlipItems);
+                    RecordEvent(
+                        session,
+                        "delivery",
+                        "collected",
+                        unitCopper: delivery.CoinsCopper,
+                        detail: $"{totalItemCount} item(s)",
+                        activity: $"Collected {MarketScanItem.FormatCoins(delivery.CoinsCopper)} and {totalItemCount} item(s) from the Delivery Box");
                     if (collectedFlipItems.Count > 0)
                     {
                         pendingSellTracker.RecordDeliveryPickup(collectedFlipItems, now);
@@ -320,9 +333,12 @@ public sealed partial class WorkerRuntime
                 return;
             }
 
-            foreach (var name in await liveDriver.CancelSellListingsAsync(picks, cancellationToken).ConfigureAwait(false))
+            var cancelled = await liveDriver.CancelSellListingsAsync(picks, orders, cancellationToken).ConfigureAwait(false);
+            RecordUnconfirmedCancels(session, liveDriver);
+            foreach (var name in cancelled)
             {
                 _relistedAtUtc[name] = now;
+                RecordEvent(session, "relist", "cancelled", name, activity: $"Cancelled the undercut listing of {name} to relist it");
                 session.Report.RecordTrade(now, "Relist", name, 1, 0, "Canceled", "Undercut listing cancelled for relisting; it returns via the Delivery Box.");
             }
         }

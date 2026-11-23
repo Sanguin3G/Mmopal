@@ -43,7 +43,8 @@ public sealed record SellPricing(long? ApiLowestAskCopper, long? BreakEvenCopper
 public sealed record SellPassItemResult(
     string ItemName,
     SellPassItemOutcome Outcome,
-    string? Details = null);
+    string? Details = null,
+    long? UnitCopper = null);
 
 /// <summary>
 /// Tracks flip items confirmed to be in the player's bags or Delivery Box pickups so the worker

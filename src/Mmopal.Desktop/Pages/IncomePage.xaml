@@ -126,7 +126,7 @@
                         <ComboBox x:Name="IncomeChartModeSelector" SelectedIndex="0" Width="150" HorizontalAlignment="Left" SelectionChanged="IncomeChartMode_SelectionChanged" ToolTip="Net worth over time is the honest headline; daily profit only counts items that sold. Hover bars for values.">
                             <ComboBoxItem Content="Net worth over time" Tag="NetWorth" />
                             <ComboBoxItem Content="Profit per day" Tag="DailyProfit" />
-                            <ComboBoxItem x:Name="HourlyChartModeItem" Content="Activity by hour" Tag="Hourly" />
+                            <ComboBoxItem x:Name="HourlyChartModeItem" Content="Best hours" Tag="Hourly" />
                         </ComboBox>
                         <TextBlock x:Name="DailyChartSummaryText" Grid.Column="1" Text="" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" HorizontalAlignment="Right" Margin="8,0,0,0" />
                     </Grid>

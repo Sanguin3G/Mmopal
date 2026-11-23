@@ -102,6 +102,16 @@ public static class CharacterStock
     }
 
     /// <summary>
+    /// The only character whose bags held <paramref name="itemName"/>, or null when none or several did. Listing an item
+    /// from the bags shows which character is logged in when Character Select could not be read.
+    /// </summary>
+    public static string? OnlyHolder(string itemName, IReadOnlyDictionary<string, IReadOnlySet<string>> itemsByCharacter)
+    {
+        var holders = itemsByCharacter.Where(pair => pair.Value.Contains(itemName)).Select(pair => pair.Key).Take(2).ToArray();
+        return holders.Length == 1 ? holders[0] : null;
+    }
+
+    /// <summary>
     /// Candidates minus items that already hold at least one order's worth of unsold units in bags. Buying more of
     /// an item that has not been listed yet only ties up gold: on 21-22 Nov 97 bought items (~145g) sat unsold while
     /// the same items kept being re-bought (Twin Sisters: 11 orders placed in the run, 8 still unsold in bags at the end).

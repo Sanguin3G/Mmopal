@@ -73,6 +73,7 @@ Ready for the real thing? [Going live](docs/run.md#going-live) covers the in-gam
 | Know how it picks, prices and paces trades | [docs/trading-strategy.md](docs/trading-strategy.md) |
 | Understand a log line or a screen flow | [docs/gw2-trading-controller.md](docs/gw2-trading-controller.md) |
 | Work on the code | [CLAUDE.md](CLAUDE.md), [docs/architecture.md](docs/architecture.md) |
+| See what came from the original Mmopal | [docs/migration.md](docs/migration.md) |
 
 ```powershell
 dotnet test Mmopal.sln   # never opens the game or sends input

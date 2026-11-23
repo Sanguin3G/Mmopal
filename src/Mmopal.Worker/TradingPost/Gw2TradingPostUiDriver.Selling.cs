@@ -194,6 +194,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
                 var undercutSteps = PickStepCount(undercutMinCopper, undercutMaxCopper);
                 string? typedSellNote = null;
+                long? typedSellCopper = null;
                 if (typeSellPrice)
                 {
                     var choice = ChooseTypedSellPrice(itemPricing!.ApiLowestAskCopper!.Value, liveLowestAsk, undercutSteps, itemPricing.BreakEvenCopper, itemPricing.OwnLowestListingCopper);
@@ -214,6 +215,7 @@ public sealed partial class Gw2TradingPostUiDriver
                         continue;
                     }
 
+                    typedSellCopper = sellTarget;
                     typedSellNote = $" at {MarketScanItem.FormatCoins(sellTarget)} (typed)";
                 }
                 else
@@ -251,7 +253,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 if (listButton is not null && !IsPaused)
                 {
                     await ClickCenterAndSettleAsync(listButton, cancellationToken).ConfigureAwait(false);
-                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.Listed, $"Sell listing placed{typedSellNote}."));
+                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.Listed, $"Sell listing placed{typedSellNote}.", typedSellCopper));
                 }
                 else
                 {

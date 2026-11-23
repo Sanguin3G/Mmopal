@@ -329,6 +329,17 @@ public static class SessionReportFormatter
         sb.AppendLine($"| Open Orders (Start -> End) | {report.StartingOpenOrders:N0} -> {report.EndingOpenOrders:N0} |");
         sb.AppendLine();
 
+        if (report.Findings is { Count: > 0 } findings)
+        {
+            sb.AppendLine("## Findings");
+            sb.AppendLine();
+            foreach (var finding in findings) sb.AppendLine($"- {finding}");
+            sb.AppendLine();
+            sb.AppendLine($"- **Time:** {DescribeTime(report)}");
+            sb.AppendLine($"- **Outcomes:** {DescribeOutcomes(report)}");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Trade & Session Events");
         sb.AppendLine();
         if (report.Trades.Count == 0)
@@ -381,6 +392,25 @@ public static class SessionReportFormatter
 
         return sb.ToString();
     }
+
+    /// <summary>Share of the time per step, for example "buy 38% (12 min), pause 24% (8 min)".</summary>
+    public static string DescribeTime(TradingSessionReport report)
+    {
+        if (report.SecondsByStep is not { Count: > 0 } steps)
+        {
+            return "not measured";
+        }
+
+        var total = Math.Max(1, steps.Values.Sum());
+        return string.Join(", ", steps
+            .OrderByDescending(step => step.Value)
+            .Select(step => string.Create(CultureInfo.InvariantCulture, $"{step.Key} {100 * step.Value / total:0}% ({step.Value / 60:0.#} min)")));
+    }
+
+    public static string DescribeOutcomes(TradingSessionReport report) =>
+        report.OutcomeCounts is { Count: > 0 } outcomes
+            ? string.Join(", ", outcomes.OrderByDescending(pair => pair.Value).Select(pair => $"{pair.Key} {pair.Value}"))
+            : "none recorded";
 
     private static string EscapePipe(string value) =>
         string.IsNullOrEmpty(value) ? string.Empty : value.Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");

@@ -217,10 +217,15 @@
         <!-- Market list & history strip: what the bot is trading from and what it has learned. -->
         <Border x:Name="MarketIntelStrip" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,12">
             <WrapPanel Orientation="Horizontal">
+                <!-- Each icon wraps together with its text. -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,18,0">
                 <TextBlock Text="&#xE721;" Style="{StaticResource GlyphIcon}" FontSize="12" Foreground="{DynamicResource AccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
-                <TextBlock x:Name="MarketListStatusText" Text="Shopping list: not started" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,18,0" VerticalAlignment="Center" ToolTip="Session shopping list size and the next automatic Market Scanner re-scan (Market Scanner → Advanced → Auto re-scan)." />
+                <TextBlock x:Name="MarketListStatusText" Text="Shopping list: not started" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" ToolTip="Session shopping list size and the next automatic Market Scanner re-scan (Market Scanner → Advanced → Auto re-scan)." />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE9D9;" Style="{StaticResource GlyphIcon}" FontSize="12" Foreground="{DynamicResource GoldAccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
                 <TextBlock x:Name="PortfolioStatusText" Text="History: —" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" ToolTip="Your last 30 days of trades (Income &amp; Portfolio): proven winners are boosted, items that lost money are skipped. Synced automatically every 45 minutes during a session." />
+                </StackPanel>
             </WrapPanel>
         </Border>
         </StackPanel>

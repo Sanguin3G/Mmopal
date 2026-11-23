@@ -75,6 +75,8 @@ public sealed partial class WorkerRuntime
         public DateTimeOffset LastGameRestartUtc { get; set; } = DateTimeOffset.MinValue;
         public int ConsecutiveFailedCycles { get; set; }
 
+        public SessionMeasurements Measured { get; } = new();
+
         // How the session ended (for the report).
         public bool CapReached { get; set; }
         public string Outcome { get; set; } = "Completed";
@@ -326,7 +328,7 @@ public sealed partial class WorkerRuntime
 
         try
         {
-            var finalReport = session.Report.Build(_utcNow(), session.Outcome, session.OutcomeSummary);
+            var finalReport = await AddMeasurementsAsync(session, session.Report.Build(_utcNow(), session.Outcome, session.OutcomeSummary)).ConfigureAwait(false);
             var policySettings = session.Request.ReportSettings ?? new SessionReportPolicySettings();
             var shouldSaveReport = SessionReportPolicy.ShouldSave(finalReport, policySettings);
             if (shouldSaveReport && _sessionReportStore is not null)

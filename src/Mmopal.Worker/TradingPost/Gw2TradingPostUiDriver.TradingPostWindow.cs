@@ -252,14 +252,43 @@ public sealed partial class Gw2TradingPostUiDriver
 
             if (FuzzyContains(panelText, "blackliontradingcompanynpc") || FuzzyContains(panelText, "pickupyouritems"))
             {
+                // The same words show at a trader when the box holds coins and no items (23 Nov frames: "Items: 0, Funds:
+                // 6g 49s"), and 244 of 358 such reads were coins only. Away from a trader Take All does nothing, so click
+                // it and see whether the box empties.
+                await ClickCenterAndSettleAsync(takeAll, cancellationToken).ConfigureAwait(false);
+                if (await DeliveryBoxEmptiedAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    return true;
+                }
+
                 DeliveryNeedsTraderNpc = true;
-                _logger.LogWarning("Delivery Box says to speak to a Black Lion Trading Company NPC: the TP was opened away from a trader, so Take All would collect nothing.");
+                _logger.LogWarning("Delivery Box still says to speak to a Black Lion Trading Company NPC after Take All: the TP was opened away from a trader.");
                 return false;
             }
         }
 
         await ClickCenterAndSettleAsync(takeAll, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    private async Task<bool> DeliveryBoxEmptiedAsync(CancellationToken cancellationToken)
+    {
+        var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(_uiWaitMs / 2, _pollMs));
+        while (true)
+        {
+            var text = NormalizeItemName(string.Join(" ", await ReadTextVariantsAsync(DeliveryPanelRegion, cancellationToken).ConfigureAwait(false)));
+            if (FuzzyContains(text, "whenyoubuyorsell"))
+            {
+                return true;
+            }
+
+            if (_utcNow() >= deadline)
+            {
+                return false;
+            }
+
+            await Task.Delay(Math.Max(_pollMs, 250), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Closes the TP and opens it again through the nearest NPC (F first), so the Delivery Box unlocks.</summary>

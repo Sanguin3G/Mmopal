@@ -643,6 +643,10 @@ public partial class MainWindow : Window
         {
             ApplySessionReportEvent(workerEvent.Payload, rawLog);
         }
+        else if (workerEvent.Type == WorkerEventTypes.Log)
+        {
+            AddLog(workerEvent.Payload, rawLog);
+        }
         else
         {
             AddLog(rawLog, rawLog);

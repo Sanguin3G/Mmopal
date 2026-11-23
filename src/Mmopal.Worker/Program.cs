@@ -55,6 +55,8 @@ internal static class Program
         await ledgerStore.InitializeAsync();
         var sessionReportStore = new SessionReportStore(paths.Database);
         await sessionReportStore.InitializeAsync();
+        var metricsStore = new SessionMetricsStore(paths.Database);
+        await metricsStore.InitializeAsync();
 
         var templateRoot = ResolveConfiguredDirectory(nativeOptions.TemplateRoot);
         using var guildWars = new HttpClient { BaseAddress = new Uri("https://api.guildwars2.com/"), Timeout = TimeSpan.FromSeconds(120) };
@@ -66,7 +68,8 @@ internal static class Program
             ledgerStore: ledgerStore,
             sessionReportStore: sessionReportStore,
             diagnosticsDirectory: paths.Screenshots,
-            marketScanner: new Gw2MarketScanner(guildWars, ledgerStore));
+            marketScanner: new Gw2MarketScanner(guildWars, ledgerStore),
+            metricsStore: metricsStore);
 
         using var shutdownCancellation = new CancellationTokenSource();
         Task? parentWatchdog = null;

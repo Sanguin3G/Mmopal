@@ -53,6 +53,27 @@ public sealed class SessionReportStore
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>When live sessions ran (without loading their reports).</summary>
+    public async Task<IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)>> GetLiveSessionRangesAsync(
+        string? accountName = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT started_at, ended_at FROM trading_session_reports WHERE run_mode = 'Live' AND ($account = '' OR account_name = $account);";
+        command.Parameters.AddWithValue("$account", accountName ?? string.Empty);
+        var ranges = new List<(DateTimeOffset, DateTimeOffset)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            ranges.Add((
+                DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture),
+                DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture)));
+        }
+
+        return ranges;
+    }
+
     public async Task SaveReportAsync(
         TradingSessionReport report,
         int maxSavedReports = 100,

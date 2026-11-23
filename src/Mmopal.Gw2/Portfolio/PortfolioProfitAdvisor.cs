@@ -189,7 +189,8 @@ public static class PortfolioProfitAdvisor
     public static string BuildDashboardInsightSummary(
         TradingIncomeReport report,
         IReadOnlyList<Gw2ActiveOrder> activeOrders,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        IReadOnlyList<RunningHourPoint>? runningHours = null)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(activeOrders);
@@ -207,13 +208,10 @@ public static class PortfolioProfitAdvisor
             parts.Add($"Skipped for losing money: {loserCount}");
         }
 
-        var bestHour = report.HourlySeries
-            .Where(h => h.RealizedProfitCopper > 0)
-            .OrderByDescending(h => h.RealizedProfitCopper)
-            .FirstOrDefault();
-        if (bestHour is not null)
+        // Totals per hour only show when Mmopal ran, so the best hour needs running times.
+        if (RunningHours.Best(runningHours ?? []) is { } bestHour)
         {
-            parts.Add($"Best hour: {bestHour.LocalHour:00}:00");
+            parts.Add($"Best hour: {bestHour.LocalHour:00}:00 ({MarketScanItem.FormatCoins(bestHour.SoldNetPerHourCopper)} sold per hour run)");
         }
 
         var overExposed = activeOrders

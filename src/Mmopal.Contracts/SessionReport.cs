@@ -47,7 +47,11 @@ public sealed record TradingSessionReport(
     int StartingOpenOrders,
     int EndingOpenOrders,
     IReadOnlyList<SessionTradeEvent> Trades,
-    IReadOnlyList<SessionIncidentEvent> Incidents)
+    IReadOnlyList<SessionIncidentEvent> Incidents,
+    // Measured from 23 Nov 2026 on; null in older reports.
+    IReadOnlyDictionary<string, double>? SecondsByStep = null,
+    IReadOnlyDictionary<string, int>? OutcomeCounts = null,
+    IReadOnlyList<string>? Findings = null)
 {
     public int TotalTradeActions => BuyOrdersPlaced + SellOrdersListed + OutbidBuysRefreshed;
 

@@ -64,9 +64,14 @@ public sealed partial class WorkerRuntime
                             ct,
                             finalPricing).ConfigureAwait(false);
                         pendingSellTracker.RecordSellPassResults(sellResults, _utcNow());
+                        foreach (var outcome in sellResults)
+                        {
+                            RecordSellEvent(session, outcome);
+                        }
+
                         foreach (var s in sellResults.Where(r => r.Outcome == SellPassItemOutcome.Listed))
                         {
-                            reportAccumulator.RecordTrade(_utcNow(), "Sell Listing", s.ItemName, 1, 0, "Completed", "Listed during final cap recheck.");
+                            reportAccumulator.RecordTrade(_utcNow(), "Sell Listing", s.ItemName, UnitsHere(session, liveDriver, s.ItemName), s.UnitCopper ?? 0, "Completed", "Listed during final cap recheck.");
                         }
                     }
                 }

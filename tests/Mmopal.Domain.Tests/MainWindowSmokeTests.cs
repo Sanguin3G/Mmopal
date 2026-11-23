@@ -175,6 +175,9 @@ public sealed class MainWindowSmokeTests
                 supervisor.Raise(StatusOf(WorkerState.ProcessingTrading, WorkerStatus.EvaluatingMarket, "Running a trading cycle."));
                 PumpDispatcher();
                 Assert.Equal(logged + 1, log.Items.Count);
+                supervisor.Raise(new WorkerEvent(WorkerEventTypes.Log, "Ordered 2× Pyre Dye at 70s 01c"));
+                PumpDispatcher();
+                Assert.EndsWith("] Ordered 2× Pyre Dye at 70s 01c", Assert.IsType<string>(log.Items[^1]), StringComparison.Ordinal);
                 Assert.Equal("Running a trading cycle.", status.Text);
 
                 RequireButton(window, "Stop").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

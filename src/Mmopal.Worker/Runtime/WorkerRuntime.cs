@@ -75,8 +75,10 @@ public sealed partial class WorkerRuntime
         TradingLedgerStore? ledgerStore = null,
         SessionReportStore? sessionReportStore = null,
         string? diagnosticsDirectory = null,
-        IGw2MarketScanner? marketScanner = null)
+        IGw2MarketScanner? marketScanner = null,
+        SessionMetricsStore? metricsStore = null)
     {
+        _metricsStore = metricsStore;
         _marketScanner = marketScanner;
         _diagnosticsDirectory = diagnosticsDirectory;
         _store = store;

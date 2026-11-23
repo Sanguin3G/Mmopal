@@ -178,6 +178,23 @@
 
                         <!-- Trades vs Incidents Tables -->
                         <TabControl Grid.Row="2">
+                            <TabItem x:Name="ReportFindingsTabItem" Header="Findings">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <StackPanel Margin="4,8,4,4">
+                                        <ItemsControl x:Name="ReportFindingsList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" FontSize="12.5" TextWrapping="Wrap" Margin="0,0,0,6" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="Where the time went" FontWeight="SemiBold" FontSize="12" Margin="0,8,0,3" />
+                                        <TextBlock x:Name="ReportTimeText" Style="{StaticResource HintText}" TextWrapping="Wrap" />
+                                        <TextBlock Text="What happened" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,3" />
+                                        <TextBlock x:Name="ReportOutcomesText" Style="{StaticResource HintText}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </TabItem>
                             <TabItem x:Name="ReportTradesTabItem" Header="Trade &amp; Action Log (0)">
                                 <DataGrid x:Name="ReportTradesGrid" AutoGenerateColumns="False" IsReadOnly="True" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                                     <DataGrid.Columns>

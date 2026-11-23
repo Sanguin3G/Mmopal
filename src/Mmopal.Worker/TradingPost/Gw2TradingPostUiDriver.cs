@@ -30,6 +30,7 @@ public sealed partial class Gw2TradingPostUiDriver
     private static readonly CaptureRegion SearchFirstRowNameRegion = new(385, 258, 300, 28);
     // Short names next to empty space or a price defeat the OCR in the wide crop ("Flare Dye", "Maw of the Damned"): 21
     // items could not be confirmed on 22-23 Nov, so their outbid orders were never cancelled. These crops read them.
+    private static readonly CaptureRegion SearchBoxTextRegion = new(72, 186, 205, 24);
     private static readonly CaptureRegion SearchFirstRowTightRegion = new(388, 262, 200, 20);
     private static readonly CaptureRegion SearchFirstRowShortRegion = new(388, 258, 120, 28);
     // Buy dialog: item name title at ~(347,175) and the Max. Price gold/silver/copper boxes at y~302-322.
@@ -65,6 +66,16 @@ public sealed partial class Gw2TradingPostUiDriver
     /// <summary>Items whose buy orders the last Outbid Refresh pass cancelled (for the bot-war guard).</summary>
     public IReadOnlyList<string> LastCanceledOutbidItems { get; private set; } = Array.Empty<string>();
 
+    /// <summary>Items whose cancel search was not confirmed since the last call.</summary>
+    public IReadOnlyList<string> TakeUnconfirmedCancels()
+    {
+        var items = _unconfirmedCancels.ToArray();
+        _unconfirmedCancels.Clear();
+        return items;
+    }
+
+    private readonly List<string> _unconfirmedCancels = [];
+
     /// <summary>Items whose old, unfilled top-bid buy orders the last Outbid Refresh pass cancelled.</summary>
     public IReadOnlyList<string> LastCanceledStaleItems { get; private set; } = Array.Empty<string>();
 
@@ -74,6 +85,8 @@ public sealed partial class Gw2TradingPostUiDriver
     private readonly HashSet<string> _ambiguousOutbidLogged = new(StringComparer.OrdinalIgnoreCase);
     // Cancel searches that could not be confirmed, per item: the 23 min session on 22 Nov searched Ebonblade 6 times
     // and Elder Draco-Pop, Reclaimed Torch and Rune of the Renegade 4-5 times each without cancelling anything.
+    // Normalized names of every order in the list a cancel flow searches (null outside those flows).
+    private IReadOnlyCollection<string>? _cancelListNames;
     private const int LongestSearchText = 60;
     private const int LongestNumberText = 6;
     private int _searchBoxMayHold = LongestSearchText;
@@ -87,6 +100,12 @@ public sealed partial class Gw2TradingPostUiDriver
 
     /// <summary>The logged-in character's name as read on Character Select, or null when it was not read.</summary>
     public string? CurrentCharacterName { get; private set; }
+
+    /// <summary>How often a character was entered, so what was learned about the previous one can be dropped.</summary>
+    public int CharacterEntries { get; private set; }
+
+    /// <summary>Sets the logged-in character when its name could not be read at Character Select but is known otherwise.</summary>
+    public void AssumeCurrentCharacter(string name) => CurrentCharacterName ??= name;
 
     /// <summary>
     /// Names read on the parked portraits (the first min(parked, 5) slots) during a name-guided swap. Characters

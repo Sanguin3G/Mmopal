@@ -537,7 +537,7 @@ public sealed class TradingCycleController
     }
 
     /// <summary>Strips per-item details (amounts, names in quotes) so skip reasons group into a short summary.</summary>
-    private static string SummarizeReason(string? reason)
+    public static string SummarizeReason(string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
         {

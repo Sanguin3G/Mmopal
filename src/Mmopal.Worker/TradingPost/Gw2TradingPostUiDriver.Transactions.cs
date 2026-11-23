@@ -82,6 +82,9 @@ public sealed partial class Gw2TradingPostUiDriver
         Func<Transaction, bool>? mayCancel = null,
         CancellationToken cancellationToken = default)
     {
+        // Reset first: a pass that returns early (reset window) must not report the previous pass's cancels again.
+        LastCanceledOutbidItems = Array.Empty<string>();
+        LastCanceledStaleItems = Array.Empty<string>();
         if (maxCancelsPerPass <= 0 || transactions.Count == 0)
         {
             return 0;
@@ -96,8 +99,6 @@ public sealed partial class Gw2TradingPostUiDriver
             return 0;
         }
 
-        LastCanceledOutbidItems = Array.Empty<string>();
-        LastCanceledStaleItems = Array.Empty<string>();
         var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp);
         if (keptYoung > 0)
         {
@@ -134,6 +135,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
+        _cancelListNames = OwnNames(transactions, TransactionType.Buy);
         var canceledNames = new List<string>();
         var staleNames = new List<string>();
         foreach (var order in outbidBuys)
@@ -184,6 +186,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
+        _cancelListNames = null;
         LastCanceledOutbidItems = canceledNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         LastCanceledStaleItems = staleNames;
         return canceledNames.Count + staleNames.Count;
@@ -196,6 +199,7 @@ public sealed partial class Gw2TradingPostUiDriver
     /// </summary>
     public async Task<IReadOnlyList<string>> CancelSellListingsAsync(
         IReadOnlyList<SellRelist> relists,
+        IReadOnlyList<Transaction> orders,
         CancellationToken cancellationToken = default)
     {
         var canceledNames = new List<string>();
@@ -217,6 +221,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         await ClickCenterAndSettleAsync(sellingBtn, cancellationToken).ConfigureAwait(false);
+        _cancelListNames = OwnNames(orders, TransactionType.Sell);
 
         foreach (var relist in relists)
         {
@@ -248,8 +253,16 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogInformation("Relist: cancelled the undercut listing for {Item} ({Reason}).", relist.Listing.ItemName, relist.Reason);
         }
 
+        _cancelListNames = null;
         return canceledNames;
     }
+
+    private static string[] OwnNames(IEnumerable<Transaction> orders, TransactionType type) =>
+        orders
+            .Where(order => order.Type == type && !string.IsNullOrWhiteSpace(order.ItemName))
+            .Select(order => NormalizeItemName(order.ItemName))
+            .Distinct()
+            .ToArray();
 
     /// <summary>
     /// Opens My Transactions (clears its filters) and its Current list when that button is found. False when the

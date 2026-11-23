@@ -71,9 +71,25 @@ public sealed partial class LiveTradingExecutorTests
             requireTemplateFilesOnDisk: false,
             textLocator: locator);
 
-        Assert.False(await driver.CollectDeliveryBoxAsync());
+        Assert.False(await driver.CollectDeliveryBoxAsync()); // Take All was tried and the text did not change
         Assert.True(driver.DeliveryNeedsTraderNpc);
-        Assert.DoesNotContain((191, 712), input.Clicks);
+        Assert.Contains((191, 712), input.Clicks);
+    }
+
+    [Theory]
+    [InlineData("Wni Black Terrier", "Mini Black Terrier Pup", true)]          // 23 Nov read
+    [InlineData("Supeior Rune of the Renegad", "Superior Rune of the Revenant", false)] // closer to another order
+    [InlineData("Superior Rune of the Re", "Superior Rune of the Revenant", false)]     // undecided
+    [InlineData("Twin Sisters", "Mini Black Terrier Pup", false)]               // a stale row
+    public void Blurred_rows_are_recognised_only_among_our_own_orders(string read, string searched, bool expected)
+    {
+        var own = new[] { "Mini Black Terrier Pup", "Superior Rune of the Revenant", "Superior Rune of the Renegade", "Twin Sisters", "Pyre Dye" }
+            .Select(ItemNameNormalizer.Normalize).Select(name => name.Replace(" ", string.Empty)).ToArray();
+
+        Assert.Equal(expected, Gw2TradingPostUiDriver.IsClosestOwnOrder(
+            Gw2TradingPostUiDriver.NormalizeItemName(read),
+            Gw2TradingPostUiDriver.NormalizeItemName(searched),
+            own.Select(Gw2TradingPostUiDriver.NormalizeItemName).ToArray()));
     }
 
     [Fact]

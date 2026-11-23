@@ -243,14 +243,14 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
-        await ReplaceFieldTextAsync(itemName.Trim(), _searchBoxMayHold, cancellationToken).ConfigureAwait(false);
-        // After a search that was not confirmed, the box may hold more than was typed.
-        _searchBoxMayHold = LongestSearchText;
-        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
-        await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
-        _lastSearchFoundNothing = false;
-        _lastSearchShowedName = false;
-        var listed = await WaitForSearchResultsAsync(itemName, cancellationToken).ConfigureAwait(false);
+        var listed = await TypeSearchAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
+        if (!listed && _textLocator is not null && !await SearchBoxHoldsAsync(itemName, cancellationToken).ConfigureAwait(false))
+        {
+            // 23 Nov: the box kept only the "L" of "Lord Taeres's Shadow", so the list showed everything else.
+            _logger.LogInformation("The search box does not hold '{Item}'; typing it once more.", itemName);
+            listed = await TypeSearchAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
+        }
+
         _lastSearchShowedName = listed;
         if (listed)
         {
@@ -268,6 +268,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
         if (requireListedName && !listed)
         {
+            _unconfirmedCancels.Add(itemName);
             var skips = _unconfirmedCancelSearches[itemName] = _unconfirmedCancelSearches.GetValueOrDefault(itemName) + 1;
             _logger.LogInformation(
                 "Not cancelling anything for '{Item}': the result list never showed it, so the first Cancel button could belong to another listing.{Note}",
@@ -279,6 +280,44 @@ public sealed partial class Gw2TradingPostUiDriver
         return true;
     }
 
+    private async Task<bool> TypeSearchAsync(string itemName, bool requireListedName, CancellationToken cancellationToken)
+    {
+        await ReplaceFieldTextAsync(itemName.Trim(), _searchBoxMayHold, cancellationToken).ConfigureAwait(false);
+        // After a search that was not confirmed, the box may hold more than was typed.
+        _searchBoxMayHold = LongestSearchText;
+        await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+        await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);
+        _lastSearchFoundNothing = false;
+        _lastSearchShowedName = false;
+        return await WaitForSearchResultsAsync(itemName, requireListedName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// True when the search box shows the name (a long name may be cut off). Full names read well there, while leftovers
+    /// of one or two letters read as nothing, so an empty read counts as "does not hold it".
+    /// </summary>
+    private async Task<bool> SearchBoxHoldsAsync(string itemName, CancellationToken cancellationToken)
+    {
+        var query = NormalizeItemName(itemName);
+        var texts = await ReadTextVariantsAsync(SearchBoxTextRegion, cancellationToken).ConfigureAwait(false);
+        return texts
+            .Select(NormalizeItemName)
+            .Any(text => text.Length >= Math.Min(4, query.Length) &&
+                         (NameSimilarity(text, query) >= 0.7 || NameSimilarity(text, query[..Math.Min(query.Length, text.Length)]) >= 0.7));
+    }
+
+    /// <summary>
+    /// Recognises a blurred row among our own orders, the only names My Transactions can list: the row must be clearly
+    /// closer to the searched name than to any other. "Mini Black Terrier Pup" reads as "Wni Black Terrier", too far off
+    /// for a plain match but unmistakable next to 150 other orders; Rune of the Revenant and Renegade stay undecided.
+    /// </summary>
+    internal static bool IsClosestOwnOrder(string rowText, string normalizedName, IReadOnlyCollection<string> ownNames)
+    {
+        var target = NameSimilarity(rowText, normalizedName);
+        return target >= 0.65 &&
+               !ownNames.Any(other => other != normalizedName && NameSimilarity(rowText, other) > target - 0.15);
+    }
+
     /// <summary>
     /// On high ping the previous search's rows stay on screen for a while after Enter, and the "Item" header is
     /// always visible, so without this the next click lands on a stale row (a previous, similarly named item, or
@@ -286,7 +325,7 @@ public sealed partial class Gw2TradingPostUiDriver
     /// name; on timeout it carries on (the buy flow still verifies the opened item's title) and logs it.
     /// </summary>
     /// <returns>True when a result row showed the name (or there is no OCR to check with); false otherwise.</returns>
-    private async Task<bool> WaitForSearchResultsAsync(string itemName, CancellationToken cancellationToken)
+    private async Task<bool> WaitForSearchResultsAsync(string itemName, bool requireListedName, CancellationToken cancellationToken)
     {
         if (_textLocator is null)
         {
@@ -318,7 +357,10 @@ public sealed partial class Gw2TradingPostUiDriver
             foreach (var region in SearchNameRegions(query))
             {
                 var texts = await ReadTextVariantsAsync(region, cancellationToken).ConfigureAwait(false);
-                if (texts.Any(text => FuzzyContains(NormalizeItemName(text), query)))
+                // Only the first row: its Cancel is the one that gets clicked.
+                var ownNames = requireListedName && region != SearchResultsListRegion ? _cancelListNames : null;
+                if (texts.Select(NormalizeItemName).Any(text =>
+                        FuzzyContains(text, query) || (ownNames is not null && IsClosestOwnOrder(text, query, ownNames))))
                 {
                     shown = true;
                     break;

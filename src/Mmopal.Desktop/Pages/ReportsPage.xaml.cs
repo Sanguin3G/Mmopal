@@ -144,6 +144,12 @@ public partial class ReportsPage : UserControl
         ReportTradesTabItem.Header = $"Trade & Action Log ({report.Trades.Count})";
         ReportIncidentsTabItem.Header = $"Incidents & Bugs ({report.Incidents.Count})";
 
+        ReportFindingsList.ItemsSource = report.Findings is { Count: > 0 } findings
+            ? findings.Select(finding => "• " + finding).ToArray()
+            : new[] { "This session was recorded before Mmopal measured its cycles." };
+        ReportTimeText.Text = SessionReportFormatter.DescribeTime(report);
+        ReportOutcomesText.Text = SessionReportFormatter.DescribeOutcomes(report);
+
         _reportTradeRows.Clear();
         foreach (var trade in report.Trades)
         {

@@ -22,6 +22,8 @@ public partial class IncomePage : UserControl
     private readonly List<Gw2ActiveOrder> _latestActiveOrders = new();
     private IReadOnlyList<ItemPnlRow> _allTimeframePnlRows = Array.Empty<ItemPnlRow>();
     private TradingIncomeReport? _lastIncomeReport;
+    private IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)> _liveSessions = [];
+    private IReadOnlyList<RunningHourPoint> _runningHours = [];
     private Gw2EquitySnapshot? _latestEquitySnapshot;
     private IReadOnlyList<Gw2EquitySnapshot> _equitySnapshots = Array.Empty<Gw2EquitySnapshot>();
     private int _openBuyCount;
@@ -79,6 +81,12 @@ public partial class IncomePage : UserControl
             ArchivedTransactions = await Host.LedgerStore.GetTransactionsAsync(accountFilter);
             var snapshots = await Host.LedgerStore.GetEquitySnapshotsAsync(null, accountFilter);
             _equitySnapshots = snapshots;
+            if (Host.SessionReportStore is { } reports)
+            {
+                await reports.InitializeAsync();
+                _liveSessions = await reports.GetLiveSessionRangesAsync(accountFilter);
+            }
+
             _latestEquitySnapshot = snapshots.LastOrDefault();
             if (ArchivedTransactions.Count > 0 || _latestEquitySnapshot is not null)
             {
@@ -283,6 +291,10 @@ public partial class IncomePage : UserControl
         var windowStart = ResolveSelectedTimeframeStartUtc();
         var report = TradingIncomeAnalytics.Analyze(ArchivedTransactions, windowStart);
         _lastIncomeReport = report;
+        var sessions = _liveSessions.Where(session => windowStart is null || session.End >= windowStart).ToArray();
+        _runningHours = sessions.Length == 0
+            ? []
+            : RunningHours.Compute(ArchivedTransactions.Where(tx => windowStart is null || tx.PurchasedAt >= windowStart), sessions);
         _allTimeframePnlRows = report.ItemLeaderboard;
 
         var nowUtc = DateTimeOffset.UtcNow;
@@ -341,7 +353,7 @@ public partial class IncomePage : UserControl
             ? $"Bought, not sold yet: {MarketScanItem.FormatCoins(shelf.UnsoldCostCopper)} at cost"
             : string.Empty;
 
-        var insight = PortfolioProfitAdvisor.BuildDashboardInsightSummary(report, _latestActiveOrders, nowUtc);
+        var insight = PortfolioProfitAdvisor.BuildDashboardInsightSummary(report, _latestActiveOrders, nowUtc, _runningHours);
         PortfolioInsightsText.Text = shelf.UndercutOver12h > 0
             ? $"{insight}  •  {shelf.UndercutOver12h} listing(s) undercut for 12 h+"
             : insight;
@@ -399,6 +411,18 @@ public partial class IncomePage : UserControl
         }
 
         _hourlyChartBars.Clear();
+        if (_runningHours.Count > 0)
+        {
+            RebuildRunningHoursChart(goldBrush, mutedBrush);
+            if (chartMode == "Hourly")
+            {
+                foreach (var bar in _hourlyChartBars) _dailyChartBars.Add(bar);
+                DailyChartSummaryText.Text = HourlyChartSummaryText.Text;
+            }
+
+            return;
+        }
+
         var hasProfitBars = report.HourlySeries.Any(h => h.RealizedProfitCopper != 0);
         var bestHour = report.HourlySeries.OrderByDescending(h => h.RealizedProfitCopper).FirstOrDefault();
         var maxAbsProfit = hasProfitBars ? Math.Max(1L, report.HourlySeries.Max(h => Math.Abs(h.RealizedProfitCopper))) : 1L;
@@ -437,6 +461,30 @@ public partial class IncomePage : UserControl
             foreach (var bar in _hourlyChartBars) _dailyChartBars.Add(bar);
             DailyChartSummaryText.Text = HourlyChartSummaryText.Text;
         }
+    }
+
+    /// <summary>Gold sold per hour Mmopal ran, by hour of the day; hours with little running time are muted.</summary>
+    private void RebuildRunningHoursChart(Brush goldBrush, Brush mutedBrush)
+    {
+        var max = Math.Max(1L, _runningHours.Max(point => point.SoldNetPerHourCopper));
+        foreach (var point in _runningHours)
+        {
+            var enough = point.HoursRun >= RunningHours.MinHoursRun;
+            var height = point.SoldNetPerHourCopper > 0 ? Math.Max(8.0, 84.0 * point.SoldNetPerHourCopper / max) : 4.0;
+            var tooltip = point.HoursRun < 0.25
+                ? $"{point.LocalHour:00}:00 • not run in this timeframe"
+                : $"{point.LocalHour:00}:00 • {MarketScanItem.FormatCoins(point.SoldNetPerHourCopper)} sold per hour run • {point.BuyFillsPerHour:0.#} buy and {point.SellFillsPerHour:0.#} sell fills per hour • {point.HoursRun:0.#} h run{(enough ? string.Empty : " (too little to judge)")}";
+            _hourlyChartBars.Add(new ChartBarItem(
+                point.LocalHour % 3 == 0 ? $"{point.LocalHour:00}" : string.Empty,
+                height,
+                enough ? goldBrush : mutedBrush,
+                tooltip,
+                string.Empty));
+        }
+
+        HourlyChartSummaryText.Text = RunningHours.Best(_runningHours) is { } best
+            ? $"Best hour: {best.LocalHour:00}:00, {MarketScanItem.FormatCoins(best.SoldNetPerHourCopper)} sold per hour run"
+            : $"Needs {RunningHours.MinHoursRun:0} h of running time per hour of the day";
     }
 
     private void IncomeChartMode_SelectionChanged(object sender, SelectionChangedEventArgs e)

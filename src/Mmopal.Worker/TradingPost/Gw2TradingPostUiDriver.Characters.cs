@@ -158,6 +158,11 @@ public sealed partial class Gw2TradingPostUiDriver
             ParkedCharacterNames = seen;
         }
 
+        if (seen.Count == 0)
+        {
+            await SaveDiagnosticFrameAsync("character-select-unread", cancellationToken).ConfigureAwait(false);
+        }
+
         if (best is { } found)
         {
             _logger.LogInformation("Character Select: '{Name}' is in slot #{Slot}; swapping to it.", found.Name, found.Offset + 1);
@@ -338,6 +343,7 @@ public sealed partial class Gw2TradingPostUiDriver
         int verifyDelayMs,
         CancellationToken cancellationToken)
     {
+        CharacterEntries++;
         // Play only, never Enter: the world can load before the key lands, and Enter there opens chat, so the next "F"
         // was typed into chat instead of opening the trader (seen live on 23 Nov).
         await ClickCenterAsync(playBtn, cancellationToken).ConfigureAwait(false);

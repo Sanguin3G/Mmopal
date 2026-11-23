@@ -28,7 +28,7 @@ reads the orders first.
 | Step | Check |
 | --- | --- |
 | Open the TP | **F** (trader), then **O**, then **F**; Esc in between closes a bank opened by mistake. |
-| Search | Waits until the results show the name. Rarely readable names get a third of the UI wait. |
+| Search | Waits until the results show the name; if the search box does not hold it, types it once more. Rarely readable names get a third of the UI wait. |
 | Open a row | The title must be the item (rows 1–3 are tried). Unreadable: only goes on if the search showed the name and the live price is within 10% of the API's. |
 | Read the price | By digit shape (exact or nothing), else OCR. Top bid + overbid past the profitable price aborts. |
 | Type price and quantity | The Total must be the typed price × at most the ordered quantity. Re-typed once, then aborted. |
@@ -57,19 +57,23 @@ text box has the focus, even with the TP open.
 
 **Outbid Refresh** cancels orders that are outbid (20+ minutes old) or unfilled for 24 hours, so the next cycle can bid
 again. It clicks the first Cancel its search shows, so an order is skipped when that search would also list one that
-stays: yours, a young one, or one at the top bid. An item it cannot find on screen twice is left for the session.
+stays: yours, a young one, or one at the top bid. A blurred first row counts only if it is clearly closer to the name than
+to any other order of yours. An item it cannot find on screen twice is left for the session.
 
 **Relist** does the same for listings, and never for an item you listed copies of yourself.
 
 ## Delivery Box and characters
 
-- **Locked box** ("Speak to a Black Lion Trading Company NPC"): the TP is reopened at the trader at most every 10
-  minutes; after 30 minutes locked, at most once an hour, Mmopal swaps character. An empty box shows similar words and is
-  not locked, unless the API still disagrees after 10 minutes.
+- **Locked box** ("Speak to a Black Lion Trading Company NPC" and still so after Take All): the TP is reopened at the
+  trader at most every 10 minutes; after 30 minutes locked, at most once an hour, Mmopal swaps character. The same words
+  show at a trader when the box holds only coins, and an empty box ("When you buy or sell …") is not locked unless the API
+  still disagrees after 10 minutes.
 - **Which character:** the parked one holding the most of Mmopal's unsold items, by name; otherwise slot 2–N at random.
   Slot 1 (last played) is never re-entered. Only the first **Parked chars** slots are used.
 - **Swap for stock:** to a character with 5+ unsold items, more than the current one, once an hour, or after 20 minutes
   once nothing is left to list here. With 10+ items a character lists twice as many per pass.
+- **Unread name:** when Character Select cannot be read, two listed items that only one character held tell which one it
+  is (`Logged-in character is …`).
 - **Character Select:** Play is clicked. Enter is not pressed: it landed in the loaded world and opened chat.
 
 ## Launch and recovery
@@ -90,5 +94,22 @@ stays: yours, a young one, or one at the top bid. An item it cannot find on scre
 
 ## Evidence
 
+**Reports → Findings** says what stood out in a session: stuck gold, wasted searches, repeated aborts, where the time went.
+Behind it, `mmopal.db` keeps every live session for 180 days:
+
+| Table | One row per | Holds |
+| --- | --- | --- |
+| `cycle_metrics` | cycle | JSON: character, market phase, seconds per step, accepted and skip reasons, wallet, gold in orders (and over 12 h old), outbid and undercut counts, unsold units |
+| `session_events` | buy, sell, cancel, relist, pickup, swap | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
+
+```sql
+-- what keeps failing, over all runs
+SELECT kind, outcome, COUNT(*) FROM session_events GROUP BY 1, 2 ORDER BY 3 DESC;
+-- seconds per cycle spent buying, by market phase
+SELECT json_extract(payload, '$.MarketPhase'), AVG(json_extract(payload, '$.Seconds.buy')) FROM cycle_metrics GROUP BY 1;
+```
+
+**Income → Best hours** divides fills by the time Mmopal ran in each hour; hours under 2 h of running time are muted.
+
 Logs: `%LOCALAPPDATA%\Mmopal\logs\mmopal-YYYYMMDD.jsonl` (UTC). Unreadable dialogs: `screenshots\price-unreadable-*`,
-`total-unreadable-*`; unconfirmed searches: `search-unconfirmed-*`. Learned digit shapes: `digit-glyphs.json`.
+`total-unreadable-*`, `character-select-unread-*`; unconfirmed searches: `search-unconfirmed-*`. Learned digit shapes: `digit-glyphs.json`.

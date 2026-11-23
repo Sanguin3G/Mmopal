@@ -81,4 +81,4 @@ Min ROI stays within 8–25%, Min trades/day within 5–50. Values you set by ha
 
 1. Order size from volume (about 5% of daily trades).
 2. Skipping bot-war items before the first order, from DataWars2 listing history.
-3. Pace and session hours from your own fills per running hour.
+3. Pace and session hours set from your own best hours (Income → Best hours shows them).

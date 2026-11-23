@@ -12,11 +12,11 @@ orders through bounded clicks and keystrokes. Live input only happens in Live mo
 | `src/Mmopal.Gw2` | Trading logic, no UI. `Api/` GW2 API client · `Market/` scanner, live re-pricing, order book · `Trading/` cycle controller, decisions, limits, adaptive rules (bot-war pause, relist policy), sell queue, character stock (swap target) · `Portfolio/` income analytics, insights, advisor, Auto-Tune · `Settings/` client/operator/report settings. |
 | `src/Mmopal.Worker` | The worker process. `Runtime/` session loop (`WorkerRuntime` + partials: Session (setup and report), Cycle (the loop, one method per step), Commands, Status, ShoppingList, Inventory, Recovery) and the named-pipe server · `TradingPost/` the screen driver (`Gw2TradingPostUiDriver` + partials: Launcher, Characters, TradingPostWindow, Buying, Selling, PriceReading, Search, Transactions) · `Vision/` digit-shape price reader · `Client/` game launch/restart. |
 | `src/Mmopal.Native` | Win32 and OS access. `Screen/` capture, OpenCV template matching, Windows OCR, display health · `Control/` input, key names, game window and process, keep-awake · `Secrets/` DPAPI secrets and the API key vault · interfaces in `NativeAbstractions.cs`. |
-| `src/Mmopal.Infrastructure` | SQLite stores (checkpoints, ledger, session reports), paths, logging. |
+| `src/Mmopal.Infrastructure` | SQLite stores (checkpoints, ledger, session reports, session metrics), paths, logging. |
 | `src/Mmopal.Desktop` | WPF app: `MainWindow` shell (sidebar, navigation, responsive layout, worker events) and one UserControl per page in `Pages/` (Session, Income, Reports, Scanner, Lists, Settings, Guide). `MainWindow.FindName` also searches the pages, which the smoke tests rely on. |
 | `tests/Mmopal.Domain.Tests` | xUnit tests, including WPF smoke tests and real GW2 dialog crops in `Fixtures/coin-frames`. |
 | `assets/templates/tradingpost` | Template PNGs, calibrated on 1024×768 frames. |
-| `docs/` | `run.md` (setup, going live), `trading-strategy.md` (rules, Auto-Tune), `gw2-trading-controller.md` (live flows, log lines), `architecture.md` (processes, replay payload). Each fact lives in one of them; keep them short. |
+| `docs/` | `run.md` (setup, going live), `trading-strategy.md` (rules, Auto-Tune), `gw2-trading-controller.md` (live flows, log lines), `architecture.md` (processes, replay payload), `migration.md` (what came from the original Mmopal, what replaced it, what is left). Each fact lives in one of them; keep them short. |
 
 Folders under `Mmopal.Gw2`, `Mmopal.Worker` and `Mmopal.Native` are for reading only: types keep the project namespace
 (`Mmopal.Gw2`, `Mmopal.Worker`, `Mmopal.Native`), except `Mmopal.Worker.Vision`.
@@ -37,7 +37,7 @@ dotnet build Mmopal.sln -p:UseSharedCompilation=false -m:1 --nologo
 - Never commit `.codex/`. No agent credit in commits or files: no `Co-Authored-By:` or "generated with" lines.
 - Keep `docs/` and the in-app Guide in step with behaviour changes.
 - Live-session evidence lives in `%LOCALAPPDATA%\Mmopal\logs\mmopal-YYYYMMDD.jsonl` (UTC), the SQLite DB
-  `%LOCALAPPDATA%\Mmopal\mmopal.db` (ledger, equity snapshots) and `screenshots\` (diagnostic frames). Analyse
+  `%LOCALAPPDATA%\Mmopal\mmopal.db` (ledger, equity snapshots, `cycle_metrics` and `session_events` per live session) and `screenshots\` (diagnostic frames). Analyse
   copies of the DB, never the live file.
 - Safety first in the driver: a price is only typed after it is read and checked against the API, and every
   typed price is confirmed on the dialog Total before Place Order / List This Item. When a read is uncertain the
