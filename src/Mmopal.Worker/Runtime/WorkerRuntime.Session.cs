@@ -53,6 +53,8 @@ public sealed partial class WorkerRuntime
         public required IReadOnlyList<Transaction> LastKnownActiveOrders { get; set; }
         public long? LastHistoryBuyId { get; set; }
         public DateTimeOffset LastInventoryApiSyncUtc { get; set; } = DateTimeOffset.MinValue;
+        /// <summary>The bag read running next to the launch.</summary>
+        public Task StockBeforeLaunch { get; set; } = Task.CompletedTask;
         /// <summary>Characters holding unsold flip items, most first (from the last bag sync).</summary>
         public IReadOnlyList<(string Name, long Items)> FlipStockByCharacter { get; set; } = [];
         /// <summary>Flip item names in each character's bags (from the last bag sync).</summary>

@@ -52,7 +52,13 @@ public sealed partial class WorkerRuntime
             return;
         }
 
-        await ReadFlipStockBeforeLaunchAsync(session, cancellationToken);
+        // Alongside the launcher: every character's bags take 13-15 s to read and are only needed at Character Select, but
+        // from 22 Nov LOG IN waited for them.
+        session.StockBeforeLaunch = Task.Run(() => ReadFlipStockBeforeLaunchAsync(session, cancellationToken), CancellationToken.None);
+        if (session.LiveDriver is { } launchDriver)
+        {
+            launchDriver.BeforeCharacterChoice = token => session.StockBeforeLaunch.WaitAsync(token);
+        }
 
         // A sleeping PC, display power-off or lock screen stops capture and input to the game.
         using var keepAwake = session.LiveDriver is not null && _liveTemplateMatcher is null ? new KeepAwake() : null;
@@ -119,6 +125,7 @@ public sealed partial class WorkerRuntime
         if (driver is not null)
         {
             var opened = await OpenTradingPostAndCollectDeliveryAsync(session, driver, cancellationToken);
+            await session.StockBeforeLaunch; // done with the bags before the cycle reads them again
             MarkStep(session, "open and collect");
             if (opened != CycleStep.Proceed)
             {

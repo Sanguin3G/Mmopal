@@ -315,6 +315,42 @@ public sealed partial class LiveTradingExecutorTests
         }));
     }
 
+    [Fact]
+    public async Task Character_Select_waits_for_the_stock_read_that_runs_next_to_the_launch()
+    {
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher();
+        templates.DynamicMatches["charscreen_play.png"] = () => input.Clicks.Contains((785, 734)) ? null : new TemplateMatch(750, 718, 71, 33, 0.97m);
+        templates.DynamicMatches["ingame_1.png"] = () => input.Clicks.Contains((785, 734)) ? new TemplateMatch(48, 54, 16, 16, 0.85m) : null;
+        // The portrait clicked last decides the name shown.
+        var names = new Dictionary<int, string> { [258] = "Janetta Shepard", [380] = "Garry Vakarian", [502] = "Big Cheetos" };
+        var locator = new FakeUiTextLocator(region => region.X == 40
+            ? [new OcrTextBox(names.GetValueOrDefault(input.Clicks.LastOrDefault(click => click.Y == 640).X, "Janetta Shepard"), 60, 380, 260, 34)]
+            : Array.Empty<OcrTextBox>());
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
+            templates,
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0, ParkedCharacterCount: 3),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false,
+            textLocator: locator);
+        driver.BeforeCharacterChoice = async token =>
+        {
+            await Task.Delay(30, token); // the bags arrive after Character Select
+            driver.PreferredCharacterNames = ["Garry Vakarian", "Big Cheetos"];
+        };
+
+        Assert.True(await driver.TryAdvanceLauncherOrCharacterSelectAsync());
+
+        Assert.Equal((380, 640), input.Clicks.Last(click => click.Y == 640));
+        Assert.Equal("Garry Vakarian", driver.CurrentCharacterName);
+    }
+
     [Theory]
     [InlineData(true)]  // the first portrait click entered the world (every fresh launch, 22-24 Nov)
     [InlineData(false)] // the screen closed while it was still loading: nothing is clicked at all

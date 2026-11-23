@@ -70,7 +70,8 @@ to any other order of yours. An item it cannot find on screen twice is left for 
   trader at most every 10 minutes; after 30 minutes locked, at most once an hour, Mmopal swaps character. The same words
   show at a trader when the box holds only coins, and an empty box ("When you buy or sell …") is not locked unless the API
   still disagrees after 10 minutes.
-- **Which character:** the parked one holding the most of Mmopal's unsold items, by name; otherwise slot 2–N at random.
+- **Which character:** the parked one holding the most of Mmopal's unsold items, by name (the bags are read while the
+  launcher logs in); otherwise slot 2–N at random.
   Slot 1 (last played) is never re-entered. Only the first **Parked chars** slots are used.
 - **Swap for stock:** to a character with 5+ unsold items, more than the current one, once an hour, or after 20 minutes
   once nothing is left to list here. With 10+ items a character lists twice as many per pass.

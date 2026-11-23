@@ -120,6 +120,9 @@ public sealed partial class Gw2TradingPostUiDriver
     /// disconnect that reaches Character Select enters the first of these found on the parked portraits.
     /// </summary>
     public IReadOnlyList<string> PreferredCharacterNames { get; set; } = [];
+
+    /// <summary>Awaited (up to 10 s) at Character Select: fills in <see cref="PreferredCharacterNames"/> on a launch.</summary>
+    public Func<CancellationToken, Task>? BeforeCharacterChoice { get; set; }
     private static readonly CaptureRegion TopHeaderRegion = new(0, 0, 1024, 400);
     // Black Lion sidebar scales icon measured at (14..53, 215..234) on 1024x768 (Gem Store and TP tabs alike).
     private static readonly CaptureRegion LeftSidebarTpTabRegion = new(0, 195, 80, 80);

@@ -293,6 +293,8 @@ public sealed partial class Gw2TradingPostUiDriver
                 return await EnteredWithoutChoosingAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            await WaitForCharacterPreferenceAsync(cancellationToken).ConfigureAwait(false);
+
             int? chosen = _pendingSlot is { } pending && _utcNow() - pending.At < TimeSpan.FromMinutes(3)
                 ? pending.Offset
                 : null;
@@ -347,6 +349,26 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         return advanced;
+    }
+
+    private async Task WaitForCharacterPreferenceAsync(CancellationToken cancellationToken)
+    {
+        if (BeforeCharacterChoice is not { } prepare)
+        {
+            return;
+        }
+
+        BeforeCharacterChoice = null; // only on the first launch; later the bag sync keeps the names
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            await prepare(limit.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Unsold stock by character is not known yet ({Reason}); using the usual slot choice.", ex.GetType().Name);
+        }
     }
 
     /// <summary>Character Select closed before a portrait was chosen: the game entered a character on its own.</summary>
