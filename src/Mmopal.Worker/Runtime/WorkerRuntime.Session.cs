@@ -79,6 +79,11 @@ public sealed partial class WorkerRuntime
 
         public SessionMeasurements Measured { get; } = new();
 
+        /// <summary>Faster cycles while items wait and gold is idle.</summary>
+        public PaceBoost Boost { get; } = new();
+        public int PerPass => Boost.PerPass(Math.Max(1, Profile.MaxOverbidUpdatesPerPass));
+        public bool GoldCapReached { get; set; }
+
         // How the session ended (for the report).
         public bool CapReached { get; set; }
         public string Outcome { get; set; } = "Completed";
@@ -114,6 +119,7 @@ public sealed partial class WorkerRuntime
         _lastDeliveryUnlockAttemptUtc = DateTimeOffset.MinValue;
         _lastCharacterSwapUtc = DateTimeOffset.MinValue;
         _buyCompetition = new BuyCompetitionTracker();
+        await PauseYesterdaysBotWarsAsync(mode, cancellationToken).ConfigureAwait(false);
         _relistedAtUtc.Clear();
         _deliveryLockedSinceUtc = null;
         var templateRoot = string.IsNullOrWhiteSpace(request.TemplateRoot)

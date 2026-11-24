@@ -30,7 +30,7 @@ reads the orders first.
 | Open the TP | **F** (trader), then **O**, then **F**; Esc in between closes a bank opened by mistake. |
 | Search | Only with the Trading Post proven on screen (Black Lion crest and transactions tab). Enter and Backspace are pressed only once the box shows the typed name. Then waits until the results show it. Rarely readable names get a third of the UI wait. |
 | Open a row | The title must be the item (rows 1–3 are tried). A title on two lines needs its second line too, and every read follows the window, which sits lower then. Unreadable: only goes on if the search showed the name and the live price is within 10% of the API's. |
-| Read the price | By digit shape (exact or nothing), else OCR. Top bid + overbid past the profitable price aborts. |
+| Read the price | The top row only, once the window stands still: by digit shape (exact or nothing), else OCR. Top bid + overbid past the profitable price aborts. |
 | Type price and quantity | The Total must be the typed price × at most the ordered quantity. Re-typed once, then aborted. |
 | Place Order | Later the API's order is compared with what was typed (`Order audit: …`). |
 
@@ -60,7 +60,8 @@ again before selling or cancelling (`The Trading Post is not on screen before th
 **Outbid Refresh** cancels orders that are outbid (20+ minutes old) or unfilled for 24 hours, so the next cycle can bid
 again. It clicks the first Cancel its search shows, so an order is skipped when that search would also list one that
 stays: yours, a young one, or one at the top bid. A blurred first row counts only if it is clearly closer to the name than
-to any other order of yours. An item it cannot find on screen twice is left for the session.
+to any other order of yours. An item it cannot find on screen twice is left for an hour. An order for
+another item, placed at that second and price, is Mmopal's mistake and is cancelled too.
 
 **Relist** does the same for listings, and never for an item you listed copies of yourself.
 
@@ -84,7 +85,7 @@ to any other order of yours. An item it cannot find on screen twice is left for 
 
 ## Launch and recovery
 
-- **LOG IN:** 3 attempts, 6 s apart, each on a fresh frame. Never clicked on Steam, which signs in by itself.
+- **LOG IN:** 3 attempts, 12 s apart (a login takes about 6.6 s), each tap only while LOG IN is on screen. Never clicked on Steam, which signs in by itself.
 - **Message boxes** such as log-in server Code=42 are dismissed. A lost connection waits 5 minutes first.
 - **TP will not open:** another character (every 20 minutes at most), then retries, then a game restart. The restart
   allowance refills after 2 quiet hours.
@@ -95,7 +96,7 @@ to any other order of yours. An item it cannot find on screen twice is left for 
 | Layer | Set by | Decides |
 | --- | --- | --- |
 | Latency mode | Settings → GW2 Client & Recovery | UI wait 3 / 4.5 / 7.5 s, pause after a click 350 / 550 / 900 ms, API timeout. Every driver wait derives from these. |
-| Pace | Session | 2 / 3 / 5 orders, listings and cancels per pass; 90 / 50 / 25 s between cycles. A cycle itself takes 1–3 minutes at high ping. |
+| Pace | Session | 2 / 3 / 5 orders, listings and cancels per pass; 90 / 50 / 25 s between cycles. Balanced goes to 5 and 25 s by itself while items wait and gold is idle (`Faster pace: …`). A cycle itself takes 1–3 minutes at high ping. |
 | Game rules | Fixed in code | Everything above that does not depend on ping. |
 
 ## Evidence
@@ -106,7 +107,7 @@ Behind it, `mmopal.db` keeps every live session for 180 days:
 | Table | One row per | Holds |
 | --- | --- | --- |
 | `cycle_metrics` | cycle | JSON: character, market phase, seconds per step, accepted and skip reasons, wallet, gold in orders (and over 12 h old), outbid and undercut counts, unsold units |
-| `session_events` | buy, sell, cancel, relist, pickup, swap | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
+| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
 
 ```sql
 -- what keeps failing, over all runs
@@ -115,7 +116,7 @@ SELECT kind, outcome, COUNT(*) FROM session_events GROUP BY 1, 2 ORDER BY 3 DESC
 SELECT json_extract(payload, '$.MarketPhase'), AVG(json_extract(payload, '$.Seconds.buy')) FROM cycle_metrics GROUP BY 1;
 ```
 
-**Income → Best hours** divides fills by the time Mmopal ran in each hour; hours under 2 h of running time are muted.
+**Income** counts only Mmopal's own trades for *Bought, not sold yet* and **Best hours**, which divides fills by the time Mmopal ran in each hour; hours under 2 h of running time are muted.
 
 Logs: `%LOCALAPPDATA%\Mmopal\logs\mmopal-YYYYMMDD.jsonl` (UTC). Unreadable dialogs: `screenshots\price-unreadable-*`,
 `total-unreadable-*`, `character-select-unread-*`; unconfirmed searches: `search-unconfirmed-*`. Learned digit shapes: `digit-glyphs.json`.

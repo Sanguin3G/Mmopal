@@ -29,6 +29,86 @@ public sealed class AdaptiveTradingTests
     }
 
     [Fact]
+    public void Items_that_never_fill_are_paused_longer_each_time()
+    {
+        var tracker = new BuyCompetitionTracker();
+        TimeSpan PauseAgain(DateTimeOffset at)
+        {
+            for (var i = 0; i < 3; i++) tracker.RecordOutbidCancels(["Kurzick Weapon Chest"], at);
+            return tracker.PausedFor("Kurzick Weapon Chest", at);
+        }
+
+        Assert.Equal(3, PauseAgain(Now).TotalHours);
+        Assert.Equal(6, PauseAgain(Now.AddHours(4)).TotalHours);
+        Assert.Equal(12, PauseAgain(Now.AddHours(11)).TotalHours);
+        Assert.Equal(24, PauseAgain(Now.AddHours(24)).TotalHours);
+        Assert.Equal(24, PauseAgain(Now.AddHours(49)).TotalHours);
+
+        tracker.RecordFills(["Kurzick Weapon Chest"]);
+        Assert.Equal(3, PauseAgain(Now.AddHours(80)).TotalHours);
+    }
+
+    [Fact]
+    public void A_session_starts_with_yesterdays_bot_wars_paused()
+    {
+        var tracker = new BuyCompetitionTracker();
+
+        var paused = tracker.SeedFromLastDay(
+            new Dictionary<string, int> { ["18 Slot Thick Leather Pack"] = 6, ["Pyre Dye"] = 7, ["Flare Dye"] = 5 },
+            ["Pyre Dye"],
+            Now);
+
+        Assert.Equal(["18 Slot Thick Leather Pack"], paused);
+        Assert.True(tracker.IsPaused("18 Slot Thick Leather Pack", Now.AddHours(5)));
+        Assert.False(tracker.IsPaused("Pyre Dye", Now)); // it fills
+    }
+
+    [Fact]
+    public void Pace_is_boosted_only_while_items_wait_and_gold_is_idle()
+    {
+        var boost = new PaceBoost();
+        // 24 Nov, 02:00-07:00: 590g of 950g idle, dozens of items waiting.
+        Assert.True(boost.Update(new CyclePressure(59, 3, false, 5_900_000, 1_470_000, 9_500_000), allowed: true));
+        Assert.Equal(5, boost.PerPass(3));
+        Assert.Equal(TimeSpan.FromSeconds(25), boost.Pause(TimeSpan.FromSeconds(50)));
+        // Still some backlog: stays on. At the gold cap (07:00): off.
+        Assert.False(boost.Update(new CyclePressure(2, 5, false, 2_500_000, 4_000_000, 9_500_000), allowed: true));
+        Assert.True(boost.Active);
+        Assert.True(boost.Update(new CyclePressure(1, 0, true, 2_600_000, 4_700_000, 9_500_000), allowed: true));
+        Assert.Equal(3, boost.PerPass(3));
+        Assert.Equal(TimeSpan.FromSeconds(50), boost.Pause(TimeSpan.FromSeconds(50)));
+
+        var safe = new PaceBoost();
+        Assert.False(safe.Update(new CyclePressure(59, 2, false, 5_900_000, 1_470_000, 9_500_000), allowed: false));
+        Assert.False(safe.Active);
+    }
+
+    [Fact]
+    public void A_list_that_ran_out_with_gold_idle_is_widened_at_most_hourly()
+    {
+        var boost = new PaceBoost();
+        var exhausted = new CyclePressure(0, 0, false, 3_640_000, 2_850_000, 9_600_000);
+        for (var i = 0; i < PaceBoost.IdleCyclesBeforeWiderScan - 1; i++) boost.Update(exhausted, allowed: true);
+        Assert.False(boost.TakeWiderScan(Now));
+
+        boost.Update(exhausted, allowed: true);
+        Assert.True(boost.TakeWiderScan(Now));
+
+        for (var i = 0; i < 10; i++) boost.Update(exhausted, allowed: true);
+        Assert.False(boost.TakeWiderScan(Now.AddMinutes(30)));
+        Assert.True(boost.TakeWiderScan(Now.AddMinutes(61)));
+    }
+
+    [Theory]
+    [InlineData(5_000, 300, 9)]     // 50s, 300 trades a day: 3% of them
+    [InlineData(5_000, 2_000, 10)]  // never more than 10
+    [InlineData(80_000, 2_000, 2)]  // 8g: the order may cost 22g
+    [InlineData(5_000, 20, 2)]      // slow item: the configured size
+    [InlineData(5_000, null, 2)]
+    public void Order_size_grows_with_volume_within_the_per_order_budget(long price, int? trades, long expected) =>
+        Assert.Equal(expected, Gw2MarketScanner.SuggestQuantity(new MarketScanFilter(MaximumBuyPriceCopper: 220_000, DefaultQuantity: 2), price, trades));
+
+    [Fact]
     public void Buy_orders_are_capped_at_a_share_of_total_gold()
     {
         // 66g wallet, 320g in buys, ~147g listings after fees: the 7 h session's end state.

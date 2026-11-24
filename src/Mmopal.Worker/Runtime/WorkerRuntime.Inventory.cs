@@ -319,6 +319,8 @@ public sealed partial class WorkerRuntime
             // The API shows a new listing up to ~5 min late; until then it could be the one whose Cancel gets clicked.
             var relistable = orders
                 .Where(order => !session.SellQueue.WasJustListed(order.ItemName, now) && OwnedStock.ListingsAreMmopals(order.ItemName, held))
+                // Given-up items kept both slots of every pass: 16 relists in 10 h while 24 more listings qualified (24 Nov).
+                .Where(order => order.Type != TransactionType.Sell || !liveDriver.IsCancelSearchGivenUp(TransactionType.Sell, order.ItemName))
                 .ToArray();
             var picks = SellRelistPolicy.Select(
                 relistable,
@@ -437,7 +439,7 @@ public sealed partial class WorkerRuntime
         try
         {
             var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
-                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt));
+                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper));
             var recent = await officialData.GetRecentHistoryAsync(_ledgerStore, cancellationToken).ConfigureAwait(false);
             session.HeldByMmopal = OwnedStock.UnitsHeldByMmopal(placed, session.LedgerHistory.Concat(recent), session.LastKnownActiveOrders);
         }

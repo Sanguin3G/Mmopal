@@ -59,6 +59,9 @@ public partial class MainWindow : Window
     internal bool LaunchAutomationEnabled { get; private set; }
     internal bool IsFirstRun { get; private set; }
 
+    /// <summary>Reads the buy orders Mmopal placed, to tell its trades from the player's own.</summary>
+    internal Func<Task<IReadOnlyList<PlacedBuyOrder>>>? ReadPlacedBuyOrders { get; }
+
     public MainWindow()
         : this(
             new DesktopWorkerSupervisor(),
@@ -90,7 +93,15 @@ public partial class MainWindow : Window
                     WindowsSecretStore.Delete(ApiKeyStorePath);
                 }
             },
-            sessionReportStore: new SessionReportStore(LedgerDbPath))
+            sessionReportStore: new SessionReportStore(LedgerDbPath),
+            readPlacedBuyOrders: async () =>
+            {
+                var store = new CheckpointStore(LedgerDbPath);
+                await store.InitializeAsync();
+                return (await store.GetPlacedBuyOrdersAsync(DateTimeOffset.UtcNow.AddDays(-180)))
+                    .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper))
+                    .ToArray();
+            })
     {
         LaunchAutomationEnabled = true;
         IsFirstRun = !s_operatorSettingsExistedAtLaunch;
@@ -116,8 +127,10 @@ public partial class MainWindow : Window
         Action<Gw2ApiKeyVaultData>? saveApiKeyVault = null,
         SessionReportStore? sessionReportStore = null,
         Action? requestAppClose = null,
-        Action<int>? executeSystemShutdown = null)
+        Action<int>? executeSystemShutdown = null,
+        Func<Task<IReadOnlyList<PlacedBuyOrder>>>? readPlacedBuyOrders = null)
     {
+        ReadPlacedBuyOrders = readPlacedBuyOrders;
         Supervisor = supervisor;
         ReadSavedLimits = loadLimits;
         SaveLimits = saveLimits;

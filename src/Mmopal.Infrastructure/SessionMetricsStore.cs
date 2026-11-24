@@ -158,6 +158,25 @@ public sealed class SessionMetricsStore
         return events;
     }
 
+    /// <summary>How often an event of this kind and outcome happened per item since a time, over all sessions.</summary>
+    public async Task<IReadOnlyDictionary<string, int>> CountByItemAsync(string kind, string outcome, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT item_name, COUNT(*) FROM session_events WHERE kind = $kind AND outcome = $outcome AND at >= $since AND item_name IS NOT NULL GROUP BY item_name;";
+        command.Parameters.AddWithValue("$kind", kind);
+        command.Parameters.AddWithValue("$outcome", outcome);
+        command.Parameters.AddWithValue("$since", Text(sinceUtc));
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            counts[reader.GetString(0)] = reader.GetInt32(1);
+        }
+
+        return counts;
+    }
+
     private static string Text(DateTimeOffset value) => value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

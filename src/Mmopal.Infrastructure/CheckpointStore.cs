@@ -119,10 +119,10 @@ public sealed class CheckpointStore
     }
 
     /// <summary>
-    /// Mmopal's completed live buy orders since a time: the item and when placing it finished, which is within seconds
-    /// of the creation time GW2 records for the order.
+    /// Mmopal's completed live buy orders since a time: the item, when placing it finished (within seconds of the creation
+    /// time GW2 records for the order) and the unit price.
     /// </summary>
-    public async Task<IReadOnlyList<(string ItemName, DateTimeOffset PlacedAt)>> GetPlacedBuyOrdersAsync(
+    public async Task<IReadOnlyList<(string ItemName, DateTimeOffset PlacedAt, long? UnitCopper)>> GetPlacedBuyOrdersAsync(
         DateTimeOffset sinceUtc,
         CancellationToken cancellationToken = default)
     {
@@ -134,14 +134,18 @@ public sealed class CheckpointStore
             WHERE action_type = 'PlaceBuyOrder' AND status = 'Completed' AND item_name IS NOT NULL AND created_at >= $since;
             """;
         command.Parameters.AddWithValue("$since", sinceUtc.ToUniversalTime().ToString("O"));
-        var orders = new List<(string, DateTimeOffset)>();
+        var orders = new List<(string, DateTimeOffset, long?)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(reader.GetString(1));
-                orders.Add((reader.GetString(0), doc.RootElement.GetProperty("CompletedAt").GetDateTimeOffset()));
+                var root = doc.RootElement;
+                long? unit = root.TryGetProperty("PlacedUnitPriceCopper", out var typed) && typed.ValueKind == System.Text.Json.JsonValueKind.Number
+                    ? typed.GetInt64()
+                    : null;
+                orders.Add((reader.GetString(0), root.GetProperty("CompletedAt").GetDateTimeOffset(), unit));
             }
             catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
             {

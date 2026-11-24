@@ -39,14 +39,17 @@ Background: [GW2 Wiki](https://wiki.guildwars2.com/wiki/TP), [AuricDB](https://a
 | Live prices | The list is re-priced every cycle; collapsed spreads drop out. |
 | Keep gold free | At most 50% of total gold (wallet + orders + listings after fees) in buy orders, above a reserve floor. |
 | Sell before buying again | An item with an order's worth of unsold units in any bag is not bought. On 21–22 Nov 97 items (~145g) sat unsold while the same items were re-bought. |
-| Do not chase undercuts | An outbid order stays at least 20 minutes, and none is cancelled 00:00–01:30 UTC, when sellers dump. |
+| Do not chase undercuts | An outbid order stays at least 20 minutes. 00:00–01:30 UTC, when sellers dump, none is cancelled, unless the gold cap is reached: then those outbid for an hour are. |
 | Drop what does not fill | A top bid unfilled after 24 hours is cancelled and the item waits 12 hours. 97% of fills come within 24 h. |
-| Leave bot wars | Outbid 3 times without a fill: 3 hours' pause. A fill resets it. |
+| Leave bot wars | Outbid 3 times without a fill: 3 hours' pause, then 6, 12 and 24. A fill resets it. Outbid 6+ times in the last day without a fill: paused for the first 6 hours. |
+| Order size | The configured size, or 3% of a day's trades (10 at most) when the order costs no more than Max Buy. |
+| Use idle gold | 5+ items waiting and a quarter of the gold idle: 5 per cycle and a 25 s pause until the backlog, the cap room or the gold is gone (not at Safe pace). Nothing to order for 5 cycles: items trading half as often are added, at most hourly. |
 
 **Selling**
 
 | Rule | Detail |
 | --- | --- |
+| Ask not far above the API | A live lowest ask 6% above the API's is not used; the API's is. |
 | Never below cost | Held until the price covers the highest price paid plus fees. |
 | Do not undercut yourself | When the lowest listing is ours, a new unit joins it at the same price. |
 | Relist rarely | Only when undercut for 12 h+, the item still trades, not relisted in 24 h, and the new price still covers cost plus the lost 5%. With several listings, all must qualify. At most 2 per pass. |
@@ -79,6 +82,5 @@ Min ROI stays within 8–25%, Min trades/day within 5–50. Values you set by ha
 
 ## Not built yet
 
-1. Order size from volume (about 5% of daily trades).
-2. Skipping bot-war items before the first order, from DataWars2 listing history.
-3. Pace and session hours set from your own best hours (Income → Best hours shows them).
+1. Skipping bot-war items before the first order, from DataWars2 listing history.
+2. Session hours set from your own best hours (Income → Best hours shows them).

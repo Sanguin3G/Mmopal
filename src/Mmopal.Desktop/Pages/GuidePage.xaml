@@ -157,7 +157,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Text="Check the results" FontWeight="SemiBold" FontSize="13" Margin="0,2,0,3" />
-                                        <TextBlock Text="Session shows the shopping list and what history learned. Income &amp; Portfolio shows net worth over time. Latency mode (Settings) sets how long each step waits; Pace (Session) sets how much a pass does and the pause between cycles. Hover Pace to see both together." Style="{StaticResource HintText}" />
+                                        <TextBlock Text="Session shows the shopping list and what history learned. Income &amp; Portfolio shows net worth over time. Latency mode (Settings) sets how long each step waits; Pace (Session) sets how much a pass does and the pause between cycles; Balanced speeds up by itself while items wait and gold is idle. Hover Pace to see both together." Style="{StaticResource HintText}" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -185,7 +185,7 @@
                                 <StackPanel>
                                     <TextBlock Text="DAILY RESET" Style="{StaticResource FieldLabel}" Foreground="{DynamicResource SuccessBrush}" Margin="0,0,0,2" />
                                     <TextBlock x:Name="ResetTimeText" Text="00:00–01:30 UTC" FontWeight="SemiBold" FontSize="13" />
-                                    <TextBlock x:Name="ResetHintText" Text="Peak fills · buys never cancelled" Style="{StaticResource HintText}" FontSize="11.5" Margin="0,2,0,0" />
+                                    <TextBlock x:Name="ResetHintText" Text="Peak fills · buys kept" Style="{StaticResource HintText}" FontSize="11.5" Margin="0,2,0,0" />
                                 </StackPanel>
                             </Border>
                             <Border x:Name="NaPrimeTile" Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,8,8">
@@ -244,7 +244,7 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
-                                <TextBlock Grid.Column="1" Text="Items outbid 3 times without a fill pause for 3 h, top bids unfilled for a day are cancelled, and items that lost money on 2+ flips in 30 days are skipped." Style="{StaticResource HintText}" />
+                                <TextBlock Grid.Column="1" Text="Items outbid 3 times without a fill pause for 3 h (then 6, 12, 24), top bids unfilled for a day are cancelled, and items that lost money on 2+ flips in 30 days are skipped." Style="{StaticResource HintText}" />
                             </Grid>
                         </StackPanel>
                     </StackPanel>

@@ -54,6 +54,35 @@ public sealed class OwnedStockTests
     }
 
     [Fact]
+    public void An_order_for_the_wrong_item_is_still_Mmopals_to_cancel()
+    {
+        // 22 Nov: "Big Juju" was meant, "Bolt" was ordered, at the typed price and within a second.
+        PlacedBuyOrder[] placed = [new("Big Juju", T0, 4_043)];
+
+        Assert.True(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Bolt", 4_043, 2, T0.AddSeconds(-1), null, 11_993_108), placed));
+        Assert.False(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Bolt", 4_050, 2, T0.AddSeconds(-1), null, 11_993_108), placed));
+        Assert.False(OwnedStock.IsMmopalsOrder(new(TransactionType.Buy, "Bolt", 4_043, 2, T0.AddSeconds(-60), null, 11_993_108), placed));
+    }
+
+    [Fact]
+    public void Only_Mmopals_trades_are_kept_for_its_own_figures()
+    {
+        Gw2LedgerTransaction[] history =
+        [
+            Buy(1, "Twin Sisters", 4_557, 2, 1),
+            Buy(2, "Vial of Powerful Blood", 900, 250, 1),   // the player's
+            Sell(3, "Twin Sisters", 6_600, 3, 3),            // one of the three is the player's
+            Sell(4, "Vial of Powerful Blood", 1_400, 250, 4),
+        ];
+
+        var trades = MmopalTrades.Only(history, [Placed("Twin Sisters", 1)]);
+
+        Assert.Equal([2L, 2L], trades.Select(trade => trade.Quantity));
+        Assert.All(trades, trade => Assert.Equal("Twin Sisters", trade.ItemName));
+        Assert.Equal(0, IncomeInsights.UnsoldCost(trades));
+    }
+
+    [Fact]
     public void A_listing_cancelled_by_hand_returns_to_Mmopals_count()
     {
         PlacedBuyOrder[] placed = [Placed("Ebonblade", 1)];

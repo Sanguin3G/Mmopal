@@ -24,6 +24,7 @@ public partial class IncomePage : UserControl
     private TradingIncomeReport? _lastIncomeReport;
     private IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)> _liveSessions = [];
     private IReadOnlyList<RunningHourPoint> _runningHours = [];
+    private IReadOnlyList<Gw2LedgerTransaction>? _mmopalTrades;
     private Gw2EquitySnapshot? _latestEquitySnapshot;
     private IReadOnlyList<Gw2EquitySnapshot> _equitySnapshots = Array.Empty<Gw2EquitySnapshot>();
     private int _openBuyCount;
@@ -60,6 +61,26 @@ public partial class IncomePage : UserControl
         }
     }
 
+    /// <summary>The part of the ledger that Mmopal traded; null when it has not placed an order yet.</summary>
+    private async Task<IReadOnlyList<Gw2LedgerTransaction>?> ReadMmopalTradesAsync()
+    {
+        if (Host.ReadPlacedBuyOrders is not { } read)
+        {
+            return null;
+        }
+
+        try
+        {
+            var placed = await read();
+            return placed.Count == 0 ? null : MmopalTrades.Only(ArchivedTransactions, placed);
+        }
+        catch (Exception ex)
+        {
+            Host.AddLog($"Note reading Mmopal's orders: {ex.Message}");
+            return null;
+        }
+    }
+
     internal Task LoadCachedPortfolioOnStartupAsync() => ReloadLedgerForActiveAccountAsync();
 
     internal async Task ReloadLedgerForActiveAccountAsync()
@@ -81,6 +102,7 @@ public partial class IncomePage : UserControl
             ArchivedTransactions = await Host.LedgerStore.GetTransactionsAsync(accountFilter);
             var snapshots = await Host.LedgerStore.GetEquitySnapshotsAsync(null, accountFilter);
             _equitySnapshots = snapshots;
+            _mmopalTrades = await ReadMmopalTradesAsync();
             if (Host.SessionReportStore is { } reports)
             {
                 await reports.InitializeAsync();
@@ -157,6 +179,7 @@ public partial class IncomePage : UserControl
             }
 
             ArchivedTransactions = await Host.LedgerStore.GetTransactionsAsync(resolvedAccount);
+            _mmopalTrades = await ReadMmopalTradesAsync();
             _latestEquitySnapshot = result.LatestSnapshot;
             _equitySnapshots = await Host.LedgerStore.GetEquitySnapshotsAsync(null, resolvedAccount);
             ReplaceActiveOrders(result.ActiveOrders);
@@ -294,7 +317,7 @@ public partial class IncomePage : UserControl
         var sessions = _liveSessions.Where(session => windowStart is null || session.End >= windowStart).ToArray();
         _runningHours = sessions.Length == 0
             ? []
-            : RunningHours.Compute(ArchivedTransactions.Where(tx => windowStart is null || tx.PurchasedAt >= windowStart), sessions);
+            : RunningHours.Compute((_mmopalTrades ?? ArchivedTransactions).Where(tx => windowStart is null || tx.PurchasedAt >= windowStart), sessions);
         _allTimeframePnlRows = report.ItemLeaderboard;
 
         var nowUtc = DateTimeOffset.UtcNow;
@@ -344,7 +367,7 @@ public partial class IncomePage : UserControl
             IncomeOrdersSubText.Text = $"{_openBuyCount} orders • {_outbidBuyCount} outbid";
         }
 
-        var shelf = IncomeInsights.Shelf(_latestActiveOrders, ArchivedTransactions, nowUtc);
+        var shelf = IncomeInsights.Shelf(_latestActiveOrders, _mmopalTrades ?? ArchivedTransactions, nowUtc);
         IncomeDeliveryText.Text = shelf.Listings == 0 ? "—" : MarketScanItem.FormatCoins(shelf.ListedNetCopper);
         IncomeUnmatchedText.Text = shelf.Listings == 0
             ? "No listings"

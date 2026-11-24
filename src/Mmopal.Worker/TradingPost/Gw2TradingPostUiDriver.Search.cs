@@ -299,19 +299,19 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             // The game is the fact: the API's order list lags up to ~5 minutes, so an order sold or cancelled (also by
             // hand in game) still shows there. Do not search for it again this session.
-            _unconfirmedCancelSearches[itemName] = UnconfirmedCancelSearchesBeforeSkip;
-            _logger.LogInformation("'{Item}' has no current order or listing in game any more (sold, or cancelled by hand); nothing to cancel, not searching it again this session.", itemName);
+            NoteUnconfirmedCancel(itemName, UnconfirmedCancelSearchesBeforeSkip);
+            _logger.LogInformation("'{Item}' has no current order or listing in game any more (sold, or cancelled by hand); nothing to cancel, not searching it again for an hour.", itemName);
             return false;
         }
 
         if (requireListedName && !listed)
         {
             _unconfirmedCancels.Add(itemName);
-            var skips = _unconfirmedCancelSearches[itemName] = _unconfirmedCancelSearches.GetValueOrDefault(itemName) + 1;
+            var skips = NoteUnconfirmedCancel(itemName, 1);
             _logger.LogInformation(
                 "Not cancelling anything for '{Item}': the result list never showed it, so the first Cancel button could belong to another listing.{Note}",
                 itemName,
-                skips >= UnconfirmedCancelSearchesBeforeSkip ? " Not trying it again this session." : string.Empty);
+                skips >= UnconfirmedCancelSearchesBeforeSkip ? " Not trying it again for an hour." : string.Empty);
             return false;
         }
 

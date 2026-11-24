@@ -2,8 +2,8 @@ using Mmopal.Contracts;
 
 namespace Mmopal.Gw2;
 
-/// <summary>A live buy order Mmopal placed: the item and when the placing finished.</summary>
-public sealed record PlacedBuyOrder(string ItemName, DateTimeOffset PlacedAt);
+/// <summary>A live buy order Mmopal placed: the item, when the placing finished and the unit price it was placed at.</summary>
+public sealed record PlacedBuyOrder(string ItemName, DateTimeOffset PlacedAt, long? UnitCopper = null);
 
 /// <summary>
 /// How many units of each item Mmopal itself still holds, so the sell pass never lists the player's own copies.
@@ -77,8 +77,16 @@ public static class OwnedStock
     /// </summary>
     public static bool IsMmopalsOrder(Transaction order, IEnumerable<PlacedBuyOrder> placedOrders) =>
         placedOrders.Any(placed =>
-            CreatedWith(order.Created, placed.PlacedAt) &&
-            string.Equals(ItemNameNormalizer.Normalize(placed.ItemName), ItemNameNormalizer.Normalize(order.ItemName), StringComparison.OrdinalIgnoreCase));
+            (CreatedWith(order.Created, placed.PlacedAt) &&
+             string.Equals(ItemNameNormalizer.Normalize(placed.ItemName), ItemNameNormalizer.Normalize(order.ItemName), StringComparison.OrdinalIgnoreCase)) ||
+            IsMistakenOrder(order, placed));
+
+    /// <summary>
+    /// Another item's order, created within seconds of Mmopal placing one and at the price it typed: Mmopal ordered the
+    /// wrong item (22 Nov: "Bolt" for "Big Juju" at 40s 43c), and may cancel it.
+    /// </summary>
+    private static bool IsMistakenOrder(Transaction order, PlacedBuyOrder placed) =>
+        placed.UnitCopper == order.PriceCopper && (order.Created - placed.PlacedAt).Duration() <= TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// True when every current listing of <paramref name="itemName"/> is Mmopal's: it bought at least as many units as

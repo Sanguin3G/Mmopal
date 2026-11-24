@@ -6,12 +6,19 @@ namespace Mmopal.Gw2;
 /// "Bot war" guard. Some items are camped by other bots that re-outbid every few minutes: in one 7 h session
 /// Super Sharpening Polygon got 12 buy orders, 11 outbid cancels and 0 fills, and ~100 orders went to items that never
 /// filled. After <see cref="OutbidCancelsBeforePause"/> outbid cancels without a single fill, the item is paused for
-/// <see cref="PauseDuration"/> so those order slots go to items that actually fill. A fill resets the count.
+/// <see cref="PauseDuration"/> so those order slots go to items that actually fill. A fill resets the count. Each further
+/// pause without a fill is twice as long, up to <see cref="LongestPause"/>: on 24 Nov 41 items took 161 of 456 orders
+/// without filling once, coming back every 3 h.
 /// </summary>
 public sealed class BuyCompetitionTracker
 {
     public const int OutbidCancelsBeforePause = 3;
     public static readonly TimeSpan PauseDuration = TimeSpan.FromHours(3);
+    public static readonly TimeSpan LongestPause = TimeSpan.FromHours(24);
+    /// <summary>Outbid cancels in the last day, without a fill, that pause an item when a session starts.</summary>
+    public const int OutbidsBeforeSeededPause = 6;
+    public static readonly TimeSpan SeededPause = TimeSpan.FromHours(6);
+    private readonly Dictionary<string, int> _pausesSinceFill = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, (string Name, int Count)> _cancelsSinceFill = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (string Name, DateTimeOffset Until)> _paused = new(StringComparer.OrdinalIgnoreCase);
@@ -30,7 +37,10 @@ public sealed class BuyCompetitionTracker
             if (count >= OutbidCancelsBeforePause)
             {
                 _cancelsSinceFill.Remove(key);
-                _paused[key] = (name, nowUtc + PauseDuration);
+                var earlier = _pausesSinceFill.GetValueOrDefault(key);
+                _pausesSinceFill[key] = earlier + 1;
+                var pause = TimeSpan.FromTicks(Math.Min(LongestPause.Ticks, PauseDuration.Ticks << Math.Min(earlier, 4)));
+                _paused[key] = (name, nowUtc + pause);
                 newlyPaused.Add(name);
             }
             else
@@ -75,8 +85,30 @@ public sealed class BuyCompetitionTracker
             if (string.IsNullOrWhiteSpace(raw)) continue;
             var key = ItemNameNormalizer.Normalize(raw);
             _cancelsSinceFill.Remove(key);
+            _pausesSinceFill.Remove(key);
             _paused.Remove(key);
         }
+    }
+
+    /// <summary>How long the item is still paused.</summary>
+    public TimeSpan PausedFor(string itemName, DateTimeOffset nowUtc) =>
+        _paused.TryGetValue(ItemNameNormalizer.Normalize(itemName), out var entry) && entry.Until > nowUtc ? entry.Until - nowUtc : TimeSpan.Zero;
+
+    /// <summary>Pauses items that were outbid often in the last day and never filled; returns their names.</summary>
+    public IReadOnlyList<string> SeedFromLastDay(IReadOnlyDictionary<string, int> outbidCancels, IEnumerable<string> filledItems, DateTimeOffset nowUtc)
+    {
+        var filled = filledItems.Select(name => ItemNameNormalizer.Normalize(name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var paused = new List<string>();
+        foreach (var (name, count) in outbidCancels.Where(pair => pair.Value >= OutbidsBeforeSeededPause))
+        {
+            var key = ItemNameNormalizer.Normalize(name);
+            if (filled.Contains(key)) continue;
+            _paused[key] = (name, nowUtc + SeededPause);
+            _pausesSinceFill[key] = 1;
+            paused.Add(name);
+        }
+
+        return paused;
     }
 
     public bool IsPaused(string itemName, DateTimeOffset nowUtc) =>

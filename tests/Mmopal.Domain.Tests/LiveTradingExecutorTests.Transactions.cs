@@ -254,6 +254,28 @@ public sealed partial class LiveTradingExecutorTests
     }
 
     [Fact]
+    public void In_the_reset_window_only_orders_outbid_for_an_hour_make_room_under_the_gold_cap()
+    {
+        var now = new DateTimeOffset(2026, 11, 24, 0, 40, 0, TimeSpan.Zero);
+        Transaction[] orders =
+        [
+            new(TransactionType.Buy, "Pyre Dye", 7_000, 2, now.AddMinutes(-30), null, 7_100),
+            new(TransactionType.Buy, "Ebonblade", 2_000, 2, now.AddMinutes(-70), null, 2_100),
+        ];
+
+        var safe = Gw2TradingPostUiDriver.SelectSafeOutbidCancels(orders, 5, now, out _, out _, minAge: Gw2TradingPostUiDriver.ResetWindowCancelAge);
+
+        Assert.Equal("Ebonblade", Assert.Single(safe).ItemName);
+    }
+
+    [Theory]
+    [InlineData(18_500L, 15_885L, null)]    // 24 Nov: the row below, listed 16% above the market
+    [InlineData(4_609L, 4_409L, 4_609L)]    // the market moved a little
+    [InlineData(null, 4_409L, null)]
+    public void A_live_ask_far_above_the_API_price_is_not_used(long? live, long api, long? expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.PlausibleLowestAsk(live, api));
+
+    [Fact]
     public void SelectSafeOutbidCancels_also_picks_top_bid_orders_unfilled_for_a_day()
     {
         var now = new DateTimeOffset(2026, 11, 22, 16, 0, 0, TimeSpan.Zero);

@@ -201,6 +201,7 @@ public sealed partial class LiveTradingExecutorTests
     [InlineData("Total Price: 3,469. 69. 67.", 34_696_967L)]
     [InlineData("Total Price:", null)]
     [InlineData("Total Price: 1 2 3 4", null)]
+    [InlineData("Total Price: I I e 78e 97 e", 117_897L)]
     public void ParseTotalPrice_reads_the_total_line_seen_live(string text, long? copper)
     {
         Assert.Equal(copper, Gw2TradingPostUiDriver.ParseTotalPrice(text));

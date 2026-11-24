@@ -30,8 +30,11 @@ public static class CoinPriceReader
     internal const double MaxDigitDistanceWithMargin = 0.22;
     internal const double MinRunnerUpMargin = 0.12;
 
+    // An "8" in a Total line scored 0.120 with the next digit at 0.236 and was refused five times (24 Nov).
     internal static bool IsConfident(double distance, double runnerUp) =>
-        distance <= MaxDigitDistance || (distance <= MaxDigitDistanceWithMargin && runnerUp - distance >= MinRunnerUpMargin);
+        distance <= MaxDigitDistance ||
+        (distance <= 0.15 && runnerUp - distance >= 0.10) ||
+        (distance <= MaxDigitDistanceWithMargin && runnerUp - distance >= MinRunnerUpMargin);
 
     private static Lazy<List<DigitTemplate>> Templates = new(LoadTemplates);
     private static readonly object LearnLock = new();

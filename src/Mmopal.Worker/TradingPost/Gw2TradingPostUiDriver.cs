@@ -44,6 +44,8 @@ public sealed partial class Gw2TradingPostUiDriver
     // Current Buyers list in the order dialog (rows from y~514, price column from x~405).
     private static readonly CaptureRegion BuyersListRegion = new(245, 505, 270, 190);
     private const int BuyersPriceColumnMinX = 395;
+    // Rows are 27 px apart, the first one centred 22 px into the list region.
+    private const int TopRowHeight = 37;
     // Current Sellers list (price column from x ~690); read before the seller-row click, which inserts our own
     // "Selling 1/N" preview row at the top.
     private static readonly CaptureRegion SellersListRegion = new(530, 505, 270, 190);
@@ -54,6 +56,7 @@ public sealed partial class Gw2TradingPostUiDriver
     // prints "Listing Fee" / "Exchange Fee" from x ~658, which would garble the read.
     private static readonly CaptureRegion ItemDialogTotalPriceRegion = new(260, 330, 380, 44);
     internal static readonly TimeSpan MinOrderAgeBeforeOutbidCancel = TimeSpan.FromMinutes(20);
+    internal static readonly TimeSpan ResetWindowCancelAge = TimeSpan.FromMinutes(60);
     // A buy order still at the top bid after this long is not filling: of the 348 fills placed 15-21 Nov, 97% (98% of the
     // gold) filled within 24 h, while on 23 Nov ~333g of the 427g in buy orders was older than that and the gold cap
     // blocked buys in 316 of 322 cycles. Cancelling a buy order is free.
@@ -92,7 +95,10 @@ public sealed partial class Gw2TradingPostUiDriver
     private IReadOnlyCollection<string>? _cancelListNames;
     private const int LongestSearchText = 60;
     private const int LongestNumberText = 6;
-    private readonly Dictionary<string, int> _unconfirmedCancelSearches = new(StringComparer.OrdinalIgnoreCase);
+    // Per list (Buying or Selling): a missing buy order says nothing about a listing of the same item.
+    private readonly Dictionary<string, (int Count, DateTimeOffset At)> _unconfirmedCancelSearches = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan CancelSearchRetryAfter = TimeSpan.FromHours(1);
+    private TransactionType _cancelListType = TransactionType.Buy;
     private const int UnconfirmedCancelSearchesBeforeSkip = 2;
     private bool _lastSearchFoundNothing;
     private bool _lastSearchShowedName;

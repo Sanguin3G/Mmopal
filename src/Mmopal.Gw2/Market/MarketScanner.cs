@@ -282,7 +282,7 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
                 ProfitPercentage: decimal.Round(eval.ProfitPercentage, 2),
                 BuyQuantity: price.Buys!.Quantity,
                 SellQuantity: price.Sells!.Quantity,
-                SuggestedQuantity: Math.Max(1, filter.DefaultQuantity),
+                SuggestedQuantity: SuggestQuantity(filter, eval.BuyPriceCopper, dailyVolume),
                 ItemType: info.ItemType,
                 VendorValueCopper: info.VendorValueCopper,
                 RiskBadge: riskBadge,
@@ -382,6 +382,22 @@ public sealed partial class Gw2MarketScanner : IGw2MarketScanner
         }
 
         return imported;
+    }
+
+    /// <summary>
+    /// Order size: the configured one, more for items that trade a lot (3% of a day's trades, at most 10 units), as long
+    /// as the order costs no more than the dearest single unit the filter allows (about 4% of the gold).
+    /// </summary>
+    public static long SuggestQuantity(MarketScanFilter filter, long buyPriceCopper, int? tradesPerDay)
+    {
+        var configured = Math.Max(1, filter.DefaultQuantity);
+        if (tradesPerDay is not > 0 || buyPriceCopper <= 0 || filter.MaximumBuyPriceCopper is not { } budget)
+        {
+            return configured;
+        }
+
+        var byVolume = Math.Min(10, (long)Math.Floor(tradesPerDay.Value * 0.03));
+        return Math.Max(configured, Math.Min(byVolume, budget / buyPriceCopper));
     }
 
     internal static int[] SampleEvenly(int[] allIds, int targetCount)

@@ -27,14 +27,15 @@ public sealed partial class Gw2TradingPostUiDriver
         out IReadOnlyList<string> ambiguousNames,
         out int keptYoungCount,
         Func<Transaction, bool>? mayCancel = null,
-        Func<string, bool>? givenUp = null)
+        Func<string, bool>? givenUp = null,
+        TimeSpan? minAge = null)
     {
         var buys = transactions
             .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
             .ToArray();
         bool IsDue(Transaction tx) =>
             (tx.MinimumBuyPriceCopper is { } topBid && topBid > tx.PriceCopper) || nowUtc - tx.Created >= StaleBuyOrderAge;
-        bool IsOldEnough(Transaction tx) => nowUtc - tx.Created >= MinOrderAgeBeforeOutbidCancel;
+        bool IsOldEnough(Transaction tx) => nowUtc - tx.Created >= (minAge ?? MinOrderAgeBeforeOutbidCancel);
         bool IsOurs(Transaction tx) => mayCancel?.Invoke(tx) ?? true;
         var skipped = new List<string>();
         var safe = new List<Transaction>();
@@ -72,15 +73,29 @@ public sealed partial class Gw2TradingPostUiDriver
         return safe.ToArray();
     }
 
-    /// <summary>The cancel search for this item was never confirmed on screen; not tried again this session.</summary>
-    private bool CancelSearchGivenUp(string itemName) =>
-        _unconfirmedCancelSearches.GetValueOrDefault(itemName) >= UnconfirmedCancelSearchesBeforeSkip;
+    /// <summary>The cancel search for this item in that list was not confirmed on screen twice; left alone for an hour.</summary>
+    public bool IsCancelSearchGivenUp(TransactionType list, string itemName) =>
+        _unconfirmedCancelSearches.TryGetValue($"{list}|{itemName.Trim()}", out var seen) &&
+        seen.Count >= UnconfirmedCancelSearchesBeforeSkip &&
+        _utcNow() - seen.At < CancelSearchRetryAfter;
+
+    private bool CancelSearchGivenUp(string itemName) => IsCancelSearchGivenUp(_cancelListType, itemName);
+
+    /// <summary>Counts a cancel search that found nothing to cancel; returns how often that happened lately.</summary>
+    private int NoteUnconfirmedCancel(string itemName, int weight)
+    {
+        var key = $"{_cancelListType}|{itemName.Trim()}";
+        var earlier = _unconfirmedCancelSearches.TryGetValue(key, out var seen) && _utcNow() - seen.At < CancelSearchRetryAfter ? seen.Count : 0;
+        _unconfirmedCancelSearches[key] = (earlier + weight, _utcNow());
+        return earlier + weight;
+    }
 
     public async Task<int> CancelOutbidBuyOrdersAsync(
         IReadOnlyList<Transaction> transactions,
         int maxCancelsPerPass,
         Func<Transaction, bool>? mayCancel = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool goldCapReached = false)
     {
         // Reset first: a pass that returns early (reset window) must not report the previous pass's cancels again.
         LastCanceledOutbidItems = Array.Empty<string>();
@@ -90,22 +105,32 @@ public sealed partial class Gw2TradingPostUiDriver
             return 0;
         }
 
+        _cancelListType = TransactionType.Buy;
+
         // Only buy orders are canceled when outbid (canceling buys is 100% free; canceling sells burns 5% fee).
         var nowUtc = _utcNow();
+        var minAge = MinOrderAgeBeforeOutbidCancel;
         if (Gw2MarketCycle.Describe(nowUtc).PhaseName == "Daily Reset Spike")
         {
             // The reset window is when sellers dump into buy orders; keep every order standing to catch those fills.
-            _logger.LogDebug("Outbid Refresh paused during the daily reset window.");
-            return 0;
+            // Unless the gold cap is reached: then orders outbid for an hour are gold that nothing can be bought with
+            // (39 of 60 cycles bought nothing in the window of 24 Nov, with 31-53 of 85 orders outbid).
+            if (!goldCapReached)
+            {
+                _logger.LogDebug("Outbid Refresh paused during the daily reset window.");
+                return 0;
+            }
+
+            minAge = ResetWindowCancelAge;
         }
 
-        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp);
+        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp, minAge);
         if (keptYoung > 0)
         {
             _logger.LogInformation(
                 "Outbid Refresh kept {Count} outbid buy order(s) younger than {Minutes} min so they can still fill.",
                 keptYoung,
-                (int)MinOrderAgeBeforeOutbidCancel.TotalMinutes);
+                (int)minAge.TotalMinutes);
         }
 
         // Once per item per session: Slice of Allspice Cake repeated this line in 143 of 272 cycles.
@@ -221,6 +246,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         await ClickCenterAndSettleAsync(sellingBtn, cancellationToken).ConfigureAwait(false);
+        _cancelListType = TransactionType.Sell;
         _cancelListNames = OwnNames(orders, TransactionType.Sell);
 
         foreach (var relist in relists)

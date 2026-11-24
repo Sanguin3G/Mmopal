@@ -92,7 +92,8 @@ public sealed partial class Gw2TradingPostUiDriver
                     // The LOG IN label stays on screen for several seconds while the login request is in flight.
                     // Retrying faster than that only produces clicks that land on the LATEST NEWS page (opening
                     // the browser) once the launcher switches over, so wait out a realistic login before retrying.
-                    var loginRetryCooldownMs = _requireTemplateFilesOnDisk ? 6_000 : 3_500;
+                    // A login takes 6.3-6.9 s here: a retry after 6 s tapped the news page 0.9 s before PLAY came up (24 Nov).
+                    var loginRetryCooldownMs = _requireTemplateFilesOnDisk ? 12_000 : 3_500;
                     var cooldownElapsed = !lastLoginClickUtc.HasValue ||
                                           (nowUtc - lastLoginClickUtc.Value).TotalMilliseconds >= loginRetryCooldownMs;
                     (int X, int Y)? loginPoint = null;
@@ -139,13 +140,21 @@ public sealed partial class Gw2TradingPostUiDriver
                             await Task.Delay(200, cancellationToken).ConfigureAwait(false);
                         }
 
-                        await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+                        if (!_requireTemplateFilesOnDisk || await IsLoginShownAtAsync(point, cancellationToken).ConfigureAwait(false))
+                        {
+                            await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+                        }
+
                         if (_requireTemplateFilesOnDisk)
                         {
                             // Second tap ensures Coherent UI fires LOG IN even if the first tap was consumed
                             // activating the window or unfocusing the default password input caret.
+                            // Only while LOG IN is still there: after a quick login the same spot is a news article.
                             await Task.Delay(120, cancellationToken).ConfigureAwait(false);
-                            await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+                            if (await IsLoginShownAtAsync(point, cancellationToken).ConfigureAwait(false))
+                            {
+                                await _input.ClickAsync(point.X, point.Y, cancellationToken).ConfigureAwait(false);
+                            }
                         }
 
                         lastLoginClickUtc = DateTimeOffset.UtcNow;
@@ -508,6 +517,25 @@ public sealed partial class Gw2TradingPostUiDriver
         return playBox is not null
             ? new TemplateMatch(playBox.X, playBox.Y, playBox.Width, playBox.Height, 0.90m)
             : null;
+    }
+
+    /// <summary>LOG IN is on screen at that point right now (only its part of the launcher is read, to stay quick).</summary>
+    private async Task<bool> IsLoginShownAtAsync((int X, int Y) point, CancellationToken cancellationToken)
+    {
+        if (_textLocator is null)
+        {
+            return true;
+        }
+
+        var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+        if (frame.Pixels.Length == 0)
+        {
+            return false;
+        }
+
+        var lines = await _textLocator.LocateLinesAsync(frame, LauncherLoginOcrRegion, cancellationToken).ConfigureAwait(false);
+        return lines.Any(line => IsOcrLoginLabel(line.Text) && Math.Abs(OcrBoxCenter(line).X - point.X) <= 24 && Math.Abs(OcrBoxCenter(line).Y - point.Y) <= 24) ||
+               lines.Any(line => line.Text.Trim().Equals("PASSWORD", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

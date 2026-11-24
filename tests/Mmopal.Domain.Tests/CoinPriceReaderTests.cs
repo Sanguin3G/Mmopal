@@ -40,6 +40,7 @@ public sealed class CoinPriceReaderTests
     [InlineData("nikas-coat", 4_734L)]        // 0g 47s 34c
     [InlineData("pyre-dye", 11_798L)]         // 1g 17s 98c
     [InlineData("berserkers-axe", 22_662L)]   // 2g 26s 62c
+    [InlineData("zojjas-insignia", 117_897L)] // 11g 78s 97c, refused five times on 24 Nov for one "8"
     public void Reads_the_dialog_total(string frame, long expected)
     {
         Assert.Equal(expected, CoinPriceReader.ReadFirst(Frame(frame), Total)?.Copper);
@@ -66,6 +67,19 @@ public sealed class CoinPriceReaderTests
     {
         Assert.Equal(4_350, CoinPriceReader.ReadFirst(Frame("nikas-coat"), SellerPrices)?.Copper); // 43s 50c
         Assert.Equal(12_041, CoinPriceReader.ReadFirst(Frame("pyre-dye"), SellerPrices)?.Copper);  // 1g 20s 41c
+    }
+
+    [Fact]
+    public void An_unreadable_top_row_does_not_give_way_to_the_next_one()
+    {
+        // Two-line title: everything is 25 px lower. Rows: 1g 58s 85c, then our preview at 1g 89s 99c.
+        var frame = Frame("waterbreather-two-lines");
+        Assert.Equal(18_999, CoinPriceReader.ReadFirst(frame, Total with { Y = Total.Y + 25 })?.Copper);
+        var topRow = SellerPrices with { Y = SellerPrices.Y + 25, Height = 37 };
+
+        Assert.NotEqual(18_999, CoinPriceReader.ReadFirst(frame, topRow)?.Copper);
+        Assert.Equal(4_350, CoinPriceReader.ReadFirst(Frame("nikas-coat"), SellerPrices with { Height = 37 })?.Copper);
+        Assert.Equal(11_336, CoinPriceReader.ReadFirst(Frame("berserkers-axe"), BuyerPrices with { Height = 37 })?.Copper);
     }
 
     [Fact]

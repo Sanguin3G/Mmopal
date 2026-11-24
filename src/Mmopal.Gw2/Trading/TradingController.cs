@@ -22,7 +22,7 @@ public sealed class TradingCycleController
     // Live buys pick the first Trading Post search result, so "Slice of Allspice Cake" can open
     // "Slice of Allspice Cake with Ice Cream". Items whose search proved to land on another item are
     // remembered per run (item key -> the item that was actually ordered) and no longer bought.
-    private readonly ConcurrentDictionary<string, string> _boughtItems = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (string Name, DateTimeOffset PlacedAt)> _boughtItems = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _searchMismatches = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _blockedUntil = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (string Name, long Price, DateTimeOffset PlacedAt)> _placedPrices = new(StringComparer.Ordinal);
@@ -42,6 +42,9 @@ public sealed class TradingCycleController
         (message.StartsWith("Buy order aborted", StringComparison.Ordinal) ||
          message.StartsWith("None of the search rows opened", StringComparison.Ordinal));
 
+    /// <summary>Orders per cycle; the pace boost raises it while items wait and gold is idle.</summary>
+    public int MaxActionsPerCycle { get; set; }
+
     public TradingCycleController(
         CheckpointStore store,
         ILogger logger,
@@ -55,6 +58,7 @@ public sealed class TradingCycleController
         _marketReader = marketReader;
         _actionExecutor = actionExecutor;
         _options = options ?? new TradingControllerOptions();
+        MaxActionsPerCycle = _options.MaxActionsPerCycle;
         _candidatePlanner = candidatePlanner ?? new CandidatePlanner();
     }
 
@@ -191,7 +195,7 @@ public sealed class TradingCycleController
                 var itemKey = GetItemKey(runId, action.ItemName);
                 if (result.Status == TradingActionStatus.Completed && action.Kind == TradingActionKind.PlaceBuyOrder)
                 {
-                    _boughtItems[itemKey] = action.ItemName.Trim();
+                    _boughtItems[itemKey] = (action.ItemName.Trim(), _options.UtcNow());
                     if (result.PlacedUnitPriceCopper is { } placedPrice)
                     {
                         _placedPrices[itemKey] = (action.ItemName.Trim(), placedPrice, _options.UtcNow());
@@ -415,9 +419,9 @@ public sealed class TradingCycleController
                 _recentActions.TryRemove(key, out _);
             }
 
-            if (accepted >= _options.MaxActionsPerCycle)
+            if (accepted >= MaxActionsPerCycle)
             {
-                selected.Add(CandidateDecision.Skip(decision.Candidate, "Per-cycle action limit reached.", decision.Profitability));
+                selected.Add(CandidateDecision.Skip(decision.Candidate, PerCycleLimitReason, decision.Profitability));
                 continue;
             }
 
@@ -428,7 +432,7 @@ public sealed class TradingCycleController
                 {
                     selected.Add(CandidateDecision.Skip(
                         decision.Candidate,
-                        $"Buy orders already hold {MarketScanItem.FormatCoins(budget.InBuyOrders)} of {MarketScanItem.FormatCoins(budget.TotalGold)} (limit {budget.Percent}%); waiting for fills.",
+                        $"{GoldCapReason} {MarketScanItem.FormatCoins(budget.InBuyOrders)} of {MarketScanItem.FormatCoins(budget.TotalGold)} (limit {budget.Percent}%); waiting for fills.",
                         decision.Profitability));
                     continue;
                 }
@@ -506,7 +510,9 @@ public sealed class TradingCycleController
 
     /// <summary>
     /// Flags items we bought this run that never showed up under their own name in current/buys while an
-    /// order for a longer name containing it did — i.e. the search landed on a different item.
+    /// order for a longer name containing it, created at that moment, did — i.e. the search landed on a different item.
+    /// Without the moment, "Snow Diamond" was called wrong once its own order was gone, because an older "Snow Diamond
+    /// Ornament" order stood there (24 Nov), and was not bought again for the rest of the run.
     /// </summary>
     private void DetectSearchMismatches(string runId, IReadOnlyList<Transaction> transactions)
     {
@@ -516,7 +522,7 @@ public sealed class TradingCycleController
             .Select(tx => tx.ItemName.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        foreach (var (key, name) in _boughtItems)
+        foreach (var (key, (name, placedAt)) in _boughtItems)
         {
             if (!key.StartsWith(prefix, StringComparison.Ordinal) ||
                 _searchMismatches.ContainsKey(key) ||
@@ -525,7 +531,12 @@ public sealed class TradingCycleController
                 continue;
             }
 
-            var other = buyNames.FirstOrDefault(buy => buy.Contains(name, StringComparison.OrdinalIgnoreCase));
+            var other = transactions
+                .FirstOrDefault(tx =>
+                    tx.Type == TransactionType.Buy &&
+                    tx.ItemName?.Contains(name, StringComparison.OrdinalIgnoreCase) == true &&
+                    OwnedStock.CreatedWith(tx.Created, placedAt))?
+                .ItemName.Trim();
             if (other is not null && _searchMismatches.TryAdd(key, other))
             {
                 _logger.LogWarning(
@@ -535,6 +546,10 @@ public sealed class TradingCycleController
             }
         }
     }
+
+    /// <summary>Skip reasons other parts act on.</summary>
+    public const string PerCycleLimitReason = "Per-cycle action limit reached.";
+    public const string GoldCapReason = "Buy orders already hold";
 
     /// <summary>Strips per-item details (amounts, names in quotes) so skip reasons group into a short summary.</summary>
     public static string SummarizeReason(string? reason)

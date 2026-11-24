@@ -156,6 +156,7 @@ public sealed partial class WorkerRuntime
             cancellationToken,
             () => IsPauseRequested);
         RecordCycleResult(session, result);
+        await AdjustPaceAsync(session, result, cancellationToken).ConfigureAwait(false);
         MarkStep(session, "buy");
 
         if (IsPauseRequested)
@@ -335,6 +336,98 @@ public sealed partial class WorkerRuntime
         }
     }
 
+    /// <summary>
+    /// Sets the pace of the next cycle from what this one left undone, and looks for more items when the list has run out
+    /// with gold idle.
+    /// </summary>
+    private async Task AdjustPaceAsync(TradingSession session, TradingCycleResult result, CancellationToken cancellationToken)
+    {
+        if (result.Market?.Balance is not { } balance || !result.Succeeded)
+        {
+            return;
+        }
+
+        var orders = result.Market.Transactions;
+        static long Value(Transaction order) => Math.Max(0, order.PriceCopper) * Math.Max(1, order.Quantity);
+        var buys = orders.Where(order => order.Type == TransactionType.Buy).Sum(Value);
+        var listed = (long)(orders.Where(order => order.Type == TransactionType.Sell).Sum(Value) * 0.85m);
+        session.GoldCapReached = result.Decisions.Any(decision => decision.Action is null && decision.Reason?.StartsWith(TradingCycleController.GoldCapReason, StringComparison.Ordinal) == true);
+        var pressure = new CyclePressure(
+            result.Decisions.Count(decision => decision.Action is null && decision.Reason == TradingCycleController.PerCycleLimitReason),
+            result.Decisions.Count(decision => decision.Action is not null),
+            session.GoldCapReached,
+            Math.Max(0, balance.Copper - session.MinBalanceCopper),
+            buys,
+            balance.Copper + buys + listed);
+        if (session.Boost.Update(pressure, allowed: !string.Equals(session.ProfileName, "safe", StringComparison.OrdinalIgnoreCase)))
+        {
+            var message = session.Boost.Active
+                ? $"Faster pace: {pressure.Waiting} items wait and {MarketScanItem.FormatCoins(pressure.SpendableCopper)} is idle, so up to {session.PerPass} orders per cycle and a {(int)session.Boost.Pause(session.Interval).TotalSeconds} s pause."
+                : "Back to the normal pace: no backlog, or not enough free gold.";
+            _logger.LogInformation("{Message}", message);
+            RecordEvent(session, "pace", session.Boost.Active ? "faster" : "normal", detail: $"{pressure.Waiting} waiting", activity: message);
+        }
+
+        session.Controller.MaxActionsPerCycle = session.PerPass;
+        if (session.Boost.TakeWiderScan(_utcNow()))
+        {
+            await WidenShoppingListAsync(session, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Adds items that trade half as often as the scanner's filter asks, because every item on the list has an order.
+    /// They stay until the next regular re-scan.
+    /// </summary>
+    private async Task WidenShoppingListAsync(TradingSession session, CancellationToken cancellationToken)
+    {
+        if (session.Request.AutoRescanFilter is not { } filter || _marketScanner is null)
+        {
+            return;
+        }
+
+        var wider = filter with { MinimumDailyTrades = Math.Max(5, filter.MinimumDailyTrades / 2), MaxResults = filter.MaxResults * 2 };
+        _logger.LogInformation("Every item on the list has an order and gold is idle: scanning for items with {Trades:0}+ trades/day.", wider.MinimumDailyTrades);
+        if (await RescanShoppingListAsync(wider, session.Blacklist, session.Candidates.Count, candidatesPath: null, cancellationToken).ConfigureAwait(false) is not { } found)
+        {
+            return;
+        }
+
+        var before = session.Candidates.Count;
+        session.Candidates = MergeWithCustomList(session.Candidates, found);
+        session.CandidateNames.UnionWith(CandidateNameSet(found));
+        RecordEvent(session, "pace", "wider-scan", detail: $"{before} -> {session.Candidates.Count}",
+            activity: $"The list ran out with gold idle: added {session.Candidates.Count - before} items that trade less often");
+    }
+
+    /// <summary>Items outbid again and again in the last day without a fill start the session paused.</summary>
+    private async Task PauseYesterdaysBotWarsAsync(RunMode mode, CancellationToken cancellationToken)
+    {
+        if (_metricsStore is null || _ledgerStore is null || mode != RunMode.Live)
+        {
+            return;
+        }
+
+        try
+        {
+            var since = _utcNow().AddHours(-24);
+            var outbid = await _metricsStore.CountByItemAsync("cancel", "outbid", since, cancellationToken).ConfigureAwait(false);
+            var filled = (await _ledgerStore.GetTransactionsAsync(null, cancellationToken).ConfigureAwait(false))
+                .Where(row => row.Kind == TransactionType.Buy && row.PurchasedAt >= since)
+                .Select(row => row.ItemName);
+            var paused = _buyCompetition.SeedFromLastDay(outbid, filled, _utcNow());
+            if (paused.Count > 0)
+            {
+                _logger.LogInformation("Paused from the start ({Hours} h): outbid {Min}+ times in the last day without a fill: {Items}.",
+                    (int)BuyCompetitionTracker.SeededPause.TotalHours, BuyCompetitionTracker.OutbidsBeforeSeededPause, string.Join(", ", paused));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not read the last day's outbid counts.");
+        }
+    }
+
     /// <summary>The shopping list with live prices, minus items paused because another bot keeps outbidding us.</summary>
     private async Task<IReadOnlyList<ItemCandidate>> CandidatesForCycleAsync(
         TradingSession session,
@@ -424,7 +517,7 @@ public sealed partial class WorkerRuntime
             _logger.LogInformation(
                 "Pausing buys of {Item} for {Hours} h: outbid past our profitable price {Count} times without a single fill (another bot is camping it).",
                 paused,
-                (int)BuyCompetitionTracker.PauseDuration.TotalHours,
+                (int)_buyCompetition.PausedFor(paused, _utcNow()).TotalHours,
                 BuyCompetitionTracker.OutbidCancelsBeforePause);
         }
 
@@ -455,7 +548,7 @@ public sealed partial class WorkerRuntime
     private async Task<int?> RunSellPassAsync(TradingSession session, Gw2TradingPostUiDriver driver, CancellationToken cancellationToken)
     {
         var request = session.Request;
-        var maxPerPass = Math.Max(1, session.Profile.MaxOverbidUpdatesPerPass);
+        var maxPerPass = session.PerPass;
         // A big backlog on this character is listed faster; the buy cycle waits a little longer meanwhile.
         if (session.FlipStockByCharacter.FirstOrDefault(entry => CharacterStock.NamesMatch(entry.Name, driver.CurrentCharacterName)).Items >= CharacterStock.BacklogItemsForBiggerSellPass)
         {
@@ -543,21 +636,22 @@ public sealed partial class WorkerRuntime
     {
         // Only Mmopal's own buy orders are cancelled; orders placed by hand stay, outbid or old.
         var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
-            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt))
+            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper))
             .ToArray();
         // The driver still sees the hand-placed orders: a search that lists one of them next to ours is not safe.
         var canceledOutbidBuys = await driver.CancelOutbidBuyOrdersAsync(
             orders,
-            Math.Max(1, session.Profile.MaxOverbidUpdatesPerPass),
+            session.PerPass,
             order => OwnedStock.IsMmopalsOrder(order, placed),
-            cancellationToken);
+            cancellationToken,
+            session.GoldCapReached);
         _buyCompetition.PauseSlowItems(driver.LastCanceledStaleItems, _utcNow());
         foreach (var paused in _buyCompetition.RecordOutbidCancels(driver.LastCanceledOutbidItems, _utcNow()))
         {
             _logger.LogInformation(
                 "Pausing buys of {Item} for {Hours} h: outbid {Count} times without a single fill (another bot is camping it); its order slots go to items that fill.",
                 paused,
-                (int)BuyCompetitionTracker.PauseDuration.TotalHours,
+                (int)_buyCompetition.PausedFor(paused, _utcNow()).TotalHours,
                 BuyCompetitionTracker.OutbidCancelsBeforePause);
         }
 
@@ -834,7 +928,7 @@ public sealed partial class WorkerRuntime
             return;
         }
 
-        var waitDuration = session.Interval;
+        var waitDuration = session.Boost.Pause(session.Interval);
         if (session.Cap.ExpiresAt is { } expiresAt)
         {
             var remainingBeforeCap = expiresAt - _utcNow();

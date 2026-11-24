@@ -19,6 +19,9 @@ public sealed partial class Gw2TradingPostUiDriver
     private async Task<long?> ReadTopListPriceAsync(CaptureRegion listRegion, int priceColumnMinX, long hintCopper, CancellationToken cancellationToken)
     {
         var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(1_500, Math.Min(_uiWaitMs, 4_000)));
+        // The top row and nothing below it: with that row unreadable, the next one used to pass as the best price (24 Nov:
+        // a listing went up at 1g 84s 98c, the lowest ask being 1g 58s 85c). Unreadable means the API price is used.
+        listRegion = listRegion with { Height = Math.Min(listRegion.Height, TopRowHeight) };
         while (true)
         {
             try
@@ -367,6 +370,13 @@ public sealed partial class Gw2TradingPostUiDriver
                         + (breakEvenCopper is { } be ? $" (break-even {MarketScanItem.FormatCoins(be)})." : "."));
     }
 
+    /// <summary>
+    /// The lowest ask to work from. A live read clearly above the API's is another row or a stale list: the API's lower
+    /// price sells, and break-even still guards it.
+    /// </summary>
+    internal static long? PlausibleLowestAsk(long? liveCopper, long apiCopper) =>
+        liveCopper is { } live && apiCopper > 0 && live > apiCopper * 1.06 ? null : liveCopper;
+
     internal static bool IsWholeMultiple(long total, long unit, long maxQuantity = 250) =>
         unit > 0 && total % unit == 0 && total / unit >= 1 && total / unit <= maxQuantity;
 
@@ -380,7 +390,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var gold = unitCopper / 10_000;
         var silver = unitCopper / 100 % 100;
         var copper = unitCopper % 100;
-        if (await FindPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false) is not { } arrow)
+        if (await WaitForPriceSpinnerArrowAsync("arrow_up.png", cancellationToken).ConfigureAwait(false) is not { } arrow)
         {
             return false;
         }
@@ -531,6 +541,12 @@ public sealed partial class Gw2TradingPostUiDriver
     internal static long? ParseTotalPrice(string? text)
     {
         var groups = PriceDigitGroups(text);
+        // "11" is read as "I I": with four groups, two leading ones are one number (Zojja's Berserker Insignia, 24 Nov).
+        if (groups.Count == 4 && groups[0] == "1" && groups[1] == "1")
+        {
+            groups = ["11", groups[2], groups[3]];
+        }
+
         if (groups.Count is 0 or > 3)
         {
             return null;

@@ -178,7 +178,9 @@ public sealed partial class Gw2TradingPostUiDriver
                 if (typeSellPrice)
                 {
                     // Before the seller-row click, which inserts our own "Selling 1/N" preview row at the top.
-                    liveLowestAsk = await ReadTopListPriceAsync(InDialog(SellersListRegion), SellersPriceColumnMinX, itemPricing!.ApiLowestAskCopper!.Value, cancellationToken).ConfigureAwait(false);
+                    liveLowestAsk = PlausibleLowestAsk(
+                        await ReadTopListPriceAsync(InDialog(SellersListRegion), SellersPriceColumnMinX, itemPricing!.ApiLowestAskCopper!.Value, cancellationToken).ConfigureAwait(false),
+                        itemPricing!.ApiLowestAskCopper!.Value);
                 }
 
                 if (titleUnread && typeSellPrice && !UnreadTitleIsProven(_lastSearchShowedName, liveLowestAsk, itemPricing!.ApiLowestAskCopper!.Value))

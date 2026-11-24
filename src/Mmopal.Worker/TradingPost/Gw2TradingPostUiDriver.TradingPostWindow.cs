@@ -339,8 +339,60 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         _dialogShiftY = 0;
+        anchor = await WaitUntilStillAsync(anchor, anchorTemplate, minScore, cancellationToken).ConfigureAwait(false);
         _openDialogAnchor = anchor is null ? null : (anchorTemplate, anchor.Y);
         return anchor;
+    }
+
+    /// <summary>
+    /// The item window slides in. Its position read on the way put the rows and boxes 0-51 px off (24 Nov: 23 aborts, and
+    /// a seller row lower down read as the lowest ask), so it is read again until it stays put.
+    /// </summary>
+    private async Task<TemplateMatch?> WaitUntilStillAsync(TemplateMatch? match, string template, decimal minScore, CancellationToken cancellationToken)
+    {
+        if (!_requireTemplateFilesOnDisk)
+        {
+            return match;
+        }
+
+        for (var look = 0; look < 8 && match is not null; look++)
+        {
+            await Task.Delay(120, cancellationToken).ConfigureAwait(false);
+            var again = await TryFindOnceAsync(template, CaptureRegion.FullScreen1024x768, minScore, cancellationToken).ConfigureAwait(false);
+            if (again is null)
+            {
+                continue;
+            }
+
+            if (again.X == match.X && again.Y == match.Y)
+            {
+                return again;
+            }
+
+            match = again;
+        }
+
+        return match;
+    }
+
+    /// <summary>The spinner, waiting up to 2 s for it (the price boxes are drawn after the window).</summary>
+    private async Task<TemplateMatch?> WaitForPriceSpinnerArrowAsync(string templateFileName, CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(_requireTemplateFilesOnDisk ? 2_000 : 0);
+        while (true)
+        {
+            if (await FindPriceSpinnerArrowAsync(templateFileName, cancellationToken).ConfigureAwait(false) is { } found)
+            {
+                return found;
+            }
+
+            if (DateTimeOffset.UtcNow >= deadline || IsPaused)
+            {
+                return null;
+            }
+
+            await Task.Delay(Math.Max(_pollMs, 150), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<TemplateMatch?> FindPriceSpinnerArrowAsync(string templateFileName, CancellationToken cancellationToken)
