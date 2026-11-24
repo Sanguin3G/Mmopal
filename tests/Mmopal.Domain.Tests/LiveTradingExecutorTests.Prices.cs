@@ -82,9 +82,51 @@ public sealed partial class LiveTradingExecutorTests
     [InlineData("61 —O. 66•", 610_066L, 610_066L)]      // "O" read for 0
     [InlineData("5. 00.", 6_995L, null)]               // neither 5g nor 5s is near 69s 95c: misread
     [InlineData("neo. 3.", 6_995L, null)]
+    [InlineData("81.", 12_581L, null)]                 // 24 Nov: all that was read of 1g 25s 81c, bid as 81s
+    [InlineData("81.", 14_481L, null)]
+    [InlineData("5.", 59_993L, null)]                  // 24 Nov: 5g 99s 93c, listed at 4g 99s 98c
+    [InlineData("25. 81.", 12_581L, null)]
+    [InlineData("5.", 50_000L, 50_000L)]               // exactly the API's price, its zeros omitted
+    [InlineData("1. 04. 04.", 14_420L, null)]          // 28% below the API: another row or a misread
+    [InlineData("1. 35. 50.", 14_420L, 13_550L)]
     public void ParseBuyerRowPrice_resolves_omitted_units_against_the_api_hint(string text, long hint, long? expected)
     {
         Assert.Equal(expected, Gw2TradingPostUiDriver.ParseBuyerRowPrice(text, hint));
+    }
+
+    [Fact]
+    public void Only_the_top_row_of_the_list_is_read_and_its_pieces_are_joined()
+    {
+        OcrTextBox[] lines =
+        [
+            new("Available", 560, 520, 60, 13),
+            new("1.", 690, 521, 10, 13),
+            new("44. 81.", 712, 520, 60, 13),
+            new("1. 45. 00.", 690, 547, 80, 13), // the row below
+        ];
+
+        Assert.Equal(14_481, Gw2TradingPostUiDriver.TopRowPrice(lines, 680, 542, 14_482));
+        Assert.Null(Gw2TradingPostUiDriver.TopRowPrice(lines[3..], 680, 542, 14_482));
+    }
+
+    [Theory]
+    [InlineData(13_010L, true, "", "30. IO.", "1.30. 10.")] // Super Loot Bag, 24 Nov
+    [InlineData(3_010L, false, "", "30. IO.", "1.30. 10.")] // the longer read says it is another price
+    [InlineData(13_010L, false, "", "30. IO.", "")]
+    [InlineData(5_139L, true, "", "51. 39.", "51")]
+    [InlineData(99L, false, "", "99", "99")]               // one number proves nothing
+    public void A_row_is_proven_by_its_whole_price_only(long price, bool expected, params string[] reads) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.RowShowsPrice(reads, price));
+
+    [Fact]
+    public void A_price_two_orders_share_proves_neither()
+    {
+        Transaction Sell(string name, long price) => new(TransactionType.Sell, name, price, 1, DateTimeOffset.UtcNow, null, null);
+        var bag = Sell("Super Loot Bag", 13_010);
+        Transaction[] orders = [bag, Sell("Pyre Dye", 11_911), Sell("Twin Sisters", 11_911), new(TransactionType.Buy, "Ebonblade", 13_010, 1, DateTimeOffset.UtcNow, null, null)];
+
+        Assert.Equal(13_010, Gw2TradingPostUiDriver.UniquePrice(bag, orders)); // a buy order is in the other list
+        Assert.Null(Gw2TradingPostUiDriver.UniquePrice(orders[1], orders));
     }
 
     [Theory]

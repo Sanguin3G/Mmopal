@@ -39,6 +39,7 @@ public sealed partial class WorkerRuntime
     private DateTimeOffset? _deliveryEmptySinceUtc;
     private static readonly TimeSpan DeliveryEmptyMeansLocked = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan DeliveryStuckBeforeSwap = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan RelistNeedsTimeLeft = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MinTimeBetweenDeliverySwaps = TimeSpan.FromMinutes(60);
     // Logging out and in repeatedly gets the account disconnected by the server ("lost its connection ... wait a
     // few minutes before restarting", Code=7:11:3:202:101 after ~12 swaps in 40 minutes).

@@ -309,10 +309,13 @@ public sealed partial class Gw2TradingPostUiDriver
                 : null;
             _pendingSlot = null;
             var byStock = false;
+            string? readName = null;
             if (chosen is null && _settings.ParkedCharacterCount > 1 &&
                 PreferredCharacterNames.Where(name => !CharacterStock.NamesMatch(name, CurrentCharacterName)).ToArray() is { Length: > 0 } preferred)
             {
-                chosen = (await FindPortraitByNameAsync(preferred, _settings.ParkedCharacterCount, cancellationToken).ConfigureAwait(false))?.Offset;
+                var portrait = await FindPortraitByNameAsync(preferred, _settings.ParkedCharacterCount, cancellationToken).ConfigureAwait(false);
+                chosen = portrait?.Offset;
+                readName = portrait?.Name;
                 byStock = chosen is not null;
             }
 
@@ -332,16 +335,19 @@ public sealed partial class Gw2TradingPostUiDriver
                 CenterY(charPlay),
                 byStock ? " (it holds the most unsold stock)"
                 : slotOffset > 0 ? $" instead of the last played character '{previousName ?? "?"}'" : string.Empty);
-            if (_requireTemplateFilesOnDisk || slotOffset > 0)
+            if (_requireTemplateFilesOnDisk || slotOffset > 0 || byStock)
             {
                 // Select the portrait first (also focuses it on slow fades) before clicking Play.
                 await _input.ClickAsync(portraitX, portraitY, cancellationToken).ConfigureAwait(false);
                 await SettleShortAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            // Slot #1 and a portrait picked by name count too: with the name dropped there, 15 searches of the run on 24 Nov
+            // were for items in the other characters' bags.
             CurrentCharacterLabel = $"slot #{slotOffset + 1}";
             CurrentCharacterName = null;
-            if (slotOffset > 0 && await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false) is { } selectedName)
+            var shownName = await ReadSelectedCharacterNameAsync(cancellationToken).ConfigureAwait(false);
+            if ((shownName is null || CharacterStock.NamesMatch(readName, shownName) ? readName ?? shownName : shownName) is { } selectedName)
             {
                 CurrentCharacterLabel = $"'{selectedName}' (slot #{slotOffset + 1})";
                 CurrentCharacterName = selectedName;

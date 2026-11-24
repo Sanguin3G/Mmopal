@@ -513,6 +513,12 @@ public sealed partial class Gw2TradingPostUiDriver
                 }
             }
 
+            if (!shown && requireListedName && await OnlyRowHasOrderPriceAsync(cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogInformation("'{Item}' is not readable in My Transactions; the only row has its price, which no other order has.", itemName);
+                shown = true;
+            }
+
             if (shown)
             {
                 _searchConfirmStats[query] = (stats.Seen + 1, stats.Missed);
@@ -544,6 +550,33 @@ public sealed partial class Gw2TradingPostUiDriver
 
             await Task.Delay(Math.Max(_pollMs, 250), cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// The proof when the name cannot be read ("Super Loot Bag" reads as "I-mt Bag" but its 1g 30s 10c is clear, 24 Nov):
+    /// one row only, at exactly the price of the order to cancel, which no other order in the list has.
+    /// </summary>
+    private async Task<bool> OnlyRowHasOrderPriceAsync(CancellationToken cancellationToken)
+    {
+        if (_cancelRowPrice is not { } price ||
+            await TryFindOnceAsync("transactions_cancel.png", TransactionSecondCancelRegion, 0.60m, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return false;
+        }
+
+        var texts = await ReadTextVariantsAsync(TransactionFirstPriceRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false);
+        return RowShowsPrice(texts, price);
+    }
+
+    /// <summary>
+    /// True when a read is exactly this price with every number shown, and none shows more numbers: 1g 30s 10c was read
+    /// as "30. IO." once and as "1.30. 10." on the larger copy.
+    /// </summary>
+    internal static bool RowShowsPrice(IEnumerable<string> texts, long price)
+    {
+        long[] expected = price >= 10_000 ? [price / 10_000, price / 100 % 100, price % 100] : [price / 100, price % 100];
+        var reads = texts.Select(text => ParseGroupValues(PriceDigitGroups(text)) ?? []).ToArray();
+        return reads.All(seen => seen.Count <= expected.Length) && reads.Any(seen => seen.SequenceEqual(expected));
     }
 
     /// <summary>Where to read the searched name, narrowest crop that can hold it first.</summary>

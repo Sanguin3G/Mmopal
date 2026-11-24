@@ -148,6 +148,43 @@ public sealed partial class LiveTradingExecutorTests
         Assert.DoesNotContain(input.Clicks, c => c == (601, 315)); // never taps the down spinner in typed mode
     }
 
+    [Theory]
+    [InlineData(true)]   // known to the pass, but the API gave no price
+    [InlineData(false)]
+    public async Task Nothing_is_listed_without_a_price_to_check_it_against(bool hasEntry)
+    {
+        // 24 Nov: with the API down, four items were listed by the arrows, with no break-even check.
+        var input = new FakeInputController();
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(),
+            new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["items_tab.png"] = new(710, 75, 58, 63, 1.00m),
+                ["search.png"] = new(74, 191, 44, 16, 1.00m),
+                ["item.png"] = new(389, 182, 37, 18, 0.95m),
+                ["currentSellers.png"] = new(535, 466, 123, 24, 1.00m),
+                ["ListThisItem.png"] = new(392, 396, 110, 18, 0.95m)
+            }),
+            input,
+            new FakeWindowController(),
+            string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0),
+            NullLogger.Instance,
+            pollIntervalMs: 5,
+            requireTemplateFilesOnDisk: false);
+        var pricing = new Dictionary<string, SellPricing>(StringComparer.OrdinalIgnoreCase);
+        if (hasEntry)
+        {
+            pricing["Carbonized Mithrillium Ingot"] = new(ApiLowestAskCopper: null, BreakEvenCopper: 15_740);
+        }
+
+        var results = await driver.SellInventoryPassDetailedAsync(["Carbonized Mithrillium Ingot"], 3, 1, 1, CancellationToken.None, pricing);
+
+        Assert.Equal(SellPassItemOutcome.SkippedError, Assert.Single(results).Outcome);
+        Assert.Empty(input.TextsSent);
+        Assert.DoesNotContain((447, 405), input.Clicks); // List This Item
+    }
+
     [Fact]
     public async Task SellInventoryPassAsync_NeverSellsUnfilteredItems_AndSearchesOnlyAllowedFlipItems()
     {

@@ -189,7 +189,9 @@ public sealed partial class WorkerRuntime
 
         if (IsPauseRequested) return CycleStep.NextCycle;
 
-        if (driver is not null && session.Client.RelistStaleUndercutSells && result.Market is not null)
+        // A cancelled listing needs the next cycle to go back up: none in the last minutes of a timed session.
+        if (driver is not null && session.Client.RelistStaleUndercutSells && result.Market is not null &&
+            !session.Cap.IsExpired(_utcNow() + RelistNeedsTimeLeft))
         {
             await RelistStaleUndercutSellsAsync(session, driver, result.Market.Transactions, cancellationToken).ConfigureAwait(false);
             MarkStep(session, "relist");

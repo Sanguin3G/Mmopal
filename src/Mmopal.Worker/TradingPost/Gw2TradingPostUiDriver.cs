@@ -93,6 +93,11 @@ public sealed partial class Gw2TradingPostUiDriver
     // and Elder Draco-Pop, Reclaimed Torch and Rune of the Renegade 4-5 times each without cancelling anything.
     // Normalized names of every order in the list a cancel flow searches (null outside those flows).
     private IReadOnlyCollection<string>? _cancelListNames;
+    // The unit price of the order being cancelled when no other order in that list has it (null outside those flows).
+    private long? _cancelRowPrice;
+    // My Transactions: the first row's Price column, and where the second row's Cancel button would be.
+    private static readonly CaptureRegion TransactionFirstPriceRegion = new(740, 258, 110, 30);
+    private static readonly CaptureRegion TransactionSecondCancelRegion = new(885, 300, 95, 70);
     private const int LongestSearchText = 60;
     private const int LongestNumberText = 6;
     // Per list (Buying or Selling): a missing buy order says nothing about a listing of the same item.

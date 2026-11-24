@@ -168,6 +168,7 @@ public sealed partial class Gw2TradingPostUiDriver
             cancellationToken.ThrowIfCancellationRequested();
             if (IsPaused) break;
             await DismissTransientPopupAsync("Outbid Refresh", cancellationToken).ConfigureAwait(false);
+            _cancelRowPrice = UniquePrice(order, transactions);
             if (!await SearchItemAsync(order.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
             {
                 continue;
@@ -212,6 +213,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         _cancelListNames = null;
+        _cancelRowPrice = null;
         LastCanceledOutbidItems = canceledNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         LastCanceledStaleItems = staleNames;
         return canceledNames.Count + staleNames.Count;
@@ -254,6 +256,7 @@ public sealed partial class Gw2TradingPostUiDriver
             cancellationToken.ThrowIfCancellationRequested();
             if (IsPaused) break;
             await DismissTransientPopupAsync("Relist", cancellationToken).ConfigureAwait(false);
+            _cancelRowPrice = UniquePrice(relist.Listing, orders);
             if (!await SearchItemAsync(relist.Listing.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
             {
                 continue;
@@ -280,8 +283,13 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         _cancelListNames = null;
+        _cancelRowPrice = null;
         return canceledNames;
     }
+
+    /// <summary>The order's unit price when no other order in its list has the same one.</summary>
+    internal static long? UniquePrice(Transaction order, IEnumerable<Transaction> orders) =>
+        orders.Count(other => other.Type == order.Type && other.PriceCopper == order.PriceCopper) == 1 ? order.PriceCopper : null;
 
     private static string[] OwnNames(IEnumerable<Transaction> orders, TransactionType type) =>
         orders

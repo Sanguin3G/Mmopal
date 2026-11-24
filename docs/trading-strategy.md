@@ -49,7 +49,8 @@ Background: [GW2 Wiki](https://wiki.guildwars2.com/wiki/TP), [AuricDB](https://a
 
 | Rule | Detail |
 | --- | --- |
-| Ask not far above the API | A live lowest ask 6% above the API's is not used; the API's is. |
+| Ask close to the API | A live lowest ask 6% above the API's, or 15% below, is not used; the API's is. |
+| No price, no listing | Without an API price to check against, an item is held. |
 | Never below cost | Held until the price covers the highest price paid plus fees. |
 | Do not undercut yourself | When the lowest listing is ours, a new unit joins it at the same price. |
 | Relist rarely | Only when undercut for 12 h+, the item still trades, not relisted in 24 h, and the new price still covers cost plus the lost 5%. With several listings, all must qualify. At most 2 per pass. |

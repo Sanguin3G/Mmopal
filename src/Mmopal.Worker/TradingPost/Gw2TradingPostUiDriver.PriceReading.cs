@@ -21,7 +21,9 @@ public sealed partial class Gw2TradingPostUiDriver
         var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(1_500, Math.Min(_uiWaitMs, 4_000)));
         // The top row and nothing below it: with that row unreadable, the next one used to pass as the best price (24 Nov:
         // a listing went up at 1g 84s 98c, the lowest ask being 1g 58s 85c). Unreadable means the API price is used.
+        var wholeList = listRegion;
         listRegion = listRegion with { Height = Math.Min(listRegion.Height, TopRowHeight) };
+        var topRowEnd = listRegion.Y + listRegion.Height;
         while (true)
         {
             try
@@ -39,28 +41,28 @@ public sealed partial class Gw2TradingPostUiDriver
 
                 if (frame.Pixels.Length > 0 && _textLocator is not null)
                 {
-                    var variants = new List<IReadOnlyList<OcrTextBox>>
+                    // The whole list reads better than the strip of one row, which lost "1g 44s" of "1g 44s 81c" (24 Nov); the
+                    // rows below are dropped by position.
+                    foreach (var region in new[] { wholeList, listRegion })
                     {
-                        await _textLocator.LocateLinesAsync(frame, listRegion, cancellationToken).ConfigureAwait(false)
-                    };
-                    if (FrameVision.EnhanceTextContrast(frame, listRegion) is { } enhanced)
-                    {
-                        var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
-                        variants.Add(lines
-                            .Select(line => line with { X = listRegion.X + line.X / 2, Y = listRegion.Y + line.Y / 2 })
-                            .ToArray());
-                    }
-
-                    foreach (var lines in variants)
-                    {
-                        var top = lines
-                            .Where(line => line.X >= priceColumnMinX)
-                            .OrderBy(line => line.Y)
-                            .Select(line => ParseBuyerRowPrice(line.Text, hintCopper))
-                            .FirstOrDefault(price => price is not null);
-                        if (top is not null)
+                        var variants = new List<IReadOnlyList<OcrTextBox>>
                         {
-                            return top;
+                            await _textLocator.LocateLinesAsync(frame, region, cancellationToken).ConfigureAwait(false)
+                        };
+                        if (FrameVision.EnhanceTextContrast(frame, region) is { } enhanced)
+                        {
+                            var lines = await _textLocator.LocateLinesAsync(enhanced, enhanced.Region, cancellationToken).ConfigureAwait(false);
+                            variants.Add(lines
+                                .Select(line => line with { X = region.X + line.X / 2, Y = region.Y + line.Y / 2, Height = line.Height / 2 })
+                                .ToArray());
+                        }
+
+                        foreach (var lines in variants)
+                        {
+                            if (TopRowPrice(lines, priceColumnMinX, topRowEnd, hintCopper) is { } top)
+                            {
+                                return top;
+                            }
                         }
                     }
                 }
@@ -79,10 +81,24 @@ public sealed partial class Gw2TradingPostUiDriver
         }
     }
 
+    /// <summary>The price in the list's top row: its pieces joined left to right, else one piece on its own.</summary>
+    internal static long? TopRowPrice(IReadOnlyList<OcrTextBox> lines, int priceColumnMinX, int topRowEnd, long hintCopper)
+    {
+        var row = lines
+            .Where(line => line.X >= priceColumnMinX && line.Y + line.Height / 2 < topRowEnd)
+            .OrderBy(line => line.X)
+            .Select(line => line.Text)
+            .ToArray();
+        return ParseBuyerRowPrice(string.Join(" ", row), hintCopper)
+               ?? row.Select(text => ParseBuyerRowPrice(text, hintCopper)).FirstOrDefault(price => price is not null);
+    }
+
     /// <summary>
     /// Parses a Current Buyers price cell. Zero leading units are omitted and the coin icons read as dots, so two
-    /// numbers can be gold+silver or silver+copper; the interpretation closest to the API hint wins, and only within
-    /// half to double of it (anything else is a misread or a different row).
+    /// numbers can be gold+silver or silver+copper; the interpretation closest to the API hint wins, and only from 85%
+    /// to double of it (anything else is a misread or a different row). With fewer numbers than the API's price has, some
+    /// were lost unless it is that very price: the "81" of 1g 44s 81c passed as 81s, the "5" of 5g 99s 93c as 5g, and a
+    /// listing went up 1g too low (24 Nov).
     /// </summary>
     internal static long? ParseBuyerRowPrice(string? text, long hintCopper)
     {
@@ -127,7 +143,12 @@ public sealed partial class Gw2TradingPostUiDriver
             .OrderBy(price => Math.Abs(Math.Log((double)price / hintCopper)))
             .Cast<long?>()
             .FirstOrDefault();
-        return best is { } chosen && chosen * 2 >= hintCopper && chosen <= hintCopper * 2 ? chosen : null;
+        var numbersExpected = hintCopper >= 10_000 ? 3 : hintCopper >= 100 ? 2 : 1;
+        return best is { } chosen &&
+               chosen * 100 >= hintCopper * 85 && chosen <= hintCopper * 2 &&
+               (values.Count >= numbersExpected || chosen == hintCopper)
+            ? chosen
+            : null;
     }
 
     /// <summary>

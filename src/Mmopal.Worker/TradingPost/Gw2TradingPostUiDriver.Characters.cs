@@ -86,7 +86,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
         var who = selectedName is null ? $"slot #{slotOffset + 1}" : $"'{selectedName}' (slot #{slotOffset + 1})";
         CurrentCharacterLabel = who;
-        CurrentCharacterName = selectedName;
+        CurrentCharacterName = selectedName ?? named?.Name;
         var (reopened, openMsg) = await EnsureTradingPostOpenAsync(cancellationToken).ConfigureAwait(false);
         return reopened
             ? (true, $"Swapped to parked character {who} and reopened Trading Post.")

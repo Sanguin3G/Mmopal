@@ -176,12 +176,6 @@ public sealed partial class WorkerRuntime
         return collected;
     }
 
-    /// <summary>
-    /// Drops sell targets whose listing would not cover what was paid. The sell pass lists at the lowest ask minus
-    /// the undercut; after the 5% listing and 10% exchange fees that must still cover the most Mmopal paid for the
-    /// item (its planned buy price; else the shopping list's buy price). Held items stay queued and are rechecked
-    /// on later passes, so they list once the market recovers. Unknown cost or quote: listed as before.
-    /// </summary>
     /// <summary>Adds the lowest price of our own current listing of each item, so a new unit joins it instead of undercutting it.</summary>
     private static IReadOnlyDictionary<string, SellPricing> WithOwnListings(
         IReadOnlyDictionary<string, SellPricing> pricing,
@@ -197,6 +191,12 @@ public sealed partial class WorkerRuntime
             StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Drops sell targets whose listing would not cover what was paid. The sell pass lists at the lowest ask minus
+    /// the undercut; after the 5% listing and 10% exchange fees that must still cover the most Mmopal paid for the
+    /// item (its planned buy price; else the shopping list's buy price). Held items stay queued and are rechecked
+    /// on later passes, so they list once the market recovers. Unknown cost: listed as before. No quote: held.
+    /// </summary>
     private async Task<(IReadOnlyList<string> Targets, IReadOnlyDictionary<string, SellPricing> Pricing)> KeepProfitableSellTargetsAsync(
         IReadOnlyList<string> targets,
         IReadOnlyList<ItemCandidate> candidates,
@@ -240,16 +240,23 @@ public sealed partial class WorkerRuntime
                 long? breakEven = costs.TryGetValue(name.Trim(), out var knownCost) ? SellPricing.BreakEvenListingPrice(knownCost) : null;
                 pricing[name.Trim()] = new SellPricing(apiLowestAsk, breakEven);
 
-                if (!costs.TryGetValue(name.Trim(), out var cost) ||
-                    !ids.TryGetValue(name.Trim(), out var id) ||
-                    !quotes.TryGetValue(id, out var quote) ||
-                    quote.LowestSellCopper <= 0)
+                if (apiLowestAsk is not { } lowestAsk)
+                {
+                    if (NoteSellHold(name))
+                    {
+                        _logger.LogInformation("Holding {Item}: the API gave no price to check the listing against.", name);
+                    }
+
+                    continue;
+                }
+
+                if (!costs.TryGetValue(name.Trim(), out var cost))
                 {
                     keep.Add(name);
                     continue;
                 }
 
-                var listPrice = Math.Max(1, quote.LowestSellCopper - Math.Max(0, undercutMinCopper));
+                var listPrice = Math.Max(1, lowestAsk - Math.Max(0, undercutMinCopper));
                 var outcome = profitability.Evaluate(cost, listPrice, new ProfitabilityPolicy());
                 if (outcome.IsValid && outcome.ProfitCopper >= 0)
                 {
@@ -257,9 +264,8 @@ public sealed partial class WorkerRuntime
                     continue;
                 }
 
-                if (!_sellHoldLoggedUtc.TryGetValue(name, out var logged) || _utcNow() - logged > TimeSpan.FromMinutes(30))
+                if (NoteSellHold(name))
                 {
-                    _sellHoldLoggedUtc[name] = _utcNow();
                     _logger.LogInformation(
                         "Holding {Item}: listing at {List} would lose {Loss} after fees against the {Cost} paid; will retry when the price recovers.",
                         name,
@@ -273,9 +279,22 @@ public sealed partial class WorkerRuntime
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Sell profit check skipped for this pass.");
-            return (targets, pricing);
+            // 24 Nov: with the API down, everything was listed unchecked instead.
+            _logger.LogInformation("Nothing is listed this pass: the prices to check against could not be read ({Message}).", ex.Message);
+            return (Array.Empty<string>(), pricing);
         }
+    }
+
+    /// <summary>True when holding this item was not logged in the last 30 minutes.</summary>
+    private bool NoteSellHold(string name)
+    {
+        if (_sellHoldLoggedUtc.TryGetValue(name, out var logged) && _utcNow() - logged <= TimeSpan.FromMinutes(30))
+        {
+            return false;
+        }
+
+        _sellHoldLoggedUtc[name] = _utcNow();
+        return true;
     }
 
     /// <summary>

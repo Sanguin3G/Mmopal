@@ -195,14 +195,16 @@ public sealed partial class LiveTradingExecutorTests
         Assert.True(input.Clicks.IndexOf(slotFour) < input.Clicks.IndexOf((785, 734))); // portrait before Play
     }
 
-    [Fact]
-    public async Task TryAdvanceLauncherOrCharacterSelectAsync_on_launch_enters_the_character_holding_the_most_stock()
+    [Theory]
+    [InlineData("Johanne Shepard", 2)]
+    [InlineData("Janetta Shepard", 0)] // slot #1 (24 Nov: its name was dropped, and the bags of the others were searched for)
+    public async Task TryAdvanceLauncherOrCharacterSelectAsync_on_launch_enters_the_character_holding_the_most_stock(string holder, int slot)
     {
-        // Bags were read through the API before launch: Johanne (slot #3) holds the most unsold items. The slot rule
+        // Bags were read through the API before launch: the holder has the most unsold items. The slot rule
         // ("next", 5 parked) would enter slot #5.
         var input = new FakeInputController();
         var names = new[] { "Janetta Shepard", "Big Cheetos", "Johanne Shepard", "Calanthe F Riannon", "Mesmerising Rizzo" };
-        var johanne = (258 + 2 * 122, 640);
+        var portraitOfHolder = (258 + slot * 122, 640);
         var templates = new FakeTemplateMatcher();
         templates.DynamicMatches["charscreen_play.png"] = () =>
             input.Clicks.Contains((785, 734)) ? null : new TemplateMatch(750, 718, 71, 33, 0.97m);
@@ -224,14 +226,14 @@ public sealed partial class LiveTradingExecutorTests
             requireTemplateFilesOnDisk: false,
             textLocator: locator)
         {
-            PreferredCharacterNames = ["Johanne Shepard", "Mesmerising Rizzo"]
+            PreferredCharacterNames = [holder, "Mesmerising Rizzo"]
         };
 
         Assert.True(await driver.TryAdvanceLauncherOrCharacterSelectAsync());
 
-        Assert.Equal(johanne, input.Clicks.Last(c => c.Y == 640)); // last portrait selected before Play
-        Assert.True(input.Clicks.LastIndexOf(johanne) < input.Clicks.IndexOf((785, 734)));
-        Assert.Equal("Johanne Shepard", driver.CurrentCharacterName);
+        Assert.Equal(portraitOfHolder, input.Clicks.Last(c => c.Y == 640)); // last portrait selected before Play
+        Assert.True(input.Clicks.LastIndexOf(portraitOfHolder) < input.Clicks.IndexOf((785, 734)));
+        Assert.Equal(holder, driver.CurrentCharacterName);
     }
 
     [Fact]

@@ -95,6 +95,16 @@ public sealed partial class Gw2TradingPostUiDriver
             foreach (var targetItem in targets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                SellPricing? itemPricing = null;
+                pricing?.TryGetValue(targetItem, out itemPricing);
+                if (pricing is not null && _settings.TypesExactPrice && itemPricing?.ApiLowestAskCopper is not > 0)
+                {
+                    // Listing by the arrows checks neither the price nor break-even: four items went up that way while the
+                    // API was down, and one held for its loss was tried three times (24 Nov).
+                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, "No API price to check the listing against."));
+                    continue;
+                }
+
                 await DismissTransientPopupAsync("sell pass", cancellationToken).ConfigureAwait(false);
                 if (IsPaused || await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
                 {
@@ -171,8 +181,6 @@ public sealed partial class Gw2TradingPostUiDriver
                 }
 
                 await SettleAsync(cancellationToken).ConfigureAwait(false);
-                SellPricing? itemPricing = null;
-                pricing?.TryGetValue(targetItem, out itemPricing);
                 var typeSellPrice = _settings.TypesExactPrice && _textLocator is not null && itemPricing?.ApiLowestAskCopper is > 0;
                 long? liveLowestAsk = null;
                 if (typeSellPrice)
@@ -270,6 +278,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 }
                 else
                 {
+                    await SaveDiagnosticFrameAsync("list-button-missing", cancellationToken).ConfigureAwait(false);
                     results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, "List This Item button not detected."));
                 }
 
