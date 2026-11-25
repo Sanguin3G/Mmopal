@@ -122,7 +122,7 @@ public sealed class CheckpointStore
     /// Mmopal's completed live buy orders since a time: the item, when placing it finished (within seconds of the creation
     /// time GW2 records for the order) and the unit price.
     /// </summary>
-    public async Task<IReadOnlyList<(string ItemName, DateTimeOffset PlacedAt, long? UnitCopper)>> GetPlacedBuyOrdersAsync(
+    public async Task<IReadOnlyList<(string ItemName, DateTimeOffset PlacedAt, long? UnitCopper, long? Quantity)>> GetPlacedBuyOrdersAsync(
         DateTimeOffset sinceUtc,
         CancellationToken cancellationToken = default)
     {
@@ -134,7 +134,7 @@ public sealed class CheckpointStore
             WHERE action_type = 'PlaceBuyOrder' AND status = 'Completed' AND item_name IS NOT NULL AND created_at >= $since;
             """;
         command.Parameters.AddWithValue("$since", sinceUtc.ToUniversalTime().ToString("O"));
-        var orders = new List<(string, DateTimeOffset, long?)>();
+        var orders = new List<(string, DateTimeOffset, long?, long?)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -145,7 +145,11 @@ public sealed class CheckpointStore
                 long? unit = root.TryGetProperty("PlacedUnitPriceCopper", out var typed) && typed.ValueKind == System.Text.Json.JsonValueKind.Number
                     ? typed.GetInt64()
                     : null;
-                orders.Add((reader.GetString(0), root.GetProperty("CompletedAt").GetDateTimeOffset(), unit));
+                long? quantity = root.TryGetProperty("Action", out var action) && action.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                                 action.TryGetProperty("Quantity", out var count) && count.ValueKind == System.Text.Json.JsonValueKind.Number
+                    ? count.GetInt64()
+                    : null;
+                orders.Add((reader.GetString(0), root.GetProperty("CompletedAt").GetDateTimeOffset(), unit, quantity));
             }
             catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
             {

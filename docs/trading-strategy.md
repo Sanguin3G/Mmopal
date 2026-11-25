@@ -42,7 +42,7 @@ Background: [GW2 Wiki](https://wiki.guildwars2.com/wiki/TP), [AuricDB](https://a
 | Do not chase undercuts | An outbid order stays at least 20 minutes. 00:00–01:30 UTC, when sellers dump, none is cancelled, unless the gold cap is reached: then those outbid for an hour are. |
 | Drop what does not fill | A top bid unfilled after 24 hours is cancelled and the item waits 12 hours. 97% of fills come within 24 h. |
 | Leave bot wars | Outbid 3 times without a fill: 3 hours' pause, then 6, 12 and 24. A fill resets it. Outbid 6+ times in the last day without a fill: paused for the first 6 hours. |
-| Order size | The configured size, or 3% of a day's trades (10 at most) when the order costs no more than Max Buy. |
+| Order size | The configured size, or 3% of a day's trades (10 at most). Doubled (20 at most) for proven items: 3+ orders in 14 days, half of them filled completely, 4+ units sold at a profit, half within 4 hours; not while two orders' worth is listed. An order never costs more than Max Buy; sizes on your own list stay. |
 | Use idle gold | 5+ items waiting and a quarter of the gold idle: 5 per cycle and a 25 s pause until the backlog, the cap room or the gold is gone (not at Safe pace). Nothing to order for 5 cycles: items trading half as often are added, at most hourly. |
 
 **Selling**
@@ -50,17 +50,18 @@ Background: [GW2 Wiki](https://wiki.guildwars2.com/wiki/TP), [AuricDB](https://a
 | Rule | Detail |
 | --- | --- |
 | Ask close to the API | A live lowest ask 6% above the API's, or 15% below, is not used; the API's is. |
+| Never Sell Instantly | When a buyer offers the undercut price, the item is listed at the lowest ask itself. |
 | No price, no listing | Without an API price to check against, an item is held. |
 | Never below cost | Held until the price covers the highest price paid plus fees. |
 | Do not undercut yourself | When the lowest listing is ours, a new unit joins it at the same price. |
-| Relist rarely | Only when undercut for 12 h+, the item still trades, not relisted in 24 h, and the new price still covers cost plus the lost 5%. With several listings, all must qualify. At most 2 per pass. |
+| Relist rarely | Only when undercut for 12 h+, the item still trades (after 24 h, any item), not relisted in 24 h, and the new price still covers cost plus the lost 5%. With several listings, all must qualify. At most 2 per pass. |
 
 ## Auto-Tune
 
 Runs at launch and before each session, never during one (Settings → Trading & Portfolio).
 
-1. **Size from total gold:** Starter (< 100g), Balanced (< 1,000g) or High Capital; ~4–5% of capital per unit, 15%
-   reserve.
+1. **Size from total gold:** Starter (< 100g), Balanced (< 3,000g) or High Capital; ~4–5% of capital per unit, 8%
+   reserve (Starter 15%). High Capital drops everything under 1g: at 1,158g that was half of the profit.
 2. **Last 14 days** (10+ units sold):
 
    | Result | Change |

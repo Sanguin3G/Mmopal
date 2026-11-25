@@ -142,6 +142,11 @@ public sealed partial class Gw2TradingPostUiDriver
 
         var expected = TitleWords(expectedName);
         var seen = TitleWords(seenTitle);
+        if (!SameNumbers(expected, seen))
+        {
+            return false;
+        }
+
         if (expected.Length != seen.Length)
         {
             // OCR split or joined a word ("Shaman 5 Etched"): then the letters must agree closely and none may be missing.
@@ -152,11 +157,55 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             var (want, got) = (expected[i], seen[i]);
             if (want == got) continue;
-            if (want.Any(char.IsDigit) && got.Any(char.IsDigit)) return false;
+            if (want.Any(char.IsDigit) && got.Any(char.IsDigit))
+            {
+                if (AsDigits(got) != want) return false;
+                continue; // "1o" for 10
+            }
+
             if (Math.Max(want.Length, got.Length) >= 4 && NameSimilarity(want, got) < 0.5) return false;
         }
 
         return true;
+    }
+
+    /// <summary>The word with the letters OCR reads for digits put back ("1o" is 10).</summary>
+    private static string AsDigits(string word) => new(word.Select(c => c switch
+    {
+        'o' => '0',
+        'i' or 'l' => '1',
+        'z' => '2',
+        's' => '5',
+        'b' => '8',
+        _ => c
+    }).ToArray());
+
+    /// <summary>
+    /// False when the expected name has a number and the read shows another one: "Jade Bot Core: Tier 10" (22g) was
+    /// bought for "Tier 1" (80s) on 24 Nov, the "10" having been read as letters or joined to its word.
+    /// </summary>
+    private static bool SameNumbers(string[] expected, string[] seen)
+    {
+        var wanted = string.Concat(expected.SelectMany(word => word.Where(char.IsDigit)));
+        if (wanted.Length == 0)
+        {
+            return true; // "Shaman 5 Etched" for "Shaman's Etched"
+        }
+
+        var read = new List<char>();
+        for (var i = 0; i < seen.Length; i++)
+        {
+            var asDigits = AsDigits(seen[i]);
+            // Letters stand for digits inside a number ("1o"), or where the expected name has a number ("io" for "10").
+            var isNumber = seen[i].Any(char.IsDigit) ||
+                           (asDigits.All(char.IsDigit) && expected.Length == seen.Length && expected[i].All(char.IsDigit));
+            if (isNumber)
+            {
+                read.AddRange(asDigits.Where((c, at) => char.IsDigit(c) && (char.IsDigit(seen[i][at]) || asDigits.All(char.IsDigit))));
+            }
+        }
+
+        return read.Count == 0 || string.Concat(read) == wanted;
     }
 
     /// <summary>
@@ -290,7 +339,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 return false;
             }
 
-            (_, listed) = await TypeSearchAsync(itemName, again, requireListedName, cancellationToken).ConfigureAwait(false);
+            (typed, listed) = await TypeSearchAsync(itemName, again, requireListedName, cancellationToken).ConfigureAwait(false);
         }
 
         _lastSearchShowedName = listed;
@@ -307,11 +356,19 @@ public sealed partial class Gw2TradingPostUiDriver
         if (requireListedName && !listed)
         {
             _unconfirmedCancels.Add(itemName);
+            if (!typed)
+            {
+                // Neither the box nor the list took the search. A name that is merely hard to read shows in the box.
+                await NoteNoAnswerAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             var skips = NoteUnconfirmedCancel(itemName, 1);
             _logger.LogInformation(
                 "Not cancelling anything for '{Item}': the result list never showed it, so the first Cancel button could belong to another listing.{Note}",
                 itemName,
-                skips >= UnconfirmedCancelSearchesBeforeSkip ? " Not trying it again for an hour." : string.Empty);
+                skips >= UnconfirmedCancelSearchesBeforeSkip
+                    ? $" Not trying it again for {CancelRetryAfter(_cancelGiveUps.GetValueOrDefault($"{_cancelListType}|{itemName.Trim()}")).TotalHours:0} h."
+                    : string.Empty);
             return false;
         }
 
@@ -481,7 +538,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var query = NormalizeItemName(itemName);
         var timeoutMs = _requireTemplateFilesOnDisk ? Math.Max(_uiWaitMs, 4_000) : _uiWaitMs;
         var stats = _searchConfirmStats.GetValueOrDefault(query);
-        var neverConfirms = UsesShortSearchWait(stats.Seen, stats.Missed);
+        var neverConfirms = UsesShortSearchWait(stats.Seen, stats.Missed) || (!requireListedName && _unreadableNames.Contains(itemName.Trim()));
         if (neverConfirms)
         {
             timeoutMs = Math.Min(timeoutMs, ShortSearchWaitMs);

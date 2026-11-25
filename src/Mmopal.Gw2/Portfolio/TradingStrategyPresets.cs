@@ -47,7 +47,7 @@ public static class TradingStrategyPresets
             SwapCharacterHours: 2.5,
             Rationale: "Prioritizes 10–60% ROI items under 3g with 250+ supply/demand so capital rotates multiple times per night."),
         new TradingStrategyPreset(
-            Name: "Balanced (100g–1,000g)",
+            Name: "Balanced (100g–3,000g)",
             Description: "Diversified mid-tier flips balancing margin and turnover.",
             MinRoiPercent: 10m,
             MaxRoiPercent: 85m,
@@ -67,7 +67,7 @@ public static class TradingStrategyPresets
             SwapCharacterHours: 2.5,
             Rationale: "Caps single-item exposure around 20g, demands 100+ open depth, and keeps a coin reserve for 5% listing fees."),
         new TradingStrategyPreset(
-            Name: "High Capital (1,000g+)",
+            Name: "High Capital (3,000g+)",
             Description: "Higher unit-profit flips for deep bankrolls.",
             MinRoiPercent: 12m,
             MaxRoiPercent: 110m,
@@ -113,6 +113,12 @@ public static class TradingStrategyPresets
             ? null
             : All.FirstOrDefault(p => p.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Wallet kept back for listing fees. At 15% it held gold back on the nights when listings had filled up (24-25 Nov);
+    /// listing one order costs 5% of it, and sales come in all night.
+    /// </summary>
+    private const decimal ReserveShare = 0.08m;
+
     public static TradingStrategyPreset RecommendForCapital(long totalCapitalCopper)
     {
         var gold = Math.Max(0m, totalCapitalCopper / 10_000m);
@@ -129,11 +135,13 @@ public static class TradingStrategyPresets
             };
         }
 
-        if (gold < 1_000m)
+        // High Capital drops everything under 1g and under 50s profit and orders one unit at a time. At 1,158g (25 Nov) it
+        // would have kept 205g of the 421g earned so far, from 273 of 1,327 units.
+        if (gold < 3_000m)
         {
             var basePreset = All[1];
-            var maxBuy = Math.Clamp(Math.Round(gold * 0.04m, 0), 5m, 35m);
-            var floor = Math.Round(gold * 0.15m, 0);
+            var maxBuy = Math.Clamp(Math.Round(gold * 0.04m, 0), 5m, 120m);
+            var floor = Math.Round(gold * ReserveShare, 0);
             return basePreset with
             {
                 MaxBuyGold = maxBuy,
@@ -143,8 +151,8 @@ public static class TradingStrategyPresets
         }
 
         var highPreset = All[2];
-        var highMaxBuy = Math.Clamp(Math.Round(gold * 0.04m, 0), 35m, 150m);
-        var highFloor = Math.Round(gold * 0.15m, 0);
+        var highMaxBuy = Math.Clamp(Math.Round(gold * 0.04m, 0), 120m, 150m);
+        var highFloor = Math.Round(gold * ReserveShare, 0);
         return highPreset with
         {
             MaxBuyGold = highMaxBuy,

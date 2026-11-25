@@ -22,9 +22,11 @@ public sealed partial class LiveTradingExecutorTests
         var templates = new FakeTemplateMatcher();
         templates.DynamicMatches["take_all.png"] = () =>
             input.Clicks.Contains((139, 688)) ? new TemplateMatch(161, 704, 61, 16, 1.00m) : null;
-        var locator = new FakeUiTextLocator(region => region.X == 60
-            ? [new OcrTextBox("! Delivery Box", 89, 681, 100, 15), new OcrTextBox("Items: 1", 86, 702, 48, 10)]
-            : Array.Empty<OcrTextBox>());
+        var locator = new FakeUiTextLocator(region => region.X != 60
+            ? Array.Empty<OcrTextBox>()
+            : input.Clicks.Contains((191, 712))
+                ? [new OcrTextBox("When you buy or sell on the Trading", 80, 538, 220, 15)]
+                : [new OcrTextBox("! Delivery Box", 89, 681, 100, 15), new OcrTextBox("Items: 1", 86, 702, 48, 10)]);
         var driver = new Gw2TradingPostUiDriver(
             new FakeScreenshotProvider { CustomFrameFactory = _ => blank },
             templates,
@@ -40,6 +42,77 @@ public sealed partial class LiveTradingExecutorTests
         Assert.True(await driver.CollectDeliveryBoxAsync());
         Assert.Equal([(139, 688), (191, 712)], input.Clicks); // expand header, then Take All
     }
+
+    private static Gw2TradingPostUiDriver FrozenDriver(FakeInputController input, FakeTemplateMatcher templates, params string[] panel) => new(
+        new FakeScreenshotProvider { CustomFrameFactory = _ => new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4) },
+        templates,
+        input,
+        new FakeWindowController(),
+        templateRoot: string.Empty,
+        new Gw2ClientSettings(UiLoadWaitMs: 40, ActionSettleDelayMs: 0),
+        NullLogger.Instance,
+        pollIntervalMs: 5,
+        requireTemplateFilesOnDisk: false,
+        textLocator: new FakeUiTextLocator(region => region.X == 60 ? panel.Select((text, i) => new OcrTextBox(text, 89, 475 + i * 20, 100, 15)).ToArray() : []));
+
+    [Fact]
+    public async Task CollectDeliveryBoxAsync_DoesNotCountAPickupThatLeftTheBoxAsItWas()
+    {
+        // 24 Nov, frozen Trading Post: seven pickups were counted while the box grew from 2g 67s to 50g 34s.
+        var input = new FakeInputController();
+        var driver = FrozenDriver(
+            input,
+            new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase) { ["take_all.png"] = new(161, 704, 61, 16, 1.00m) }),
+            "Delivery Box", "Items: 5", "Funds: 2 67 88");
+
+        Assert.False(await driver.CollectDeliveryBoxAsync());
+        Assert.Contains((191, 712), input.Clicks);
+        Assert.False(driver.DeliveryNeedsTraderNpc);
+    }
+
+    [Fact]
+    public async Task Item_windows_that_do_not_open_mark_the_Trading_Post_as_frozen()
+    {
+        var input = new FakeInputController();
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["buy_items_tab.png"] = new(527, 101, 77, 30, 0.95m),
+            ["search.png"] = new(74, 191, 44, 16, 1.00m),
+            ["item.png"] = new(389, 220, 37, 18, 0.95m),
+            ["at_trading_post.png"] = new(490, 40, 90, 20, 0.95m)
+        });
+        var opens = false;
+        templates.DynamicMatches["currentBuyers.png"] = () => opens ? new TemplateMatch(254, 452, 120, 24, 1.00m) : null;
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider(), templates, input, new FakeWindowController(), string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 40, ActionSettleDelayMs: 0), NullLogger.Instance, pollIntervalMs: 5, requireTemplateFilesOnDisk: false);
+        TradingAction Order(string item) => new(TradingActionKind.PlaceBuyOrder, item, 5_000, 1, "test");
+
+        var messages = new List<string?>();
+        foreach (var item in new[] { "Reclaimed Torch", "Thesis on Masterful Strength", "Ruby Orichalcum Amulet", "Twin Sisters" })
+        {
+            messages.Add((await driver.PlaceBuyOrderAsync(Order(item), 1, 1)).Message);
+        }
+
+        Assert.All(messages.Take(3), message => Assert.Contains("did not open", message, StringComparison.Ordinal));
+        Assert.True(driver.LooksFrozen);
+        Assert.Contains("does not answer", messages[3], StringComparison.Ordinal); // not tried any more
+        Assert.DoesNotContain("Twin Sisters", input.TextsSent);
+
+        driver.ForgetFrozen();
+        opens = true;
+        _ = await driver.PlaceBuyOrderAsync(Order("Twin Sisters"), 1, 1);
+        Assert.False(driver.LooksFrozen);
+        Assert.Contains("Twin Sisters", input.TextsSent);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(4, 8)]
+    [InlineData(9, 16)]
+    public void A_cancel_given_up_again_and_again_waits_longer(int giveUps, int hours) =>
+        Assert.Equal(TimeSpan.FromHours(hours), Gw2TradingPostUiDriver.CancelRetryAfter(giveUps));
 
     [Fact]
     public async Task CollectDeliveryBoxAsync_DoesNotClaimAPickupWhenTheBoxNeedsATraderNpc()

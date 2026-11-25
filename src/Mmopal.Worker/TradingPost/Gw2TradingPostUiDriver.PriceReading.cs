@@ -19,6 +19,7 @@ public sealed partial class Gw2TradingPostUiDriver
     private async Task<long?> ReadTopListPriceAsync(CaptureRegion listRegion, int priceColumnMinX, long hintCopper, CancellationToken cancellationToken)
     {
         var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(1_500, Math.Min(_uiWaitMs, 4_000)));
+        _topRowByShape = null;
         // The top row and nothing below it: with that row unreadable, the next one used to pass as the best price (24 Nov:
         // a listing went up at 1g 84s 98c, the lowest ask being 1g 58s 85c). Unreadable means the API price is used.
         var wholeList = listRegion;
@@ -31,12 +32,14 @@ public sealed partial class Gw2TradingPostUiDriver
                 var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
                 // Digit shapes first: the price column only (the "Ordered"/"Available" text is left of it).
                 var priceColumn = new CaptureRegion(priceColumnMinX + 8, listRegion.Y, listRegion.X + listRegion.Width - priceColumnMinX - 8, listRegion.Height);
-                if (frame.Pixels.Length > 0 &&
-                    CoinPriceReader.ReadFirst(frame, priceColumn) is { } glyphPrice &&
-                    // Tighter than the OCR window: a shape read goes straight into the typed price.
-                    Math.Abs(glyphPrice.Copper - hintCopper) <= hintCopper * 0.15)
+                if (frame.Pixels.Length > 0 && CoinPriceReader.ReadFirst(frame, priceColumn) is { } glyphPrice)
                 {
-                    return glyphPrice.Copper;
+                    _topRowByShape = glyphPrice.Copper;
+                    // Tighter than the OCR window: a shape read goes straight into the typed price.
+                    if (Math.Abs(glyphPrice.Copper - hintCopper) <= hintCopper * 0.15)
+                    {
+                        return glyphPrice.Copper;
+                    }
                 }
 
                 if (frame.Pixels.Length > 0 && _textLocator is not null)
@@ -80,6 +83,21 @@ public sealed partial class Gw2TradingPostUiDriver
             await Task.Delay(Math.Max(_pollMs, 300), cancellationToken).ConfigureAwait(false);
         }
     }
+
+    // The top row's price as the digit shapes read it, however far from the API's.
+    private long? _topRowByShape;
+
+    /// <summary>
+    /// Why the open window must be another item's: its top row clearly reads a price far from the API's (over double or
+    /// under half). Falling back to the API price there would order, or worse list, a 22g item at 80s.
+    /// </summary>
+    private string? WrongItemPrice(string itemName, long apiCopper) =>
+        _topRowByShape is { } shown && IsAnotherItemsPrice(shown, apiCopper)
+            ? $"the window for '{itemName}' shows {MarketScanItem.FormatCoins(shown)} where the API says {MarketScanItem.FormatCoins(apiCopper)}; it may be a different item."
+            : null;
+
+    internal static bool IsAnotherItemsPrice(long shownCopper, long apiCopper) =>
+        shownCopper > 0 && apiCopper > 0 && (shownCopper > apiCopper * 2 || shownCopper * 2 < apiCopper);
 
     /// <summary>The price in the list's top row: its pieces joined left to right, else one piece on its own.</summary>
     internal static long? TopRowPrice(IReadOnlyList<OcrTextBox> lines, int priceColumnMinX, int topRowEnd, long hintCopper)
@@ -171,6 +189,13 @@ public sealed partial class Gw2TradingPostUiDriver
 
             // Digit shapes first: exact, and immune to the OCR failures below. OCR stays as the fallback.
             var glyphs = await ReadTotalByGlyphsAsync(cancellationToken).ConfigureAwait(false);
+            if (glyphs.Reading is { } early && !IsWholeMultiple(early.Copper, unitCopper, maxQuantity))
+            {
+                // The Total follows the boxes late when the game lags (13 times on 25 Nov): look again before re-typing.
+                await Task.Delay(_requireTemplateFilesOnDisk ? 800 : 0, cancellationToken).ConfigureAwait(false);
+                glyphs = await ReadTotalByGlyphsAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             if (glyphs.Reading is { } glyphTotal && IsWholeMultiple(glyphTotal.Copper, unitCopper, maxQuantity))
             {
                 return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (read by digit shapes: {glyphTotal.Text})" +
@@ -249,6 +274,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
         }
 
+        await SaveDiagnosticFrameAsync("total-mismatch", cancellationToken).ConfigureAwait(false);
         return (false, $"typed {MarketScanItem.FormatCoins(unitCopper)} twice but the dialog total shows {MarketScanItem.FormatCoins(lastSeen ?? 0)}; the price boxes did not take the typed value.");
 
         static string JoinReads(IReadOnlyList<string> reads) => string.Join(" | ", reads.Select(read => read.Trim()));

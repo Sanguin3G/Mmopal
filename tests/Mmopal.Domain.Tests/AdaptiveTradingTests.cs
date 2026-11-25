@@ -205,6 +205,79 @@ public sealed class AdaptiveTradingTests
     }
 
     [Fact]
+    public void After_a_day_an_item_off_the_list_is_relisted_too_when_it_still_pays()
+    {
+        var orders = new[]
+        {
+            Listing("Mini Undead Chicken", 169_798, 148_997, 60), // off the list for days, 5 g profit waiting
+            Listing("Off The List", 13_000, 12_500, 20),          // not a day old yet
+            Listing("Magi's Insignia", 6_630, 4_455, 60),         // the market is below its cost
+        };
+        var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase) { ["Mini Undead Chicken"] = 79_216, ["Off The List"] = 9_000, ["Magi's Insignia"] = 4_182 };
+
+        var picks = SellRelistPolicy.Select(orders, paid, new HashSet<string>(), new Dictionary<string, DateTimeOffset>(), undercutCopper: 1, Now, maxPerPass: 5);
+
+        Assert.Equal("Mini Undead Chicken", Assert.Single(picks).Listing.ItemName);
+    }
+
+    private static (List<PlacedBuyOrder> Placed, List<Gw2LedgerTransaction> History) Record(string item, int orders, int filled, double sellHours, long sellPrice)
+    {
+        var placed = new List<PlacedBuyOrder>();
+        var history = new List<Gw2LedgerTransaction>();
+        for (var i = 0; i < orders; i++)
+        {
+            var at = Now.AddHours(-40 + i * 3);
+            placed.Add(new PlacedBuyOrder(item, at, 10_000, 2));
+            if (i >= filled) continue;
+            history.Add(new(i * 2 + 1, TransactionType.Buy, 1, item, 10_000, 2, at.AddSeconds(2), at.AddHours(1)));
+            history.Add(new(i * 2 + 2, TransactionType.Sell, 1, item, sellPrice, 2, at.AddHours(1), at.AddHours(1 + sellHours)));
+        }
+
+        return (placed, history);
+    }
+
+    [Theory]
+    [InlineData(4, 3, 1.0, 14_000, true)]
+    [InlineData(2, 2, 1.0, 14_000, false)]  // too few orders
+    [InlineData(6, 2, 1.0, 14_000, false)]  // most orders do not fill
+    [InlineData(4, 3, 9.0, 14_000, false)]  // sells slowly
+    [InlineData(4, 3, 1.0, 11_000, false)]  // sells below cost after fees
+    public void Items_that_fill_completely_and_sell_fast_are_proven(int orders, int filled, double sellHours, long sellPrice, bool expected)
+    {
+        var (placed, history) = Record("Unstable Rift Motivation", orders, filled, sellHours, sellPrice);
+
+        Assert.Equal(expected, ProvenItems.Find(placed, history, Now).Contains(ItemNameNormalizer.Normalize("Unstable Rift Motivation")));
+    }
+
+    [Fact]
+    public void A_fresh_order_does_not_count_against_an_item()
+    {
+        var (placed, history) = Record("Arms of the People", 3, 3, 1, 14_000);
+        for (var i = 0; i < 4; i++) placed.Add(new PlacedBuyOrder("Arms of the People", Now.AddMinutes(-10 - i), 10_000, 2));
+
+        Assert.NotEmpty(ProvenItems.Find(placed, history, Now));
+    }
+
+    [Fact]
+    public void Proven_items_get_double_orders_within_the_budget_unless_their_stock_still_stands()
+    {
+        var proven = new[] { "Arms of the People", "+10 Agony Infusion", "Pyre Dye", "My Own Item" }.Select(name => ItemNameNormalizer.Normalize(name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ItemCandidate[] candidates =
+        [
+            new("Arms of the People", Quantity: 2, BuyPriceCopper: 2_600),
+            new("+10 Agony Infusion", Quantity: 2, BuyPriceCopper: 72_000), // three fit into 26g
+            new("Pyre Dye", Quantity: 2, BuyPriceCopper: 7_600),            // four listed
+            new("My Own Item", Quantity: 5, BuyPriceCopper: 1_000),         // the player's list
+            new("Ebonblade", Quantity: 2, BuyPriceCopper: 2_000)
+        ];
+        Transaction[] orders = [new(TransactionType.Sell, "Pyre Dye", 12_000, 4, Now, null, null)];
+
+        var sized = ProvenItems.Enlarge(candidates, proven, orders, ["My Own Item"], 2, 262_000);
+
+        Assert.Equal([4L, 3L, 2L, 5L, 2L], sized.Select(candidate => candidate.Quantity!.Value));
+    }
+
+    [Fact]
     public void Items_on_another_character_wait_for_a_character_change()
     {
         var tracker = new PendingSellInventoryTracker();

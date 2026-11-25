@@ -23,8 +23,8 @@
                 <WrapPanel Margin="0,0,0,10" VerticalAlignment="Center">
                     <TextBlock Text="PRESETS:" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" Margin="0,0,10,4" />
                     <Button Content="Starter (&lt; 100g)" CommandParameter="Starter (&lt; 100g)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
-                    <Button Content="Balanced (100g–1k)" CommandParameter="Balanced (100g–1,000g)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
-                    <Button Content="High Capital (1k+)" CommandParameter="High Capital (1,000g+)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
+                    <Button Content="Balanced (100g–3k)" CommandParameter="Balanced (100g–3,000g)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
+                    <Button Content="High Capital (3k+)" CommandParameter="High Capital (3,000g+)" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,6,4" />
                     <Button Content="High-Volume Safe" CommandParameter="High-Volume Safe" Click="ApplyScannerPreset_Click" Padding="10,5" FontSize="11.5" Margin="0,0,10,4" />
                     <Button x:Name="AutoTuneScannerButton" Content="Auto-Tune from Wallet" Tag="&#xE9D9;" Click="AutoTuneForWallet_Click" Padding="10,5" FontSize="11.5" Margin="0,0,0,4" />
                 </WrapPanel>

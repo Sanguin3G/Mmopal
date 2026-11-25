@@ -238,9 +238,10 @@ public sealed partial class Gw2TradingPostUiDriver
             return false;
         }
 
+        var panelText = string.Empty;
         if (_textLocator is not null)
         {
-            var panelText = NormalizeItemName(string.Join(" ", await ReadTextVariantsAsync(DeliveryPanelRegion, cancellationToken).ConfigureAwait(false)));
+            panelText = NormalizeItemName(string.Join(" ", await ReadTextVariantsAsync(DeliveryPanelRegion, cancellationToken).ConfigureAwait(false)));
             if (FuzzyContains(panelText, "whenyoubuyorsell"))
             {
                 // An empty box explains itself with the same "speak to a Black Lion Trading Company NPC" words. It was read
@@ -256,7 +257,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 // 6g 49s"), and 244 of 358 such reads were coins only. Away from a trader Take All does nothing, so click
                 // it and see whether the box empties.
                 await ClickCenterAndSettleAsync(takeAll, cancellationToken).ConfigureAwait(false);
-                if (await DeliveryBoxEmptiedAsync(cancellationToken).ConfigureAwait(false))
+                if (await DeliveryBoxChangedAsync(null, cancellationToken).ConfigureAwait(false))
                 {
                     return true;
                 }
@@ -268,16 +269,28 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         await ClickCenterAndSettleAsync(takeAll, cancellationToken).ConfigureAwait(false);
-        return true;
+        if (_textLocator is null || panelText.Length < 8 || await DeliveryBoxChangedAsync(panelText, cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        // 24 Nov: with the Trading Post frozen, the click did nothing and the pickup was counted all the same, seven times.
+        _logger.LogInformation("Take All did not empty the Delivery Box; nothing is counted as collected.");
+        await NoteNoAnswerAsync(cancellationToken).ConfigureAwait(false);
+        return false;
     }
 
-    private async Task<bool> DeliveryBoxEmptiedAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// True once the panel shows the text of an empty box or, given what it said <paramref name="before"/> the click,
+    /// something clearly different (a new sale can arrive at that moment).
+    /// </summary>
+    private async Task<bool> DeliveryBoxChangedAsync(string? before, CancellationToken cancellationToken)
     {
         var deadline = _utcNow() + TimeSpan.FromMilliseconds(Math.Max(_uiWaitMs / 2, _pollMs));
         while (true)
         {
             var text = NormalizeItemName(string.Join(" ", await ReadTextVariantsAsync(DeliveryPanelRegion, cancellationToken).ConfigureAwait(false)));
-            if (FuzzyContains(text, "whenyoubuyorsell"))
+            if (FuzzyContains(text, "whenyoubuyorsell") || (before is not null && NameSimilarity(before, text) < 0.7))
             {
                 return true;
             }
@@ -341,6 +354,15 @@ public sealed partial class Gw2TradingPostUiDriver
         _dialogShiftY = 0;
         anchor = await WaitUntilStillAsync(anchor, anchorTemplate, minScore, cancellationToken).ConfigureAwait(false);
         _openDialogAnchor = anchor is null ? null : (anchorTemplate, anchor.Y);
+        if (anchor is null)
+        {
+            await NoteNoAnswerAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            NoteAnswer();
+        }
+
         return anchor;
     }
 

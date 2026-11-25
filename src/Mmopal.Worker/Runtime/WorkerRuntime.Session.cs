@@ -76,6 +76,11 @@ public sealed partial class WorkerRuntime
         public int GameRestartsUsed { get; set; }
         public DateTimeOffset LastGameRestartUtc { get; set; } = DateTimeOffset.MinValue;
         public int ConsecutiveFailedCycles { get; set; }
+        public DateTimeOffset LastFrozenReopenUtc { get; set; } = DateTimeOffset.MinValue;
+
+        // Items proven to fill and sell (larger orders), worked out again every half hour.
+        public IReadOnlySet<string> ProvenItems { get; set; } = new HashSet<string>();
+        public DateTimeOffset ProvenItemsAtUtc { get; set; } = DateTimeOffset.MinValue;
 
         public SessionMeasurements Measured { get; } = new();
 

@@ -148,6 +148,42 @@ public sealed partial class LiveTradingExecutorTests
         Assert.DoesNotContain(input.Clicks, c => c == (601, 315)); // never taps the down spinner in typed mode
     }
 
+    [Fact]
+    public async Task A_buyer_at_the_typed_price_makes_it_list_at_the_lowest_ask_instead()
+    {
+        // 24 Nov, Arms of the People: bid 40s 96c, ask 40s 97c. At 40s 96c the dialog offers Sell Instantly, not List.
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        bool AtTheAsk() => input.TextsSent.Contains("97");
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["items_tab.png"] = new(710, 75, 58, 63, 1.00m),
+            ["search.png"] = new(74, 191, 44, 16, 1.00m),
+            ["item.png"] = new(389, 182, 37, 18, 0.95m),
+            ["currentSellers.png"] = new(535, 466, 123, 24, 1.00m),
+            ["arrow_up.png"] = new(596, 300, 10, 8, 1.00m)
+        });
+        templates.DynamicMatches["ListThisItem.png"] = () => AtTheAsk() ? new TemplateMatch(392, 396, 110, 18, 0.95m) : null;
+        var locator = new FakeUiTextLocator(region => (region.X, region.Y) switch
+        {
+            (325, 240) => [new OcrTextBox("Arms of the People", 393, 290, 150, 12)],
+            (330, 165) => [new OcrTextBox("Arms of the People", 347, 175, 300, 24)],
+            (530, 505) => [new OcrTextBox("40. 97.", 727, 522, 50, 13)],
+            (260, 330) => [new OcrTextBox(AtTheAsk() ? "Total Price: 40e 97e" : "Total Price: 40e 96e", 273, 341, 220, 22)],
+            _ => Array.Empty<OcrTextBox>()
+        });
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank }, templates, input, new FakeWindowController(), string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0), NullLogger.Instance, pollIntervalMs: 5, requireTemplateFilesOnDisk: false, textLocator: locator);
+        var pricing = new Dictionary<string, SellPricing>(StringComparer.OrdinalIgnoreCase) { ["Arms of the People"] = new(4_097, 3_202) };
+
+        var listed = Assert.Single(await driver.SellInventoryPassDetailedAsync(["Arms of the People"], 3, 1, 1, CancellationToken.None, pricing));
+
+        Assert.Equal(SellPassItemOutcome.Listed, listed.Outcome);
+        Assert.Equal(4_097, listed.UnitCopper);
+        Assert.Contains((447, 405), input.Clicks);
+    }
+
     [Theory]
     [InlineData(true)]   // known to the pass, but the API gave no price
     [InlineData(false)]

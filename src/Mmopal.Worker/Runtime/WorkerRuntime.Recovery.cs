@@ -197,6 +197,59 @@ public sealed partial class WorkerRuntime
         return (recovered, message);
     }
 
+    private static readonly TimeSpan FrozenAgainWithin = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// A Trading Post that no longer answers: reopen it; frozen again soon after, or not closing, leave the character; else
+    /// the usual recovery.
+    /// </summary>
+    private async Task<CycleStep> RecoverFrozenTradingPostAsync(TradingSession session, Gw2TradingPostUiDriver driver, CancellationToken cancellationToken)
+    {
+        if (!driver.LooksFrozen)
+        {
+            return CycleStep.Proceed;
+        }
+
+        var now = _utcNow();
+        _logger.LogWarning("The Trading Post does not answer ({Count} things in a row did nothing); reopening it.", Gw2TradingPostUiDriver.FailuresBeforeFrozen);
+        SetStatusIfNotPaused(WorkerState.Recovering, BotKind.TradingPost, session.Mode, session.ProfileName, "Reopening the Trading Post", "The Trading Post stopped answering.");
+        if (now - session.LastFrozenReopenUtc > FrozenAgainWithin)
+        {
+            session.LastFrozenReopenUtc = now;
+            var (reopened, message) = await driver.ReopenFrozenTradingPostAsync(cancellationToken).ConfigureAwait(false);
+            if (reopened)
+            {
+                RecordEvent(session, "frozen", "reopened", activity: "The Trading Post stopped answering and was reopened");
+                return CycleStep.Proceed;
+            }
+
+            _logger.LogInformation("Reopening did not help: {Message}", message);
+        }
+
+        if (IsPauseRequested) return CycleStep.NextCycle;
+
+        if (session.Client.ParkedCharacterCount > 1 && CanSwapCharacterForRecovery(now))
+        {
+            _lastCharacterSwapUtc = now;
+            var (swapped, message) = await driver.RotateParkedCharacterAsync(session.AfkSwap.RandomizeCharacter, session.Client.ParkedCharacterCount, cancellationToken).ConfigureAwait(false);
+            session.Report.RecordCharacterSwap(_utcNow(), swapped, message);
+            if (swapped)
+            {
+                driver.ForgetFrozen();
+                session.AfkSwap.MarkSwapped(now);
+                session.SellQueue.CharacterChanged(_utcNow());
+                RecordEvent(session, "frozen", "swapped", detail: message, activity: $"The Trading Post stopped answering; swapped to {driver.CurrentCharacterLabel ?? "another character"}");
+                return CycleStep.Proceed;
+            }
+        }
+
+        var (recovered, recoverMessage) = await RecoverLiveClientAsync(
+            session, driver, "The Trading Post stopped answering", "Frozen Trading Post", reasonInFailureReport: true, cancellationToken).ConfigureAwait(false);
+        driver.ForgetFrozen();
+        RecordEvent(session, "frozen", recovered ? "recovered" : "not-recovered", detail: recoverMessage);
+        return recovered ? CycleStep.Proceed : HaltUnlessPaused(session, "Trading Post frozen", recoverMessage);
+    }
+
     /// <summary>Ends the session for the operator to look at; a pause during recovery instead waits for Resume.</summary>
     private CycleStep HaltUnlessPaused(TradingSession session, string lastAction, string message)
     {

@@ -458,7 +458,7 @@ public sealed partial class WorkerRuntime
         try
         {
             var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
-                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper));
+                .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper, order.Quantity));
             var recent = await officialData.GetRecentHistoryAsync(_ledgerStore, cancellationToken).ConfigureAwait(false);
             session.HeldByMmopal = OwnedStock.UnitsHeldByMmopal(placed, session.LedgerHistory.Concat(recent), session.LastKnownActiveOrders);
         }

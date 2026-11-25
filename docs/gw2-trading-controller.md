@@ -30,7 +30,7 @@ reads the orders first.
 | Open the TP | **F** (trader), then **O**, then **F**; Esc in between closes a bank opened by mistake. |
 | Search | Only with the Trading Post proven on screen (Black Lion crest and transactions tab). Enter and Backspace are pressed only once the box shows the typed name. Then waits until the results show it. Rarely readable names get a third of the UI wait. |
 | Open a row | The title must be the item (rows 1–3 are tried). A title on two lines needs its second line too, and every read follows the window, which sits lower then. Unreadable: only goes on if the search showed the name and the live price is within 10% of the API's. |
-| Read the price | The top row only, once the window stands still: by digit shape (exact or nothing), else OCR. A read with fewer numbers than the API price, or 15% below it, is not used. Top bid + overbid past the profitable price aborts. |
+| Read the price | The top row only, once the window stands still: by digit shape (exact or nothing), else OCR. A read with fewer numbers than the API price, or 15% below it, is not used. Clearly over double or under half the API price, the window is another item's: aborted. Top bid + overbid past the profitable price aborts. |
 | Type price and quantity | The Total must be the typed price × at most the ordered quantity. Re-typed once, then aborted. |
 | Place Order | Later the API's order is compared with what was typed (`Order audit: …`). |
 
@@ -60,13 +60,21 @@ again before selling or cancelling (`The Trading Post is not on screen before th
 **Outbid Refresh** cancels orders that are outbid (20+ minutes old) or unfilled for 24 hours, so the next cycle can bid
 again. It clicks the first Cancel its search shows, so an order is skipped when that search would also list one that
 stays: yours, a young one, or one at the top bid. A blurred first row counts only if it is clearly closer to the name than
-to any other order of yours. A row whose name cannot be read is cancelled only when it is the one row shown, at a price no other order of yours has. An item it cannot find on screen twice is left for an hour. An order for
+to any other order of yours. A row whose name cannot be read is cancelled only when it is the one row shown, at a price no other order of yours has. An item it cannot find on screen twice is left for an hour, then 2, 4, 8 and 16. An order for
 another item, placed at that second and price, is Mmopal's mistake and is cancelled too.
 
 **Relist** does the same for listings, not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
 
+## Frozen Trading Post
+
+Three things in a row that do nothing on screen (an item window that does not open, a search neither the box nor the list
+takes, a Take All that empties nothing) mean it is frozen: the rest of the pass is skipped, a `tp-frozen-*` frame is saved, and
+the next cycle closes and reopens it. Frozen again within 15 minutes, or not closing, it swaps character, else recovers
+as after a failed cycle.
+
 ## Delivery Box and characters
 
+- **Collected** means the box changed after Take All.
 - **Locked box** ("Speak to a Black Lion Trading Company NPC" and still so after Take All): the TP is reopened at the
   trader at most every 10 minutes; after 30 minutes locked, at most once an hour, Mmopal swaps character. The same words
   show at a trader when the box holds only coins, and an empty box ("When you buy or sell …") is not locked unless the API
@@ -107,7 +115,7 @@ Behind it, `mmopal.db` keeps every live session for 180 days:
 | Table | One row per | Holds |
 | --- | --- | --- |
 | `cycle_metrics` | cycle | JSON: character, market phase, seconds per step, accepted and skip reasons, wallet, gold in orders (and over 12 h old), outbid and undercut counts, unsold units |
-| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
+| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
 
 ```sql
 -- what keeps failing, over all runs
@@ -119,4 +127,4 @@ SELECT json_extract(payload, '$.MarketPhase'), AVG(json_extract(payload, '$.Seco
 **Income** counts only Mmopal's own trades for *Bought, not sold yet* and **Best hours**, which divides fills by the time Mmopal ran in each hour; hours under 2 h of running time are muted.
 
 Logs: `%LOCALAPPDATA%\Mmopal\logs\mmopal-YYYYMMDD.jsonl` (UTC). Unreadable dialogs: `screenshots\price-unreadable-*`,
-`total-unreadable-*`, `character-select-unread-*`; no List button: `list-button-missing-*`; unconfirmed searches: `search-unconfirmed-*`. Learned digit shapes: `digit-glyphs.json`.
+`total-unreadable-*`, `total-mismatch-*`, `wrong-item-price-*`, `character-select-unread-*` (3 of a kind an hour); no List button: `list-button-missing-*`; unconfirmed searches: `search-unconfirmed-*`. Learned digit shapes: `digit-glyphs.json`.

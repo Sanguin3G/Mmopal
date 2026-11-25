@@ -228,7 +228,7 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="•" Foreground="{DynamicResource GoldAccentBrush}" FontWeight="Bold" />
-                                <TextBlock Grid.Column="1" Text="Buy orders are free to move. Listings cost 5% each time, so a listing is only relisted after 12 h undercut and when it still covers cost." Style="{StaticResource HintText}" />
+                                <TextBlock Grid.Column="1" Text="Buy orders are free to move. Listings cost 5% each time, so a listing is only relisted after 12 h undercut (24 h for items off the list) and when it still covers cost." Style="{StaticResource HintText}" />
                             </Grid>
                             <Grid Margin="0,0,0,5">
                                 <Grid.ColumnDefinitions>

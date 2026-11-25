@@ -125,13 +125,19 @@ public sealed record SellRelist(Transaction Listing, long NewPriceCopper, string
 
 /// <summary>
 /// When to cancel and relist an undercut listing. Each relist pays a new 5% listing fee (the old one is lost), so this
-/// is deliberately narrow: listed 12 h+, undercut, an item that actually trades (on the scanner's shopping list),
+/// is deliberately narrow: listed 12 h+, undercut, an item that actually trades (on the scanner's shopping list; any
+/// item after 24 h),
 /// relisted at most once a day, and only when the new price still covers what was paid plus the lost listing fee
 /// after the new 5% + 10% fees. Anything else waits: a listing that sits costs nothing more.
 /// </summary>
 public static class SellRelistPolicy
 {
     public static readonly TimeSpan MinListingAge = TimeSpan.FromHours(12);
+    /// <summary>
+    /// From here the item need not be on the list any more: of 938 listings (22-25 Nov) 74% an hour sold in the first hour,
+    /// 5% an hour up to a day, 0.5% after it. 40g sat that way for 30 h+, every one sellable at a profit.
+    /// </summary>
+    public static readonly TimeSpan StaleListingAge = TimeSpan.FromHours(24);
     public static readonly TimeSpan MinTimeBetweenRelists = TimeSpan.FromHours(24);
 
     public static IReadOnlyList<SellRelist> Select(
@@ -169,7 +175,7 @@ public static class SellRelistPolicy
             }
 
             if (age < MinListingAge ||
-                !tradedItems.Contains(name) ||
+                (age < StaleListingAge && !tradedItems.Contains(name)) ||
                 !paidByItem.TryGetValue(name, out var paid) || paid <= 0 ||
                 (lastRelistedUtc.TryGetValue(name, out var last) && nowUtc - last < MinTimeBetweenRelists))
             {

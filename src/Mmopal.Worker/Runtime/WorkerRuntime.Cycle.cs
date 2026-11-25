@@ -52,6 +52,8 @@ public sealed partial class WorkerRuntime
             return;
         }
 
+        await SeedUnreadableNamesAsync(session, cancellationToken).ConfigureAwait(false);
+
         // Alongside the launcher: every character's bags take 13-15 s to read and are only needed at Character Select, but
         // from 22 Nov LOG IN waited for them.
         session.StockBeforeLaunch = Task.Run(() => ReadFlipStockBeforeLaunchAsync(session, cancellationToken), CancellationToken.None);
@@ -254,6 +256,12 @@ public sealed partial class WorkerRuntime
 
         if (IsPauseRequested) return CycleStep.NextCycle;
 
+        var thawed = await RecoverFrozenTradingPostAsync(session, driver, cancellationToken).ConfigureAwait(false);
+        if (thawed != CycleStep.Proceed || IsPauseRequested)
+        {
+            return thawed != CycleStep.Proceed ? thawed : CycleStep.NextCycle;
+        }
+
         var deliveryOutcome = await CollectSmartDeliveryAsync(session, driver, cancellationToken);
         if (deliveryOutcome.Collected)
         {
@@ -430,6 +438,65 @@ public sealed partial class WorkerRuntime
         }
     }
 
+    /// <summary>Names the search list could not show readably in the last two weeks: their searches do not wait for it.</summary>
+    private async Task SeedUnreadableNamesAsync(TradingSession session, CancellationToken cancellationToken)
+    {
+        if (_metricsStore is null || session.LiveDriver is not { } driver)
+        {
+            return;
+        }
+
+        try
+        {
+            var names = await _metricsStore.CountByItemAsync("search", "unreadable", _utcNow().AddDays(-14), cancellationToken).ConfigureAwait(false);
+            driver.SeedUnreadableNames(names.Keys);
+            session.Measured.UnreadableNames.UnionWith(names.Keys);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not read the names that are hard to read on screen.");
+        }
+    }
+
+    /// <summary>Larger orders for items whose orders fill completely and whose units sell within hours.</summary>
+    private async Task<IReadOnlyList<ItemCandidate>> WithProvenSizesAsync(TradingSession session, IReadOnlyList<ItemCandidate> candidates, CancellationToken cancellationToken)
+    {
+        if (!session.Request.UsePortfolioIntelligence || session.Policy.MaximumBuyPriceCopper is not { } budget || session.LedgerHistory.Count == 0)
+        {
+            return candidates;
+        }
+
+        var now = _utcNow();
+        if (now - session.ProvenItemsAtUtc >= TimeSpan.FromMinutes(30))
+        {
+            try
+            {
+                var placed = (await _store.GetPlacedBuyOrdersAsync(now - ProvenItems.Window, cancellationToken).ConfigureAwait(false))
+                    .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper, order.Quantity));
+                var proven = ProvenItems.Find(placed, session.LedgerHistory, now);
+                if (session.ProvenItemsAtUtc == DateTimeOffset.MinValue && proven.Count > 0)
+                {
+                    _logger.LogInformation("Larger orders for {Count} item(s) that fill completely and sell within hours.", proven.Count);
+                }
+
+                session.ProvenItems = proven;
+                session.ProvenItemsAtUtc = now;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Could not work out which items are proven.");
+            }
+        }
+
+        return ProvenItems.Enlarge(
+            candidates,
+            session.ProvenItems,
+            session.LastKnownActiveOrders,
+            session.Request.EffectiveCandidates.Select(candidate => candidate.ItemName),
+            session.Request.DefaultOrderQuantity ?? 1,
+            budget);
+    }
+
     /// <summary>The shopping list with live prices, minus items paused because another bot keeps outbidding us.</summary>
     private async Task<IReadOnlyList<ItemCandidate>> CandidatesForCycleAsync(
         TradingSession session,
@@ -466,6 +533,7 @@ public sealed partial class WorkerRuntime
 
             session.BuysWaitingOnStock = waiting;
             cycleCandidates = withoutStock;
+            cycleCandidates = await WithProvenSizesAsync(session, cycleCandidates, cancellationToken).ConfigureAwait(false);
         }
 
         return cycleCandidates;
@@ -638,7 +706,7 @@ public sealed partial class WorkerRuntime
     {
         // Only Mmopal's own buy orders are cancelled; orders placed by hand stay, outbid or old.
         var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
-            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper))
+            .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper, order.Quantity))
             .ToArray();
         // The driver still sees the hand-placed orders: a search that lists one of them next to ours is not safe.
         var canceledOutbidBuys = await driver.CancelOutbidBuyOrdersAsync(
@@ -653,7 +721,7 @@ public sealed partial class WorkerRuntime
             _logger.LogInformation(
                 "Pausing buys of {Item} for {Hours} h: outbid {Count} times without a single fill (another bot is camping it); its order slots go to items that fill.",
                 paused,
-                (int)_buyCompetition.PausedFor(paused, _utcNow()).TotalHours,
+                (int)Math.Round(_buyCompetition.PausedFor(paused, _utcNow()).TotalHours),
                 BuyCompetitionTracker.OutbidCancelsBeforePause);
         }
 
@@ -925,7 +993,7 @@ public sealed partial class WorkerRuntime
     /// <summary>Waits the scan interval, cut short so the session cap is handled on time.</summary>
     private async Task WaitForNextCycleAsync(TradingSession session, CancellationToken cancellationToken)
     {
-        if (session.Cap.IsExpired(_utcNow()))
+        if (session.Cap.IsExpired(_utcNow()) || session.LiveDriver is { LooksFrozen: true })
         {
             return;
         }

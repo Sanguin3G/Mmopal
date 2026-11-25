@@ -106,6 +106,11 @@ public sealed partial class Gw2TradingPostUiDriver
                 }
 
                 await DismissTransientPopupAsync("sell pass", cancellationToken).ConfigureAwait(false);
+                if (LooksFrozen)
+                {
+                    break; // the rest is listed once the Trading Post answers again
+                }
+
                 if (IsPaused || await HasErrorPopupAsync(cancellationToken).ConfigureAwait(false))
                 {
                     results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, "Paused or error popup active."));
@@ -159,6 +164,11 @@ public sealed partial class Gw2TradingPostUiDriver
                     if (titleCheck != ItemTitleCheck.Mismatch)
                     {
                         titleUnread = titleCheck == ItemTitleCheck.Unreadable && _textLocator is not null;
+                        if (titleCheck == ItemTitleCheck.Match)
+                        {
+                            NoteOpenedItem(targetItem);
+                        }
+
                         break;
                     }
 
@@ -189,6 +199,14 @@ public sealed partial class Gw2TradingPostUiDriver
                     liveLowestAsk = PlausibleLowestAsk(
                         await ReadTopListPriceAsync(InDialog(SellersListRegion), SellersPriceColumnMinX, itemPricing!.ApiLowestAskCopper!.Value, cancellationToken).ConfigureAwait(false),
                         itemPricing!.ApiLowestAskCopper!.Value);
+                }
+
+                if (typeSellPrice && liveLowestAsk is null && WrongItemPrice(targetItem, itemPricing!.ApiLowestAskCopper!.Value) is { } wrongPrice)
+                {
+                    await SaveDiagnosticFrameAsync("wrong-item-price", cancellationToken).ConfigureAwait(false);
+                    await CloseItemWindowAsync(cancellationToken).ConfigureAwait(false);
+                    results.Add(new SellPassItemResult(targetItem, SellPassItemOutcome.SkippedError, $"Listing aborted: {wrongPrice}"));
+                    continue;
                 }
 
                 if (titleUnread && typeSellPrice && !UnreadTitleIsProven(_lastSearchShowedName, liveLowestAsk, itemPricing!.ApiLowestAskCopper!.Value))
@@ -271,6 +289,23 @@ public sealed partial class Gw2TradingPostUiDriver
 
                 // Never click sell_instantly.png — always place a sell order via List This Item.
                 var listButton = await WaitForTemplateAsync("ListThisItem.png", CaptureRegion.FullScreen1024x768, 0.70m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+                if (listButton is null && !IsPaused && typedSellCopper is { } undercutTo &&
+                    (liveLowestAsk ?? itemPricing!.ApiLowestAskCopper!.Value) is var lowestAsk && undercutTo < lowestAsk)
+                {
+                    // A buyer offers what was typed, so the dialog sells instantly instead of listing (Arms of the People,
+                    // 24 Nov: bid 40s 96c, ask 40s 97c). At the lowest ask itself it lists.
+                    _logger.LogInformation("{Item}: a buyer offers {Price}, so it is listed at the lowest ask {Ask} without undercutting.",
+                        targetItem, MarketScanItem.FormatCoins(undercutTo), MarketScanItem.FormatCoins(lowestAsk));
+                    var (joined, joinMessage) = await TypeAndConfirmPriceAsync(lowestAsk, cancellationToken).ConfigureAwait(false);
+                    _logger.LogInformation("Sell price check for {Item}: {Message}", targetItem, joinMessage);
+                    if (joined)
+                    {
+                        typedSellCopper = lowestAsk;
+                        typedSellNote = $" at {MarketScanItem.FormatCoins(lowestAsk)} (typed)";
+                        listButton = await WaitForTemplateAsync("ListThisItem.png", CaptureRegion.FullScreen1024x768, 0.70m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
                 if (listButton is not null && !IsPaused)
                 {
                     await ClickCenterAndSettleAsync(listButton, cancellationToken).ConfigureAwait(false);

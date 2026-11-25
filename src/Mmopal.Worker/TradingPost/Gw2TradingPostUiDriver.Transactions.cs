@@ -77,7 +77,11 @@ public sealed partial class Gw2TradingPostUiDriver
     public bool IsCancelSearchGivenUp(TransactionType list, string itemName) =>
         _unconfirmedCancelSearches.TryGetValue($"{list}|{itemName.Trim()}", out var seen) &&
         seen.Count >= UnconfirmedCancelSearchesBeforeSkip &&
-        _utcNow() - seen.At < CancelSearchRetryAfter;
+        _utcNow() - seen.At < CancelRetryAfter(_cancelGiveUps.GetValueOrDefault($"{list}|{itemName.Trim()}"));
+
+    /// <summary>1 h, then 2, 4, 8 and 16 h for an item given up again and again.</summary>
+    internal static TimeSpan CancelRetryAfter(int giveUps) =>
+        TimeSpan.FromTicks(CancelSearchRetryAfter.Ticks << Math.Clamp(giveUps - 1, 0, 4));
 
     private bool CancelSearchGivenUp(string itemName) => IsCancelSearchGivenUp(_cancelListType, itemName);
 
@@ -85,8 +89,16 @@ public sealed partial class Gw2TradingPostUiDriver
     private int NoteUnconfirmedCancel(string itemName, int weight)
     {
         var key = $"{_cancelListType}|{itemName.Trim()}";
-        var earlier = _unconfirmedCancelSearches.TryGetValue(key, out var seen) && _utcNow() - seen.At < CancelSearchRetryAfter ? seen.Count : 0;
+        var earlier = _unconfirmedCancelSearches.TryGetValue(key, out var seen) && seen.Count < UnconfirmedCancelSearchesBeforeSkip &&
+                      _utcNow() - seen.At < CancelSearchRetryAfter
+            ? seen.Count
+            : 0;
         _unconfirmedCancelSearches[key] = (earlier + weight, _utcNow());
+        if (earlier + weight >= UnconfirmedCancelSearchesBeforeSkip)
+        {
+            _cancelGiveUps[key] = _cancelGiveUps.GetValueOrDefault(key) + 1;
+        }
+
         return earlier + weight;
     }
 
@@ -166,7 +178,7 @@ public sealed partial class Gw2TradingPostUiDriver
         foreach (var order in outbidBuys)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (IsPaused) break;
+            if (IsPaused || LooksFrozen) break;
             await DismissTransientPopupAsync("Outbid Refresh", cancellationToken).ConfigureAwait(false);
             _cancelRowPrice = UniquePrice(order, transactions);
             if (!await SearchItemAsync(order.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
@@ -190,6 +202,7 @@ public sealed partial class Gw2TradingPostUiDriver
             if (confirmBtn is not null && !IsPaused)
             {
                 await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
+                NoteAnswer();
                 if (order.MinimumBuyPriceCopper is { } top && top > order.PriceCopper)
                 {
                     canceledNames.Add(order.ItemName);
@@ -254,7 +267,7 @@ public sealed partial class Gw2TradingPostUiDriver
         foreach (var relist in relists)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (IsPaused) break;
+            if (IsPaused || LooksFrozen) break;
             await DismissTransientPopupAsync("Relist", cancellationToken).ConfigureAwait(false);
             _cancelRowPrice = UniquePrice(relist.Listing, orders);
             if (!await SearchItemAsync(relist.Listing.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
@@ -278,6 +291,7 @@ public sealed partial class Gw2TradingPostUiDriver
             }
 
             await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
+            NoteAnswer();
             canceledNames.Add(relist.Listing.ItemName);
             _logger.LogInformation("Relist: cancelled the undercut listing for {Item} ({Reason}).", relist.Listing.ItemName, relist.Reason);
         }

@@ -3,7 +3,7 @@ using Mmopal.Contracts;
 namespace Mmopal.Gw2;
 
 /// <summary>A live buy order Mmopal placed: the item, when the placing finished and the unit price it was placed at.</summary>
-public sealed record PlacedBuyOrder(string ItemName, DateTimeOffset PlacedAt, long? UnitCopper = null);
+public sealed record PlacedBuyOrder(string ItemName, DateTimeOffset PlacedAt, long? UnitCopper = null, long? Quantity = null);
 
 /// <summary>
 /// How many units of each item Mmopal itself still holds, so the sell pass never lists the player's own copies.

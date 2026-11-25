@@ -23,6 +23,8 @@ public sealed partial class WorkerRuntime
         public int ListedDuringEntry { get; set; }
         /// <summary>Items collected from the Delivery Box this session: their holder in the last bag read may be out of date.</summary>
         public HashSet<string> Collected { get; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Names already saved as hard to read in the search list.</summary>
+        public HashSet<string> UnreadableNames { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>Adds the time since the last mark to <paramref name="step"/>.</summary>
@@ -176,6 +178,10 @@ public sealed partial class WorkerRuntime
             session.BuysWaitingOnStock);
         measured.Seconds.Clear();
         measured.Cycles.Add(cycle);
+        foreach (var name in session.LiveDriver?.UnreadableNames.Where(measured.UnreadableNames.Add).ToArray() ?? [])
+        {
+            RecordEvent(session, "search", "unreadable", name);
+        }
 
         if (_metricsStore is null || session.Mode != RunMode.Live)
         {

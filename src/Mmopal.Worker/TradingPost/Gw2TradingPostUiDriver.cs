@@ -103,6 +103,25 @@ public sealed partial class Gw2TradingPostUiDriver
     // Per list (Buying or Selling): a missing buy order says nothing about a listing of the same item.
     private readonly Dictionary<string, (int Count, DateTimeOffset At)> _unconfirmedCancelSearches = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan CancelSearchRetryAfter = TimeSpan.FromHours(1);
+    // How often the search was given up: each time it is left alone twice as long (Rune of the Mesmer was tried 11 times in
+    // one night, twice an hour).
+    private readonly Dictionary<string, int> _cancelGiveUps = new(StringComparer.OrdinalIgnoreCase);
+    // Names the search list never shows readably although the right item opens ("Imryldyeen", "Al'ir'aska").
+    private readonly HashSet<string> _unreadableNames = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Items whose name cannot be read in the search list, learned this session or given by <see cref="SeedUnreadableNames"/>.</summary>
+    public IReadOnlyCollection<string> UnreadableNames => _unreadableNames;
+
+    public void SeedUnreadableNames(IEnumerable<string> names) => _unreadableNames.UnionWith(names.Select(name => name.Trim()));
+
+    /// <summary>The right item opened without its name having shown in the search list.</summary>
+    private void NoteOpenedItem(string itemName)
+    {
+        if (!_lastSearchShowedName && _textLocator is not null)
+        {
+            _unreadableNames.Add(itemName.Trim());
+        }
+    }
     private TransactionType _cancelListType = TransactionType.Buy;
     private const int UnconfirmedCancelSearchesBeforeSkip = 2;
     private bool _lastSearchFoundNothing;
@@ -172,7 +191,7 @@ public sealed partial class Gw2TradingPostUiDriver
     private readonly IUiTextLocator? _textLocator;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly string? _diagnosticsDirectory;
-    private readonly Dictionary<string, int> _diagnosticFramesSaved = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<DateTimeOffset>> _diagnosticFramesSaved = new(StringComparer.Ordinal);
     private readonly string _templateRoot;
     private readonly Gw2ClientSettings _settings;
     private readonly ILogger _logger;
@@ -258,10 +277,16 @@ public sealed partial class Gw2TradingPostUiDriver
         Unreadable
     }
 
-    /// <summary>Saves up to 3 full frames per kind per session (e.g. an unreadable price) for calibration.</summary>
+    private const int DiagnosticFramesPerHour = 3;
+    private const int DiagnosticFramesPerSession = 12;
+
+    /// <summary>
+    /// Saves full frames for calibration: up to 3 per kind per hour. Three per session left the 38 minutes of 24 Nov
+    /// without a single picture.
+    /// </summary>
     private async Task SaveDiagnosticFrameAsync(string tag, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_diagnosticsDirectory) || _diagnosticFramesSaved.GetValueOrDefault(tag) >= 3)
+        if (string.IsNullOrWhiteSpace(_diagnosticsDirectory) || !MaySaveFrame(tag))
         {
             return;
         }
@@ -272,7 +297,8 @@ public sealed partial class Gw2TradingPostUiDriver
             var path = Path.Combine(_diagnosticsDirectory, $"{tag}-{_utcNow():yyyyMMdd-HHmmss}.png");
             if (FrameImageFile.TrySavePng(frame, path))
             {
-                _diagnosticFramesSaved[tag] = _diagnosticFramesSaved.GetValueOrDefault(tag) + 1;
+                _diagnosticFramesSaved.TryAdd(tag, []);
+                _diagnosticFramesSaved[tag].Add(_utcNow());
                 _logger.LogInformation("Saved a calibration screenshot: {Path}", path);
             }
         }
@@ -281,6 +307,10 @@ public sealed partial class Gw2TradingPostUiDriver
             _logger.LogDebug(exception, "Could not save a diagnostic frame.");
         }
     }
+
+    private bool MaySaveFrame(string tag) =>
+        !_diagnosticFramesSaved.TryGetValue(tag, out var saved) ||
+        (saved.Count < DiagnosticFramesPerSession && saved.Count(at => _utcNow() - at < TimeSpan.FromHours(1)) < DiagnosticFramesPerHour);
 
     private Task CloseItemWindowAsync(CancellationToken cancellationToken)
     {

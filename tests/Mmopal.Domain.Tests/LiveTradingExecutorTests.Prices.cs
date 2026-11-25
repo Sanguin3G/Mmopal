@@ -94,6 +94,28 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Equal(expected, Gw2TradingPostUiDriver.ParseBuyerRowPrice(text, hint));
     }
 
+    [Theory]
+    [InlineData("Jade Bot Core: Tier 1", "Jade Bot Core: Tier 10", false)]  // 24 Nov: bought for the other
+    [InlineData("Jade Bot Core: Tier 1", "Jade Bot Core: Tier IO", false)]
+    [InlineData("Jade Bot Core: Tier 1", "Jade Bot Core Tier10", false)]
+    [InlineData("Jade Bot Core: Tier 10", "Jade Bot Core: Tier 1O", true)]
+    [InlineData("Jade Bot Core: Tier 1", "Jade Bot Core: Tier I", true)]
+    [InlineData("+8 Agony Infusion", "+8 Agony Infusion", true)]
+    [InlineData("+8 Agony Infusion", "+9 Agony Infusion", false)]
+    [InlineData("+10 Agony Infusion", "+1O Agony Infusion", true)]
+    [InlineData("15 Slot Darksteel Box", "15 Slot Darksteel Box", true)]
+    [InlineData("18 Slot Mithril Box", "15 Slot Mithril Box", false)]
+    [InlineData("Shaman's Etched Skullcap", "Shaman 5 Etched Skullcap", true)]
+    public void Numbers_in_a_name_have_to_be_the_same(string expected, string seen, bool same) =>
+        Assert.Equal(same, Gw2TradingPostUiDriver.IsSameItemName(expected, seen));
+
+    [Theory]
+    [InlineData(225_310, 8_000, true)]  // Tier 10 in the window, Tier 1 wanted
+    [InlineData(3_900, 8_000, true)]
+    [InlineData(11_000, 8_000, false)]  // the market moved
+    public void A_price_far_from_the_API_means_another_item(long shown, long api, bool expected) =>
+        Assert.Equal(expected, Gw2TradingPostUiDriver.IsAnotherItemsPrice(shown, api));
+
     [Fact]
     public void Only_the_top_row_of_the_list_is_read_and_its_pieces_are_joined()
     {

@@ -61,6 +61,11 @@ public sealed partial class Gw2TradingPostUiDriver
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
+        if (LooksFrozen)
+        {
+            return new TradingActionResult(action, TradingActionStatus.Skipped, "The Trading Post does not answer; it is reopened first.");
+        }
+
         if (IsPaused)
         {
             return new TradingActionResult(action, TradingActionStatus.Skipped, "Paused by operator before starting order.");
@@ -133,6 +138,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
             if (titleCheck == ItemTitleCheck.Match)
             {
+                NoteOpenedItem(action.ItemName);
                 if (row > 0)
                 {
                     _logger.LogInformation("Found '{Item}' at search row {Row}.", action.ItemName, row + 1);
@@ -165,6 +171,12 @@ public sealed partial class Gw2TradingPostUiDriver
         {
             // Read before clicking a row: afterwards our own "Ordering N" preview row joins the list.
             liveTopBid = await ReadTopBuyerPriceAsync(Math.Max(1, action.PriceCopper - overbidMinCopper), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (liveTopBid is null && WrongItemPrice(action.ItemName, Math.Max(1, action.PriceCopper - overbidMinCopper)) is { } wrongPrice)
+        {
+            await SaveDiagnosticFrameAsync("wrong-item-price", cancellationToken).ConfigureAwait(false);
+            return await CloseItemWindowWithResultAsync(action, TradingActionStatus.Failed, $"Buy order aborted: {wrongPrice}", cancellationToken).ConfigureAwait(false);
         }
 
         if (titleUnread && !UnreadTitleIsProven(_lastSearchShowedName, liveTopBid, Math.Max(1, action.PriceCopper - overbidMinCopper)))

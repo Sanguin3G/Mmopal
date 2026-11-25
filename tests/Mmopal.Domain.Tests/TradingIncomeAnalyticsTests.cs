@@ -197,8 +197,16 @@ public sealed class TradingIncomeAnalyticsTests
         var balanced = TradingStrategyPresets.RecommendForCapital(500 * 10_000L);
         Assert.StartsWith("Balanced", balanced.Name, StringComparison.Ordinal);
         Assert.InRange(balanced.MaxBuyGold, 5m, 35m);
+        Assert.Equal(40m, balanced.RecommendedGoldFloor); // 8%
 
-        var high = TradingStrategyPresets.RecommendForCapital(2_500 * 10_000L);
+        // 25 Nov: 1,158g. High Capital would have dropped the items half of the profit came from.
+        var grown = TradingStrategyPresets.RecommendForCapital(1_158 * 10_000L);
+        Assert.StartsWith("Balanced", grown.Name, StringComparison.Ordinal);
+        Assert.Equal(46m, grown.MaxBuyGold);
+        Assert.Equal(93m, grown.RecommendedGoldFloor);
+        Assert.NotNull(TradingStrategyPresets.FindByName(grown.Name));
+
+        var high = TradingStrategyPresets.RecommendForCapital(3_500 * 10_000L);
         Assert.StartsWith("High Capital", high.Name, StringComparison.Ordinal);
         Assert.InRange(high.MaxBuyGold, 35m, 150m);
     }
