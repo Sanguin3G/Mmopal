@@ -151,7 +151,7 @@ public sealed partial class Gw2TradingPostUiDriver
                 TemplateMatch? sellersAnchor = null;
                 var wrongTitles = new List<string>();
                 var titleUnread = false;
-                for (var row = 0; row < MaxSearchRowsToTry; row++)
+                foreach (var row in RowsToOpen())
                 {
                     var rowAnchor = firstItem with { Y = firstItem.Y + row * SellResultRowStride };
                     sellersAnchor = await OpenItemOrderWindowAsync(rowAnchor, "currentSellers.png", 0.72m, cancellationToken).ConfigureAwait(false);

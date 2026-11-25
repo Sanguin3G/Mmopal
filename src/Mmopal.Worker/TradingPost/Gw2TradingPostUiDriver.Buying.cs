@@ -114,7 +114,7 @@ public sealed partial class Gw2TradingPostUiDriver
         TemplateMatch? buyersAnchor = null;
         var wrongTitles = new List<string>();
         var titleUnread = false;
-        for (var row = 0; row < MaxSearchRowsToTry; row++)
+        foreach (var row in RowsToOpen())
         {
             if (IsPaused)
             {

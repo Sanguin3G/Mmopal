@@ -18,14 +18,15 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         var check = await ReadItemTitleAsync(expectedName, cancellationToken).ConfigureAwait(false);
-        if (check.Result != ItemTitleCheck.Unreadable)
+        if (check.Result == ItemTitleCheck.Unreadable)
         {
-            return check;
+            // The title may still be drawing: one more read before calling it unreadable.
+            await SettleAsync(cancellationToken).ConfigureAwait(false);
+            check = await ReadItemTitleAsync(expectedName, cancellationToken).ConfigureAwait(false);
         }
 
-        // The title may still be drawing: one more read before calling it unreadable.
-        await SettleAsync(cancellationToken).ConfigureAwait(false);
-        return await ReadItemTitleAsync(expectedName, cancellationToken).ConfigureAwait(false);
+        CountReading("title", check.Result == ItemTitleCheck.Unreadable ? "missed" : "OCR");
+        return check;
     }
 
     /// <summary>
@@ -425,6 +426,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var name = itemName.Trim();
         _lastSearchFoundNothing = false;
         _lastSearchShowedName = false;
+        _lastDrawnRow = null;
         if (field.Empty)
         {
             await _input.ClickAsync(field.X, field.Y, cancellationToken).ConfigureAwait(false);
@@ -478,11 +480,21 @@ public sealed partial class Gw2TradingPostUiDriver
             return SearchBoxText.Holds;
         }
 
+        if (await SearchBoxShowsAsync(name, cancellationToken).ConfigureAwait(false))
+        {
+            CountReading("search box", "drawn");
+            return SearchBoxText.Holds;
+        }
+
         var box = ClassifySearchBox(await ReadTextVariantsAsync(SearchBoxTextRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false), name);
         // Short names only read in a wider crop ("Entropy", 24 Nov).
-        return box != SearchBoxText.Other
-            ? box
-            : ClassifySearchBox(await ReadTextVariantsAsync(SearchBoxWideTextRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false), name);
+        if (box == SearchBoxText.Other)
+        {
+            box = ClassifySearchBox(await ReadTextVariantsAsync(SearchBoxWideTextRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false), name);
+        }
+
+        CountReading("search box", box == SearchBoxText.Other ? "missed" : "OCR");
+        return box;
     }
 
     internal static SearchBoxText ClassifySearchBox(IEnumerable<string> texts, string name)
@@ -556,8 +568,12 @@ public sealed partial class Gw2TradingPostUiDriver
                 return false;
             }
 
-            var shown = false;
-            foreach (var region in SearchNameRegions(query))
+            // Drawn first: it reads what OCR does not, and no other GW2 item's name passes for it. Only the first row for a
+            // cancel: its button is the one that gets clicked.
+            _lastDrawnRow = await FindDrawnRowAsync(itemName, requireListedName ? 1 : MaxSearchRowsToTry, cancellationToken).ConfigureAwait(false);
+            var shown = _lastDrawnRow is not null;
+            var how = shown ? "drawn" : "OCR";
+            foreach (var region in shown ? [] : SearchNameRegions(query))
             {
                 var texts = await ReadTextVariantsAsync(region, cancellationToken, enlargeMore: region != SearchResultsListRegion).ConfigureAwait(false);
                 // Only the first row: its Cancel is the one that gets clicked.
@@ -572,12 +588,14 @@ public sealed partial class Gw2TradingPostUiDriver
 
             if (!shown && requireListedName && await OnlyRowHasOrderPriceAsync(cancellationToken).ConfigureAwait(false))
             {
+                how = "price";
                 _logger.LogInformation("'{Item}' is not readable in My Transactions; the only row has its price, which no other order has.", itemName);
                 shown = true;
             }
 
             if (shown)
             {
+                CountReading("name", how);
                 _searchConfirmStats[query] = (stats.Seen + 1, stats.Missed);
                 var waited = (_utcNow() - started).TotalMilliseconds;
                 if (waited > 1_500)
@@ -591,6 +609,8 @@ public sealed partial class Gw2TradingPostUiDriver
             if (_utcNow() >= deadline)
             {
                 _searchConfirmStats[query] = (stats.Seen, stats.Missed + 1);
+                CountReading("name", "missed");
+                await SaveHardNameAsync(itemName, cancellationToken).ConfigureAwait(false);
                 if (neverConfirms)
                 {
                     return false; // rarely confirms on screen; the buy flow still verifies the opened item's title

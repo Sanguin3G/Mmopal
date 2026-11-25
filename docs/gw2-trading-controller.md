@@ -65,6 +65,16 @@ another item, placed at that second and price, is Mmopal's mistake and is cancel
 
 **Relist** does the same for listings, not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
 
+## Reading names
+
+The font of the lists and the search box is Trebuchet MS, which comes with Windows. Mmopal draws the expected name and
+compares it with the screen letter by letter (`DrawnNameReader`): it has to fit as a whole, in its worst letter, in every digit
+against the other nine, and nothing may follow it. On 45 rows OCR could not read (20–24 Nov) it finds all 45; of 83,328 other
+names of GW2 items none passed. Windows OCR is the fallback, and reads the large title of the item window.
+
+A row still not found is kept as `screenshots\names\<item>.png`. Moved to `tests/…/Fixtures/name-rows` it is a test. The session
+report says how well the screen was read (`Read on screen: name 99.0% of 1000, …`).
+
 ## Frozen Trading Post
 
 Three things in a row that do nothing on screen (an item window that does not open, a search neither the box nor the list
@@ -115,7 +125,7 @@ Behind it, `mmopal.db` keeps every live session for 180 days:
 | Table | One row per | Holds |
 | --- | --- | --- |
 | `cycle_metrics` | cycle | JSON: character, market phase, seconds per step, accepted and skip reasons, wallet, gold in orders (and over 12 h old), outbid and undercut counts, unsold units |
-| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
+| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search, reading | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
 
 ```sql
 -- what keeps failing, over all runs

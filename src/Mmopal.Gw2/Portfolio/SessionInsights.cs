@@ -1,3 +1,4 @@
+using System.Globalization;
 using Mmopal.Contracts;
 
 namespace Mmopal.Gw2;
@@ -54,9 +55,29 @@ public static class SessionInsights
     /// <summary>How often each kind of event ended how, for example "sell: not-found" → 7.</summary>
     public static IReadOnlyDictionary<string, int> OutcomeCounts(IReadOnlyList<SessionEvent> events) =>
         events
+            .Where(item => item.Kind != ReadingKind)
             .GroupBy(item => $"{item.Kind}: {item.Outcome}")
             .OrderByDescending(group => group.Count())
             .ToDictionary(group => group.Key, group => group.Count());
+
+    /// <summary>Events that say how often something on screen was read how ("name: drawn", with the count as detail).</summary>
+    public const string ReadingKind = "reading";
+
+    /// <summary>The share of reads that worked, per thing read: a drop shows at once.</summary>
+    public static string? ReadingScore(IReadOnlyList<SessionEvent> events)
+    {
+        var parts = events
+            .Where(item => item.Kind == ReadingKind)
+            .Select(item => (Parts: item.Outcome.Split(": ", 2), Count: int.TryParse(item.Detail, CultureInfo.InvariantCulture, out var count) ? count : 0))
+            .Where(item => item.Parts.Length == 2 && item.Count > 0)
+            .GroupBy(item => item.Parts[0])
+            .Select(group => (Name: group.Key, All: group.Sum(item => item.Count), Missed: group.Where(item => item.Parts[1] == "missed").Sum(item => item.Count)))
+            .Where(item => item.All >= 10)
+            .OrderBy(item => item.Name, StringComparer.Ordinal)
+            .Select(item => string.Create(CultureInfo.InvariantCulture, $"{item.Name} {100.0 * (item.All - item.Missed) / item.All:0.0}% of {item.All}"))
+            .ToArray();
+        return parts.Length == 0 ? null : $"Read on screen: {string.Join(", ", parts)}.";
+    }
 
     public static IReadOnlyList<string> Findings(IReadOnlyList<CycleMetrics> cycles, IReadOnlyList<SessionEvent> events)
     {
@@ -119,6 +140,11 @@ public static class SessionInsights
         if (findings.Count == 0)
         {
             findings.Add(NothingStoodOut);
+        }
+
+        if (ReadingScore(events) is { } score)
+        {
+            findings.Add(score);
         }
 
         return findings;

@@ -251,6 +251,12 @@ public static class FrameVision
 
     internal static void EnsureSearchable(AutomationFrame frame) => _ = Layout(frame);
 
+    /// <summary>A part of the frame as a frame of its own, or null when it lies outside.</summary>
+    public static AutomationFrame? Crop(AutomationFrame frame, CaptureRegion region) =>
+        frame.Pixels.Length > 0 && CopyBgra(frame, region, out var width, out var height) is { } pixels
+            ? new AutomationFrame(frame.CapturedAt, region with { Width = width, Height = height }, pixels, "Bgra32", width * 4)
+            : null;
+
     internal static byte[]? CopyBgra(AutomationFrame frame, CaptureRegion region, out int width, out int height)
     {
         ArgumentNullException.ThrowIfNull(frame);

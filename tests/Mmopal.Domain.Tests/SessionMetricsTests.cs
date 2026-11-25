@@ -59,6 +59,17 @@ public sealed class SessionMetricsTests
         Assert.Empty(SessionInsights.Findings([], []));
     }
 
+    [Fact]
+    public void The_report_says_how_well_the_screen_was_read()
+    {
+        SessionEvent Reading(string what, int count) => new(DateTimeOffset.UtcNow, SessionInsights.ReadingKind, what, null, null, null, count.ToString());
+        SessionEvent[] events = [Reading("name: drawn", 960), Reading("name: OCR", 30), Reading("name: missed", 10), Reading("total: shapes", 500), Reading("title: missed", 3)];
+
+        Assert.Equal("Read on screen: name 99.0% of 1000, total 100.0% of 500.", SessionInsights.ReadingScore(events));
+        Assert.Empty(SessionInsights.OutcomeCounts(events));
+        Assert.Null(SessionInsights.ReadingScore([]));
+    }
+
     [Theory]
     [InlineData("Buy order aborted: the item window's title could not be read, and the live price is unknown.", "title-unreadable")]
     [InlineData("Buy order aborted: live top bid 61s 20c + 1c = 61s 21c is above the profitable ceiling 60s 50c; someone outbid past the margin.", "outbid-past-profit")]

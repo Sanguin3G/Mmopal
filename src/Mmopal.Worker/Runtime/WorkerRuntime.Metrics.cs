@@ -203,6 +203,11 @@ public sealed partial class WorkerRuntime
     private async Task<TradingSessionReport> AddMeasurementsAsync(TradingSession session, TradingSessionReport report)
     {
         var measured = session.Measured;
+        foreach (var (reading, count) in session.LiveDriver?.Readings.ToArray() ?? [])
+        {
+            RecordEvent(session, SessionInsights.ReadingKind, reading, detail: count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
         if (_metricsStore is not null && session.Mode == RunMode.Live && measured.SavedEvents < measured.Events.Count)
         {
             try

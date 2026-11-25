@@ -38,6 +38,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     // Tighter than the OCR window: a shape read goes straight into the typed price.
                     if (Math.Abs(glyphPrice.Copper - hintCopper) <= hintCopper * 0.15)
                     {
+                        CountReading("price", "shapes");
                         return glyphPrice.Copper;
                     }
                 }
@@ -64,6 +65,7 @@ public sealed partial class Gw2TradingPostUiDriver
                         {
                             if (TopRowPrice(lines, priceColumnMinX, topRowEnd, hintCopper) is { } top)
                             {
+                                CountReading("price", "OCR");
                                 return top;
                             }
                         }
@@ -77,6 +79,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
             if (_utcNow() >= deadline)
             {
+                CountReading("price", "missed");
                 return null;
             }
 
@@ -198,6 +201,7 @@ public sealed partial class Gw2TradingPostUiDriver
 
             if (glyphs.Reading is { } glyphTotal && IsWholeMultiple(glyphTotal.Copper, unitCopper, maxQuantity))
             {
+                CountReading("total", "shapes");
                 return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (read by digit shapes: {glyphTotal.Text})" +
                               (attempt == 1 ? "." : $" after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)})."));
             }
@@ -216,6 +220,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     continue;
                 }
 
+                CountReading("total", "missed");
                 await SaveDiagnosticFrameAsync("total-unreadable", cancellationToken).ConfigureAwait(false);
                 return (false, $"typed {MarketScanItem.FormatCoins(unitCopper)} twice but the dialog total could not be read to confirm it.");
             }
@@ -230,6 +235,7 @@ public sealed partial class Gw2TradingPostUiDriver
                     _logger.LogInformation("Learned {Count} new digit shape(s) from the confirmed total {Total}.", learned, MarketScanItem.FormatCoins(ocrTotal));
                 }
 
+                CountReading("total", "OCR");
                 return (true, attempt == 1
                     ? $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed."
                     : $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed after re-typing (first try showed {MarketScanItem.FormatCoins(lastSeen ?? 0)}).");
@@ -260,6 +266,7 @@ public sealed partial class Gw2TradingPostUiDriver
             // together they must show every digit group that is not zero-ish (and always the gold).
             if (TotalMatchesAcrossReads(texts, unitCopper, maxQuantity))
             {
+                CountReading("total", "OCR");
                 return (true, $"Typed {MarketScanItem.FormatCoins(unitCopper)} confirmed (total read as '{JoinReads(texts)}').");
             }
 
