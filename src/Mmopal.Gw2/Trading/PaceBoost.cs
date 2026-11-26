@@ -22,6 +22,9 @@ public sealed class PaceBoost
     public const int BoostedPerPass = 5;
     public static readonly TimeSpan BoostedPause = TimeSpan.FromSeconds(25);
     private const double MinIdleShare = 0.25;
+    // Widening needs less: on 25-26 Nov the list had run out from 02:00 local with 125-350g above the reserve, 10-28% of
+    // the gold, and a quarter was never reached.
+    private const double WiderScanIdleShare = 0.12;
     private const int MinWaiting = 5;
     // Cycles in a row that had nothing to order although gold is idle.
     public const int IdleCyclesBeforeWiderScan = 5;
@@ -35,7 +38,8 @@ public sealed class PaceBoost
     /// <summary>Updates from the last cycle; true when the boost was just switched on or off. Safe pace is never boosted.</summary>
     public bool Update(CyclePressure pressure, bool allowed)
     {
-        _idleCycles = pressure is { Accepted: 0, Waiting: 0, CapReached: false } && pressure.IdleShare >= MinIdleShare ? _idleCycles + 1 : 0;
+        // Nothing left waiting: the few orders a cycle still places are re-bids after outbid cancels.
+        _idleCycles = pressure is { Waiting: 0, CapReached: false } && pressure.IdleShare >= WiderScanIdleShare ? _idleCycles + 1 : 0;
         // On needs a real backlog; off only once the backlog, the room under the cap or the idle gold is gone.
         var want = allowed && !pressure.CapReached && (Active
             ? pressure.Waiting > 0 && pressure.IdleShare >= MinIdleShare * 0.6
@@ -50,7 +54,8 @@ public sealed class PaceBoost
     public TimeSpan Pause(TimeSpan profilePause) => Active && profilePause > BoostedPause ? BoostedPause : profilePause;
 
     /// <summary>
-    /// True once the list has run out with gold idle (75 cycles of 24 Nov ordered nothing, ~364g idle), at most hourly.
+    /// True once nothing has waited for several cycles with gold idle (75 cycles of 24 Nov ordered nothing, ~364g idle), at
+    /// most hourly.
     /// </summary>
     public bool TakeWiderScan(DateTimeOffset nowUtc)
     {

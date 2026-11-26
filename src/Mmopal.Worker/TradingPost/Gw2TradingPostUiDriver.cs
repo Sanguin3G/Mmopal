@@ -174,6 +174,8 @@ public sealed partial class Gw2TradingPostUiDriver
     private static readonly CaptureRegion CharSelectNameRegion = new(40, 375, 440, 50);
     private static readonly CaptureRegion InGameInteractRegion = new(250, 220, 550, 500);
     private static readonly CaptureRegion ModalPriceSpinnerRegion = new(545, 265, 80, 65);
+    // The green "Success" box's title, centred over the item window.
+    private static readonly CaptureRegion SuccessTitleRegion = new(330, 220, 360, 90);
     private static readonly CaptureRegion ModalCloseButtonRegion = new(720, 120, 90, 80);
     private static readonly CaptureRegion BlackLionCrestRegion = new(0, 0, 120, 120);
 

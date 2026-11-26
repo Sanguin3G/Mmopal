@@ -46,6 +46,35 @@ public sealed partial class Gw2TradingPostUiDriver
     }
 
     /// <summary>
+    /// Closes the green "Success — Pick up your coin at the nearest Black Lion trader" box that can cover the item window.
+    /// Its OK button is not the usual one (0.46 against ok.png), and the price spinners still show through it: on 25 Nov
+    /// a price was typed three times with the box in front, so the clicks hit the box and the keys (Backspace, digits)
+    /// reached the game. Returns true when a box was closed.
+    /// </summary>
+    private async Task<bool> DismissSuccessBoxAsync(string context, CancellationToken cancellationToken)
+    {
+        if (await TryFindOnceAsync("success.png", SuccessTitleRegion, 0.90m, cancellationToken).ConfigureAwait(false) is not { } title)
+        {
+            return false;
+        }
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            // Its OK button, measured on the frames of 25 Nov: the title at (466, 258), OK centred at (459, 404).
+            await _input.ClickAsync(title.X - 7, title.Y + 146, cancellationToken).ConfigureAwait(false);
+            await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            if (await TryFindOnceAsync("success.png", SuccessTitleRegion, 0.90m, cancellationToken).ConfigureAwait(false) is null)
+            {
+                _logger.LogInformation("Closed a 'Success' box over the item window during {Context}.", context);
+                return true;
+            }
+        }
+
+        _logger.LogWarning("A 'Success' box over the item window did not close during {Context}.", context);
+        return true;
+    }
+
+    /// <summary>
     /// Clicks OK on an in-game message box (e.g. the frequent "unable to gain access to the log-in server ...
     /// Code=42:..." notice on Asia→EU routes, which does not affect trading) and logs its text. Returns true when one
     /// was dismissed. Call before starting a UI step; the popup is modal and swallows clicks meant for the TP.
@@ -55,7 +84,7 @@ public sealed partial class Gw2TradingPostUiDriver
         var okButton = await TryFindOnceAsync("ok.png", CaptureRegion.FullScreen1024x768, 0.90m, cancellationToken).ConfigureAwait(false);
         if (okButton is null)
         {
-            return false;
+            return await DismissSuccessBoxAsync(context, cancellationToken).ConfigureAwait(false);
         }
 
         var lines = await ReadTextVariantsAsync(PopupTextRegion, cancellationToken).ConfigureAwait(false);

@@ -83,6 +83,18 @@ public sealed class AdaptiveTradingTests
         Assert.False(safe.Active);
     }
 
+    [Theory]
+    [InlineData(0, 2_000_000, true)]   // 26 Nov, 02:00: re-bids only, 200g of 1,250g idle
+    [InlineData(4, 2_000_000, false)]  // items still wait
+    [InlineData(0, 1_000_000, false)]  // 8% idle
+    public void The_list_is_widened_once_nothing_waits_and_an_eighth_of_the_gold_is_idle(int waiting, long idle, bool widened)
+    {
+        var boost = new PaceBoost();
+        for (var i = 0; i < PaceBoost.IdleCyclesBeforeWiderScan; i++) boost.Update(new CyclePressure(waiting, 3, false, idle, 4_000_000, 12_500_000), allowed: true);
+
+        Assert.Equal(widened, boost.TakeWiderScan(Now));
+    }
+
     [Fact]
     public void A_list_that_ran_out_with_gold_idle_is_widened_at_most_hourly()
     {

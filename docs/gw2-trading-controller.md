@@ -65,6 +65,11 @@ another item, placed at that second and price, is Mmopal's mistake and is cancel
 
 **Relist** does the same for listings, not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
 
+## Popups over the item window
+
+The green **Success** box ("Pick up your coin at the nearest Black Lion trader") is closed with its OK button before each price
+box is clicked and again before its keys are pressed (`Closed a 'Success' box …`); if it stays, nothing is typed.
+
 ## Reading names
 
 The font of the lists and the search box is Trebuchet MS, which comes with Windows. Mmopal draws the expected name and

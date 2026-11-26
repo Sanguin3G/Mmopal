@@ -184,6 +184,48 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Contains((447, 405), input.Clicks);
     }
 
+    [Fact]
+    public async Task A_Success_box_over_the_window_is_closed_before_a_key_is_pressed()
+    {
+        // 25 Nov: the box covered the price boxes three times; the keys went to the game.
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["items_tab.png"] = new(710, 75, 58, 63, 1.00m),
+            ["search.png"] = new(74, 191, 44, 16, 1.00m),
+            ["item.png"] = new(389, 182, 37, 18, 0.95m),
+            ["currentSellers.png"] = new(535, 466, 123, 24, 1.00m),
+            ["arrow_up.png"] = new(596, 300, 10, 8, 1.00m),
+            ["ListThisItem.png"] = new(392, 396, 110, 18, 0.95m)
+        });
+        var typedBehindTheBox = false;
+        templates.DynamicMatches["success.png"] = () =>
+        {
+            var shown = !input.Clicks.Contains((459, 404));
+            typedBehindTheBox |= shown && input.TextsSent.Contains("14");
+            return shown ? new TemplateMatch(466, 258, 124, 35, 1.00m) : null;
+        };
+        var locator = new FakeUiTextLocator(region => (region.X, region.Y) switch
+        {
+            (325, 240) => [new OcrTextBox("Mist-Infused Maintenance Oil", 393, 290, 150, 12)],
+            (330, 165) => [new OcrTextBox("Mist-Infused Maintenance Oil", 347, 175, 300, 24)],
+            (530, 505) => [new OcrTextBox("14. 6.", 727, 522, 50, 13)],
+            (260, 330) => [new OcrTextBox("Total Price: 14e 5e", 273, 341, 220, 22)],
+            _ => Array.Empty<OcrTextBox>()
+        });
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank }, templates, input, new FakeWindowController(), string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 60, ActionSettleDelayMs: 0), NullLogger.Instance, pollIntervalMs: 5, requireTemplateFilesOnDisk: false, textLocator: locator);
+        var pricing = new Dictionary<string, SellPricing>(StringComparer.OrdinalIgnoreCase) { ["Mist-Infused Maintenance Oil"] = new(1_406, 1_200) };
+
+        var listed = Assert.Single(await driver.SellInventoryPassDetailedAsync(["Mist-Infused Maintenance Oil"], 3, 1, 1, CancellationToken.None, pricing));
+
+        Assert.Contains((459, 404), input.Clicks);
+        Assert.False(typedBehindTheBox);
+        Assert.Equal(SellPassItemOutcome.Listed, listed.Outcome);
+    }
+
     [Theory]
     [InlineData(true)]   // known to the pass, but the API gave no price
     [InlineData(false)]

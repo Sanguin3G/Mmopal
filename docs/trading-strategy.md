@@ -43,7 +43,7 @@ Background: [GW2 Wiki](https://wiki.guildwars2.com/wiki/TP), [AuricDB](https://a
 | Drop what does not fill | A top bid unfilled after 24 hours is cancelled and the item waits 12 hours. 97% of fills come within 24 h. |
 | Leave bot wars | Outbid 3 times without a fill: 3 hours' pause, then 6, 12 and 24. A fill resets it. Outbid 6+ times in the last day without a fill: paused for the first 6 hours. |
 | Order size | The configured size, or 3% of a day's trades (10 at most). Doubled (20 at most) for proven items: 3+ orders in 14 days, half of them filled completely, 4+ units sold at a profit, half within 4 hours; not while two orders' worth is listed. An order never costs more than Max Buy; sizes on your own list stay. |
-| Use idle gold | 5+ items waiting and a quarter of the gold idle: 5 per cycle and a 25 s pause until the backlog, the cap room or the gold is gone (not at Safe pace). Nothing to order for 5 cycles: items trading half as often are added, at most hourly. |
+| Use idle gold | 5+ items waiting and a quarter of the gold idle: 5 per cycle and a 25 s pause until the backlog, the cap room or the gold is gone (not at Safe pace). Nothing left waiting for 5 cycles with an eighth of the gold idle: items trading half as often are added, at most hourly. |
 
 **Selling**
 

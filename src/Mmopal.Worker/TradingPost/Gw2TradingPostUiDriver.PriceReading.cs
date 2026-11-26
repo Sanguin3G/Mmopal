@@ -463,8 +463,22 @@ public sealed partial class Gw2TradingPostUiDriver
                 return false;
             }
 
+            // A box over the window takes the click, and the keys then go to the game. Checked before the click and again
+            // right before the keys, since it can appear at any moment.
+            await DismissSuccessBoxAsync("typing a price", cancellationToken).ConfigureAwait(false);
             await _input.ClickAsync(x, anchorY + 7, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            if (await DismissSuccessBoxAsync("typing a price", cancellationToken).ConfigureAwait(false))
+            {
+                if (await TryFindOnceAsync("success.png", SuccessTitleRegion, 0.90m, cancellationToken).ConfigureAwait(false) is not null)
+                {
+                    return false;
+                }
+
+                await _input.ClickAsync(x, anchorY + 7, cancellationToken).ConfigureAwait(false);
+                await SettleShortAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             await ReplaceFieldTextAsync(value.ToString(System.Globalization.CultureInfo.InvariantCulture), LongestNumberText, cancellationToken).ConfigureAwait(false);
             await SettleShortAsync(cancellationToken).ConfigureAwait(false);
         }
