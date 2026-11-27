@@ -130,7 +130,7 @@ Behind it, `mmopal.db` keeps every live session for 180 days:
 | Table | One row per | Holds |
 | --- | --- | --- |
 | `cycle_metrics` | cycle | JSON: character, market phase, seconds per step, accepted and skip reasons, wallet, gold in orders (and over 12 h old), outbid and undercut counts, unsold units |
-| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search, reading | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
+| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search, reading, goal | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
 
 ```sql
 -- what keeps failing, over all runs

@@ -144,6 +144,19 @@
                         <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought items" IsChecked="False" Checked="AutoSellInventory_Changed" Unchecked="AutoSellInventory_Changed" VerticalAlignment="Center" Margin="0,0,0,4" ToolTip="Lists only items Mmopal bought: items it placed buy orders for in the last 30 days and the current shopping list. Other bag items are never touched. Needs an API key with the characters and inventories permissions." />
                     </WrapPanel>
                 </DockPanel>
+
+                <!-- Gold the player wants for playing: kept, and freed by a time. Remembered per account. -->
+                <WrapPanel x:Name="GoldForYouPanel" Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBlock Text="GOLD FOR YOU" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <TextBlock Text="Keep" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox x:Name="KeepGoldBox" Width="64" VerticalAlignment="Center" ToolTip="Gold Mmopal never touches: it stays in the wallet on top of the reserve, and Auto-Tune sizes everything from the rest." />
+                    <TextBlock Text="g" VerticalAlignment="Center" Margin="4,0,16,0" />
+                    <TextBlock Text="Free" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox x:Name="FreeGoldBox" Width="64" VerticalAlignment="Center" ToolTip="Gold you want in the wallet, for example to play or buy something. No buy order takes the wallet below it; Mmopal cancels its own buy orders (free) as far as needed, and listings sell as usual, never below what was paid." />
+                    <TextBlock Text="g by" VerticalAlignment="Center" Margin="4,0,6,0" />
+                    <TextBox x:Name="FreeGoldByBox" Width="56" VerticalAlignment="Center" ToolTip="Time of day (HH:mm), today or else tomorrow. Empty: as soon as it can." />
+                    <TextBlock x:Name="GoldForYouHint" Text="Remembered per account; empty = none." Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                </WrapPanel>
             </StackPanel>
         </Border>
 

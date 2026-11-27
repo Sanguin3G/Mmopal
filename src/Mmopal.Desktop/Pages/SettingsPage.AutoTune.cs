@@ -86,7 +86,7 @@ public partial class SettingsPage
             ? null
             : TradingIncomeAnalytics.Analyze(Host.IncomePage.ArchivedTransactions, DateTimeOffset.UtcNow.AddDays(-SmartAutoTuner.ResultsWindowDays));
         var tune = SmartAutoTuner.Tune(new AutoTuneInputs(
-            walletCopper,
+            Math.Max(0, walletCopper - Host.KeptGoldCopper), // gold kept for the player is not trading capital
             snapshot?.ActiveBuysCopper ?? 0,
             snapshot?.ActiveSellsNetCopper ?? 0,
             recent));

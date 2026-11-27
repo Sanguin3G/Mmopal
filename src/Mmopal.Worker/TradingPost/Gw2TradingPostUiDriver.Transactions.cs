@@ -28,14 +28,16 @@ public sealed partial class Gw2TradingPostUiDriver
         out int keptYoungCount,
         Func<Transaction, bool>? mayCancel = null,
         Func<string, bool>? givenUp = null,
-        TimeSpan? minAge = null)
+        TimeSpan? minAge = null,
+        Func<Transaction, bool>? mustGo = null)
     {
         var buys = transactions
             .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
             .ToArray();
-        bool IsDue(Transaction tx) =>
+        bool MustGo(Transaction tx) => mustGo?.Invoke(tx) == true;
+        bool IsDue(Transaction tx) => MustGo(tx) ||
             (tx.MinimumBuyPriceCopper is { } topBid && topBid > tx.PriceCopper) || nowUtc - tx.Created >= StaleBuyOrderAge;
-        bool IsOldEnough(Transaction tx) => nowUtc - tx.Created >= (minAge ?? MinOrderAgeBeforeOutbidCancel);
+        bool IsOldEnough(Transaction tx) => MustGo(tx) || nowUtc - tx.Created >= (minAge ?? MinOrderAgeBeforeOutbidCancel);
         bool IsOurs(Transaction tx) => mayCancel?.Invoke(tx) ?? true;
         var skipped = new List<string>();
         var safe = new List<Transaction>();
@@ -107,7 +109,8 @@ public sealed partial class Gw2TradingPostUiDriver
         int maxCancelsPerPass,
         Func<Transaction, bool>? mayCancel = null,
         CancellationToken cancellationToken = default,
-        bool goldCapReached = false)
+        bool goldCapReached = false,
+        Func<Transaction, bool>? freeGold = null)
     {
         // Reset first: a pass that returns early (reset window) must not report the previous pass's cancels again.
         LastCanceledOutbidItems = Array.Empty<string>();
@@ -127,7 +130,7 @@ public sealed partial class Gw2TradingPostUiDriver
             // The reset window is when sellers dump into buy orders; keep every order standing to catch those fills.
             // Unless the gold cap is reached: then orders outbid for an hour are gold that nothing can be bought with
             // (39 of 60 cycles bought nothing in the window of 24 Nov, with 31-53 of 85 orders outbid).
-            if (!goldCapReached)
+            if (!goldCapReached && !transactions.Any(order => freeGold?.Invoke(order) == true))
             {
                 _logger.LogDebug("Outbid Refresh paused during the daily reset window.");
                 return 0;
@@ -136,7 +139,7 @@ public sealed partial class Gw2TradingPostUiDriver
             minAge = ResetWindowCancelAge;
         }
 
-        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp, minAge);
+        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp, minAge, freeGold);
         if (keptYoung > 0)
         {
             _logger.LogInformation(
@@ -175,6 +178,7 @@ public sealed partial class Gw2TradingPostUiDriver
         _cancelListNames = OwnNames(transactions, TransactionType.Buy);
         var canceledNames = new List<string>();
         var staleNames = new List<string>();
+        var freedNames = new List<string>();
         foreach (var order in outbidBuys)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -203,7 +207,16 @@ public sealed partial class Gw2TradingPostUiDriver
             {
                 await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
                 NoteAnswer();
-                if (order.MinimumBuyPriceCopper is { } top && top > order.PriceCopper)
+                if (freeGold?.Invoke(order) == true)
+                {
+                    freedNames.Add(order.ItemName);
+                    _logger.LogInformation(
+                        "Freed {Gold} for you: cancelled the buy order for {Qty}x {Item}.",
+                        MarketScanItem.FormatCoins(Math.Max(0, order.PriceCopper) * Math.Max(1, order.Quantity)),
+                        order.Quantity,
+                        order.ItemName);
+                }
+                else if (order.MinimumBuyPriceCopper is { } top && top > order.PriceCopper)
                 {
                     canceledNames.Add(order.ItemName);
                     _logger.LogInformation(
@@ -229,7 +242,8 @@ public sealed partial class Gw2TradingPostUiDriver
         _cancelRowPrice = null;
         LastCanceledOutbidItems = canceledNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         LastCanceledStaleItems = staleNames;
-        return canceledNames.Count + staleNames.Count;
+        LastFreedItems = freedNames;
+        return canceledNames.Count + staleNames.Count + freedNames.Count;
     }
 
     /// <summary>

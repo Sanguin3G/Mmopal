@@ -127,6 +127,8 @@ public sealed class MainWindowSmokeTests
                 Assert.Equal(@"C:\Games\Guild Wars 2\Gw2-64.exe", preparer.Calls[0].Settings.ExecutablePath);
                 Assert.Equal("Positioned Guild Wars 2 at top-left (0, 0) sized 1024x768.", status.Text);
 
+                Assert.IsType<TextBox>(window.FindElement("KeepGoldBox")).Text = "100";
+                Assert.IsType<TextBox>(window.FindElement("FreeGoldBox")).Text = "500";
                 RequireButton(window, "Start session").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 PumpDispatcher();
                 Assert.Equal("Session started", status.Text);
@@ -142,6 +144,9 @@ public sealed class MainWindowSmokeTests
                     new JsonSerializerOptions(JsonSerializerDefaults.Web));
                 Assert.NotNull(replay);
                 Assert.Equal("replay", replay.Source);
+                Assert.Equal(1_000_000, replay.KeepGoldCopper);
+                Assert.Equal(5_000_000, replay.FreeGoldCopper);
+                Assert.Null(replay.FreeGoldByUtc);
                 Assert.Equal("D:/tmp/candidates.json", replay.CandidatesPath);
                 Assert.NotNull(replay.ClientSettings);
                 Assert.Equal(@"C:\Games\Guild Wars 2\Gw2-64.exe", replay.ClientSettings.ExecutablePath);

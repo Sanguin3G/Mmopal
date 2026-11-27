@@ -972,6 +972,7 @@ public partial class MainWindow : Window
         RefreshHasVerifiedApiKey();
         SelectActiveAccountLaunchPlatform();
         SelectActiveAccountParkedCharacters();
+        SelectActiveAccountGoldGoal();
         RebuildApiKeyViews();
     }
 
@@ -1008,6 +1009,29 @@ public partial class MainWindow : Window
         SettingsPage.ParkedCharactersBox.Text = parked.ToString(CultureInfo.InvariantCulture);
         IsLoadingUi = wasLoading;
     }
+
+    /// <summary>Shows the active account's Gold for you row.</summary>
+    private void SelectActiveAccountGoldGoal()
+    {
+        var entry = ApiKeyVault.ActiveEntry;
+        var wasLoading = IsLoadingUi;
+        IsLoadingUi = true;
+        SessionPage.KeepGoldBox.Text = entry?.KeepGold is { } keep ? keep.ToString(CultureInfo.CurrentCulture) : string.Empty;
+        SessionPage.FreeGoldBox.Text = entry?.FreeGold is { } free ? free.ToString(CultureInfo.CurrentCulture) : string.Empty;
+        SessionPage.FreeGoldByBox.Text = entry?.FreeGoldBy ?? string.Empty;
+        IsLoadingUi = wasLoading;
+    }
+
+    internal void RememberGoldGoalForActiveAccount(decimal? keep, decimal? free, string? by)
+    {
+        if (ApiKeyVault.ActiveEntry is { } active && (active.KeepGold != keep || active.FreeGold != free || active.FreeGoldBy != by))
+        {
+            UpdateVaultEntry(active.Id, entry => entry with { KeepGold = keep, FreeGold = free, FreeGoldBy = by });
+        }
+    }
+
+    /// <summary>Gold the active account keeps for the player, which Auto-Tune leaves out of the capital it sizes from.</summary>
+    internal long KeptGoldCopper => ApiKeyVault.ActiveEntry?.KeepGold is { } keep and > 0 ? (long)(keep * 10_000m) : 0;
 
     private void RememberParkedCharactersForActiveAccount(Gw2ClientSettings settings)
     {
@@ -1085,6 +1109,7 @@ public partial class MainWindow : Window
         RefreshHasVerifiedApiKey();
         SelectActiveAccountLaunchPlatform();
         SelectActiveAccountParkedCharacters();
+        SelectActiveAccountGoldGoal();
         RebuildApiKeyViews();
         RefreshReadinessChecklist();
         SettingsPage.SaveAllSettingsSilently();

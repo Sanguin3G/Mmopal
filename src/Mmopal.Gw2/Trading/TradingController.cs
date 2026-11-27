@@ -45,6 +45,11 @@ public sealed class TradingCycleController
     /// <summary>Orders per cycle; the pace boost raises it while items wait and gold is idle.</summary>
     public int MaxActionsPerCycle { get; set; }
 
+    /// <summary>A wallet floor above the configured reserve, for gold the player asked to keep or free (see <see cref="GoldGoal"/>).</summary>
+    public long FloorCopper { get; set; }
+
+    private long MinimumBalance => Math.Max(Math.Max(0L, _options.MinimumBalanceCopper), FloorCopper);
+
     public TradingCycleController(
         CheckpointStore store,
         ILogger logger,
@@ -116,7 +121,7 @@ public sealed class TradingCycleController
             }
 
             long? remainingSpendable = market.Balance is { Copper: > 0 } balance
-                ? Math.Max(0L, balance.Copper - Math.Max(0L, _options.MinimumBalanceCopper))
+                ? Math.Max(0L, balance.Copper - MinimumBalance)
                 : null;
             DetectSearchMismatches(runId, market.Transactions);
             AuditPlacedPrices(runId, market.Transactions);
@@ -312,7 +317,7 @@ public sealed class TradingCycleController
             return "Wallet balance is 0g; buy orders paused (sell/collect only).";
         }
 
-        if (_options.MinimumBalanceCopper > 0 && balance.Copper <= _options.MinimumBalanceCopper)
+        if (MinimumBalance > 0 && balance.Copper <= MinimumBalance)
         {
             return "Balance is at or below the configured gold reserve floor; buy orders paused (sell/collect only).";
         }

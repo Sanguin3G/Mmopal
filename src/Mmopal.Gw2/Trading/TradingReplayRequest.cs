@@ -34,7 +34,11 @@ public sealed record TradingReplayRequest(
     SessionReportPolicySettings? ReportSettings = null,
     // Re-run the Market Scanner with these filters every AutoRescanIntervalMinutes during the session (0 = off).
     MarketScanFilter? AutoRescanFilter = null,
-    int AutoRescanIntervalMinutes = 0)
+    int AutoRescanIntervalMinutes = 0,
+    // Gold for playing (see GoldGoal): kept in the wallet, and freed by a time.
+    long KeepGoldCopper = 0,
+    long FreeGoldCopper = 0,
+    DateTimeOffset? FreeGoldByUtc = null)
 {
     public IReadOnlyList<ItemCandidate> EffectiveCandidates => Candidates ?? Array.Empty<ItemCandidate>();
     public IReadOnlyList<string> EffectiveBlacklist => Blacklist ?? Array.Empty<string>();

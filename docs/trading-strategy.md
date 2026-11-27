@@ -45,6 +45,8 @@ Background: [GW2 Wiki](https://wiki.guildwars2.com/wiki/TP), [AuricDB](https://a
 | Order size | The configured size, or 3% of a day's trades (10 at most). Doubled (20 at most) for proven items: 3+ orders in 14 days, half of them filled completely, 4+ units sold at a profit, half within 4 hours; not while two orders' worth is listed. An order never costs more than Max Buy; sizes on your own list stay. |
 | Use idle gold | 5+ items waiting and a quarter of the gold idle: 5 per cycle and a 25 s pause until the backlog, the cap room or the gold is gone (not at Safe pace). Nothing left waiting for 5 cycles with an eighth of the gold idle and under 40% of it in buy orders: the 25 best items trading half as often are added, at most hourly. |
 
+| Best return per gold first | The list is worked by each item's expected return per gold placed: its own fill share times its own margin over 14 days, pulled towards the account's average while its record is short (Session log: `Item memory: …`). An item's margin carries over from week to week (correlation 0.84 over 72 items); how fast it sells does not. |
+
 **Selling**
 
 | Rule | Detail |
@@ -75,6 +77,15 @@ Runs at launch and before each session, never during one (Settings → Trading &
    size by 50%.
 
 Min ROI stays within 8–25%, Min trades/day within 5–50. Values you set by hand are kept until you click **Auto-Tune**.
+
+## Gold for you
+
+Session page, remembered per account:
+
+- **Keep X g:** never touched. It stays in the wallet on top of the reserve, and Auto-Tune sizes everything from the rest.
+- **Free X g by HH:mm:** no buy order takes the wallet below X; Mmopal's own buy orders are cancelled (free) as far as
+  needed, outbid ones first, then the oldest, also in the reset window; listings sell as usual, never below what was paid.
+  The log says where it stands (`Gold for you: …`) and at the time, how much is free. Empty time: as soon as it can.
 
 ## Lists
 
