@@ -146,10 +146,10 @@ public sealed class AdaptiveTradingTests
         new(TransactionType.Sell, name, price, 1, Now.AddHours(-hoursAgo), lowestAsk, null);
 
     [Fact]
-    public void Relist_takes_items_with_several_listings_only_when_every_one_qualifies()
+    public void Each_listing_of_an_item_is_judged_on_its_own()
     {
-        // Pyre Dye, 22 Nov: three listings; the cancel flow clicks the first Cancel button its search shows, which
-        // was not the stale one, twice.
+        // The cancel now clicks the row that shows the listing's price, so a fresh listing of an item bought again and
+        // again no longer keeps its old ones up (Jade Gate Statuette, 62 h, 27 Nov).
         var orders = new[]
         {
             Listing("Pyre Dye", 13_988, 9_208, 43),
@@ -161,11 +161,9 @@ public sealed class AdaptiveTradingTests
         var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase) { ["Pyre Dye"] = 6_996, ["Ebonblade"] = 2_036 };
         var traded = new HashSet<string>(["Pyre Dye", "Ebonblade"], StringComparer.OrdinalIgnoreCase);
 
-        var picks = SellRelistPolicy.Select(orders, paid, traded, new Dictionary<string, DateTimeOffset>(), undercutCopper: 1, Now, maxPerPass: 5);
+        var picks = SellRelistPolicy.Select(orders, paid, traded, undercutCopper: 1, Now, maxPerPass: 5);
 
-        var pick = Assert.Single(picks);
-        Assert.Equal("Ebonblade", pick.Listing.ItemName);
-        Assert.Equal(3_912, pick.Listing.PriceCopper); // the fee counted as lost is the dearest listing's
+        Assert.Equal([13_988L, 12_040, 3_912, 3_800], picks.Select(pick => pick.Listing.PriceCopper)); // oldest first; the 1 h one waits
     }
 
     [Fact]
@@ -185,8 +183,23 @@ public sealed class AdaptiveTradingTests
         Assert.Empty(tracker.GetReadyTargets(Now.AddMinutes(14), 5));
         Assert.True(tracker.WasJustListed("Flame Dye", Now.AddMinutes(14)));
 
-        tracker.SyncFromCharacterInventory(["Flame Dye"], Now.AddMinutes(20)); // another stack really is there
-        Assert.Equal(["Flame Dye"], tracker.GetReadyTargets(Now.AddMinutes(20), 5));
+        tracker.SyncFromCharacterInventory(["Flame Dye"], Now.AddMinutes(23)); // another stack really is there
+        Assert.Equal(["Flame Dye"], tracker.GetReadyTargets(Now.AddMinutes(23), 5));
+    }
+
+    [Fact]
+    public void A_fill_reported_right_after_a_listing_waits_until_the_bags_can_tell()
+    {
+        // 26 Nov: orders of 4 fill a unit at a time; the history reported a fill whose unit was already listed, and the
+        // item was searched for three times in 20 minutes.
+        var tracker = new PendingSellInventoryTracker();
+        tracker.RecordNewBuyFill(["Superior Sigil of Celerity"], Now);
+        tracker.RecordSellPassResults([new SellPassItemResult("Superior Sigil of Celerity", SellPassItemOutcome.Listed)], Now.AddMinutes(1));
+
+        tracker.RecordNewBuyFill(["Superior Sigil of Celerity"], Now.AddMinutes(4));
+
+        Assert.Empty(tracker.GetReadyTargets(Now.AddMinutes(5), 5));
+        Assert.Equal(["Superior Sigil of Celerity"], tracker.GetReadyTargets(Now.AddMinutes(11), 5));
     }
 
     [Fact]
@@ -199,21 +212,19 @@ public sealed class AdaptiveTradingTests
             Listing("Thin Margin", 13_000, 11_000, 20),      // 10,999 nets 9,349 < 9,000 + 650
             Listing("Not Traded", 13_000, 12_500, 20),       // not on the scanner's list
             Listing("At The Top", 13_000, 13_000, 20),       // we are the lowest ask
-            Listing("Relisted Today", 13_000, 12_500, 20)
+            Listing("Thin But Old", 13_000, 11_000, 50),     // 9,349 >= 9,000: after two days the old fee is spent anyway
         };
         var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
         {
             ["Old Undercut"] = 9_000, ["Young Undercut"] = 9_000, ["Thin Margin"] = 9_000,
-            ["Not Traded"] = 9_000, ["At The Top"] = 9_000, ["Relisted Today"] = 9_000
+            ["Not Traded"] = 9_000, ["At The Top"] = 9_000, ["Thin But Old"] = 9_000
         };
-        var traded = new HashSet<string>(["Old Undercut", "Young Undercut", "Thin Margin", "At The Top", "Relisted Today"], StringComparer.OrdinalIgnoreCase);
-        var relisted = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase) { ["Relisted Today"] = Now.AddHours(-5) };
+        var traded = new HashSet<string>(["Old Undercut", "Young Undercut", "Thin Margin", "At The Top", "Thin But Old"], StringComparer.OrdinalIgnoreCase);
 
-        var picks = SellRelistPolicy.Select(orders, paid, traded, relisted, undercutCopper: 1, Now, maxPerPass: 5);
+        var picks = SellRelistPolicy.Select(orders, paid, traded, undercutCopper: 1, Now, maxPerPass: 5);
 
-        var pick = Assert.Single(picks);
-        Assert.Equal("Old Undercut", pick.Listing.ItemName);
-        Assert.Equal(12_499, pick.NewPriceCopper);
+        Assert.Equal(["Thin But Old", "Old Undercut"], picks.Select(pick => pick.Listing.ItemName));
+        Assert.Equal(12_499, picks[1].NewPriceCopper);
     }
 
     [Fact]
@@ -227,7 +238,7 @@ public sealed class AdaptiveTradingTests
         };
         var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase) { ["Mini Undead Chicken"] = 79_216, ["Off The List"] = 9_000, ["Magi's Insignia"] = 4_182 };
 
-        var picks = SellRelistPolicy.Select(orders, paid, new HashSet<string>(), new Dictionary<string, DateTimeOffset>(), undercutCopper: 1, Now, maxPerPass: 5);
+        var picks = SellRelistPolicy.Select(orders, paid, new HashSet<string>(), undercutCopper: 1, Now, maxPerPass: 5);
 
         Assert.Equal("Mini Undead Chicken", Assert.Single(picks).Listing.ItemName);
     }

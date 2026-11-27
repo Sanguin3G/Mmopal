@@ -98,6 +98,13 @@ public sealed partial class Gw2TradingPostUiDriver
             return new TradingActionResult(action, TradingActionStatus.Failed, $"Search field not found when looking up '{action.ItemName}'.");
         }
 
+        if (_textLocator is not null && !_lastSearchBoxProven && !_lastSearchShowedName)
+        {
+            // Neither the box nor the list shows the name: the search did not apply and the list is another one. Opening its
+            // rows found three wrong items and counted the item as unreachable (Jade Gate Statuette, 26 Nov).
+            return new TradingActionResult(action, TradingActionStatus.Failed, $"The search for '{action.ItemName}' did not apply; nothing was opened.");
+        }
+
         await SettleAsync(cancellationToken).ConfigureAwait(false);
         await GoToRestPositionAsync(cancellationToken).ConfigureAwait(false);
 

@@ -345,7 +345,6 @@ public sealed partial class WorkerRuntime
                 relistable,
                 paid,
                 session.CandidateNames,
-                _relistedAtUtc,
                 Math.Max(1, session.Request.UndercutBufferMinCopper),
                 now,
                 maxPerPass: 2);
@@ -358,7 +357,6 @@ public sealed partial class WorkerRuntime
             RecordUnconfirmedCancels(session, liveDriver);
             foreach (var name in cancelled)
             {
-                _relistedAtUtc[name] = now;
                 RecordEvent(session, "relist", "cancelled", name, activity: $"Cancelled the undercut listing of {name} to relist it");
                 session.Report.RecordTrade(now, "Relist", name, 1, 0, "Canceled", "Undercut listing cancelled for relisting; it returns via the Delivery Box.");
             }

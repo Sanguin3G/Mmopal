@@ -125,7 +125,6 @@ public sealed partial class WorkerRuntime
         _lastCharacterSwapUtc = DateTimeOffset.MinValue;
         _buyCompetition = new BuyCompetitionTracker();
         await PauseYesterdaysBotWarsAsync(mode, cancellationToken).ConfigureAwait(false);
-        _relistedAtUtc.Clear();
         _deliveryLockedSinceUtc = null;
         var templateRoot = string.IsNullOrWhiteSpace(request.TemplateRoot)
             ? _templateRoot ?? string.Empty

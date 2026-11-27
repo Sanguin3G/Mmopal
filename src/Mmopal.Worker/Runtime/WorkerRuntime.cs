@@ -32,7 +32,6 @@ public sealed partial class WorkerRuntime
     // Session-scoped adaptive state (reset at session start).
     private BuyCompetitionTracker _buyCompetition = new();
     private PendingSellInventoryTracker? _sessionSellTracker;
-    private readonly Dictionary<string, DateTimeOffset> _relistedAtUtc = new(StringComparer.OrdinalIgnoreCase);
     // First time the Delivery Box was still locked after reopening at the trader on the current character.
     private DateTimeOffset? _deliveryLockedSinceUtc;
     // Since when the box has looked empty on screen while the API still reports something to collect.

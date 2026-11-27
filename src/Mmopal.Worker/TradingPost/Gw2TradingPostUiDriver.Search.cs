@@ -452,6 +452,7 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         var typed = box is SearchBoxText.Holds or SearchBoxText.HoldsCutOff;
+        _lastSearchBoxProven = typed;
         if (typed && await TradingPostProvenAsync(cancellationToken).ConfigureAwait(false))
         {
             await _input.KeyPressAsync("enter", cancellationToken).ConfigureAwait(false);

@@ -379,7 +379,9 @@ public sealed partial class WorkerRuntime
         }
 
         session.Controller.MaxActionsPerCycle = session.PerPass;
-        if (session.Boost.TakeWiderScan(_utcNow()))
+        // Not when buy orders already hold most of what they may: on 26 Nov the wider list's orders took 198g of 494g and
+        // the cap then blocked the items that fill.
+        if (pressure.TotalCopper > 0 && pressure.BuyOrdersCopper < pressure.TotalCopper * 0.4 && session.Boost.TakeWiderScan(_utcNow()))
         {
             await WidenShoppingListAsync(session, cancellationToken).ConfigureAwait(false);
         }
@@ -389,6 +391,8 @@ public sealed partial class WorkerRuntime
     /// Adds items that trade half as often as the scanner's filter asks, because every item on the list has an order.
     /// They stay until the next regular re-scan.
     /// </summary>
+    private const int WiderScanNewItems = 25;
+
     private async Task WidenShoppingListAsync(TradingSession session, CancellationToken cancellationToken)
     {
         if (session.Request.AutoRescanFilter is not { } filter || _marketScanner is null)
@@ -403,6 +407,10 @@ public sealed partial class WorkerRuntime
             return;
         }
 
+        // The best-ranked ones only: three widenings on 26 Nov grew the list from ~130 to 237 items, and the 67 new items
+        // filled 27% of their units against 34% for the known ones.
+        var known = CandidateNameSet(session.Candidates);
+        found = found.Where(candidate => !known.Contains(candidate.ItemName.Trim())).Take(WiderScanNewItems).ToArray();
         var before = session.Candidates.Count;
         session.Candidates = MergeWithCustomList(session.Candidates, found);
         session.CandidateNames.UnionWith(CandidateNameSet(found));

@@ -276,9 +276,12 @@ public sealed partial class Gw2TradingPostUiDriver
             }
 
             await SettleAsync(cancellationToken).ConfigureAwait(false);
-            var cancelBtn = await FindTransactionCancelButtonAsync(cancellationToken).ConfigureAwait(false);
+            // The row that shows this listing's price, not the first one: with several listings of an item the first Cancel
+            // was often another one, and the old listing stayed up (Cavalier's Intricate Gossamer Insignia, 88 h, 27 Nov).
+            var cancelBtn = await FindCancelForPriceAsync(relist.Listing.PriceCopper, cancellationToken).ConfigureAwait(false);
             if (cancelBtn is null || IsPaused)
             {
+                _logger.LogInformation("Relist skipped for {Item}: no row shows its listing at {Price}.", relist.Listing.ItemName, MarketScanItem.FormatCoins(relist.Listing.PriceCopper));
                 continue;
             }
 
@@ -335,6 +338,37 @@ public sealed partial class Gw2TradingPostUiDriver
         }
 
         return true;
+    }
+
+    // My Transactions rows, 60.25 px apart (measured on six rows, 23 Nov); the Cancel button and the price of row k.
+    private const double TransactionRowStride = 60.25;
+    private const int TransactionRowsVisible = 6;
+    private const double TransactionPriceEm = 13.6;
+    private static CaptureRegion TransactionCancelRegion(int row) => new(880, 250 + (int)(row * TransactionRowStride), 100, 46);
+    private static CaptureRegion TransactionPriceRegion(int row) => new(730, 252 + (int)(row * TransactionRowStride), 140, 34);
+
+    /// <summary>
+    /// The Cancel button of the row that shows this price, or null when no row proves it. The rows are already filtered to the
+    /// item's name; equal prices are equal listings for a relist.
+    /// </summary>
+    private async Task<TemplateMatch?> FindCancelForPriceAsync(long priceCopper, CancellationToken cancellationToken)
+    {
+        var frame = await _screenshots.CaptureAsync(CaptureRegion.FullScreen1024x768, cancellationToken).ConfigureAwait(false);
+        for (var row = 0; row < TransactionRowsVisible; row++)
+        {
+            if (await TryFindInFrameAsync(frame, "transactions_cancel.png", TransactionCancelRegion(row), 0.80m, cancellationToken).ConfigureAwait(false) is not { } cancel)
+            {
+                break; // no more rows
+            }
+
+            if (RowPriceReader.Shows(frame, TransactionPriceRegion(row), priceCopper, TransactionPriceEm) ||
+                (row == 0 && _textLocator is not null && RowShowsPrice(await ReadTextVariantsAsync(TransactionFirstPriceRegion, cancellationToken, enlargeMore: true).ConfigureAwait(false), priceCopper)))
+            {
+                return cancel;
+            }
+        }
+
+        return null;
     }
 
     private async Task<TemplateMatch?> FindTransactionCancelButtonAsync(CancellationToken cancellationToken) =>

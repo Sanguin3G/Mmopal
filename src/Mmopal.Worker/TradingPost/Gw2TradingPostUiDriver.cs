@@ -126,6 +126,8 @@ public sealed partial class Gw2TradingPostUiDriver
     private const int UnconfirmedCancelSearchesBeforeSkip = 2;
     private bool _lastSearchFoundNothing;
     private bool _lastSearchShowedName;
+    // The search box showed the typed name (it then has the focus, and the search applies).
+    private bool _lastSearchBoxProven;
 
     /// <summary>The character entered last ("'Name' (slot #3)" or "slot #3"), for messages; null before any swap.</summary>
     public string? CurrentCharacterLabel { get; private set; }

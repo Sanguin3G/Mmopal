@@ -83,6 +83,30 @@ public sealed class CoinPriceReaderTests
     }
 
     [Fact]
+    public void My_Transactions_rows_are_told_apart_by_their_price()
+    {
+        // Six orders on 23 Nov: 1g 16s 80c, 48s 9c, 21s 1c, 41s 78c, 23s 57c, 2g 6s 19c. A relist clicks the row that shows
+        // its listing's price.
+        using var crop = Cv2.ImRead(Path.Combine(AppContext.BaseDirectory, "Fixtures", "coin-frames", "transaction-rows.png"), ImreadModes.Color);
+        using var canvas = new Mat(768, 1024, MatType.CV_8UC3, Scalar.Black);
+        crop.CopyTo(canvas[new Rect(720, 245, crop.Width, crop.Height)]);
+        using var bgra = new Mat();
+        Cv2.CvtColor(canvas, bgra, ColorConversionCodes.BGR2BGRA);
+        var bytes = new byte[1024 * 768 * 4];
+        System.Runtime.InteropServices.Marshal.Copy(bgra.Data, bytes, 0, bytes.Length);
+        var frame = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, bytes, "Bgra32", 1024 * 4);
+        long[] prices = [11_680, 4_809, 2_101, 4_178, 2_357, 20_619];
+        CaptureRegion Row(int row) => new(730, 252 + (int)(row * 60.25), 140, 34);
+
+        for (var row = 0; row < prices.Length; row++)
+        {
+            Assert.True(RowPriceReader.Shows(frame, Row(row), prices[row], 13.6), $"row {row}");
+            Assert.All(prices.Where((_, other) => other != row).Concat([prices[row] + 1, prices[row] - 1, prices[row] + 100, prices[row] * 2]),
+                wrong => Assert.False(RowPriceReader.Shows(frame, Row(row), wrong, 13.6), $"row {row} taken for {wrong}"));
+        }
+    }
+
+    [Fact]
     public void Nothing_to_read_gives_null_not_a_guess()
     {
         var black = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);

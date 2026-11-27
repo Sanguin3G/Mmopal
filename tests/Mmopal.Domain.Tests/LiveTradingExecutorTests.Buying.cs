@@ -77,6 +77,7 @@ public sealed partial class LiveTradingExecutorTests
             {
                 330 => [new OcrTextBox(secondRowOpened ? "Slice of Allspice Cake" : "Slice of Allspice Cake with Ice Cream", 347, 175, 300, 24)],
                 260 => [new OcrTextBox("Max. Rice o: 54: • 05:", 273, 302, 250, 20)],
+                72 or 66 => [new OcrTextBox("Slice of Allspice Cake", 75, 190, 150, 16)], // the search box holds the name
                 _ => Array.Empty<OcrTextBox>()
             };
         });
@@ -99,6 +100,31 @@ public sealed partial class LiveTradingExecutorTests
         Assert.Contains((407, 265), input.Clicks);
         Assert.Contains((407, 323), input.Clicks);
         Assert.Contains((665, 425), input.Clicks); // placeOrder.png center
+    }
+
+    [Fact]
+    public async Task A_search_that_did_not_apply_opens_no_row()
+    {
+        // 26 Nov: neither the box nor the list showed "Jade Gate Statuette"; three rows of another list were opened.
+        var input = new FakeInputController();
+        var blank = new AutomationFrame(DateTimeOffset.UtcNow, CaptureRegion.FullScreen1024x768, new byte[1024 * 768 * 4], "Bgra32", 1024 * 4);
+        var templates = new FakeTemplateMatcher(new Dictionary<string, TemplateMatch>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["buy_items_tab.png"] = new(527, 101, 77, 30, 0.95m),
+            ["search.png"] = new(60, 110, 120, 24, 0.95m),
+            ["item.png"] = new(389, 218, 37, 18, 0.95m),
+            ["currentBuyers.png"] = new(223, 452, 162, 61, 0.95m)
+        });
+        var locator = new FakeUiTextLocator(region => region.X == 330 ? [new OcrTextBox("Malice", 347, 175, 300, 24)] : Array.Empty<OcrTextBox>());
+        var driver = new Gw2TradingPostUiDriver(
+            new FakeScreenshotProvider { CustomFrameFactory = _ => blank }, templates, input, new FakeWindowController(), string.Empty,
+            new Gw2ClientSettings(UiLoadWaitMs: 40, ActionSettleDelayMs: 0), NullLogger.Instance, pollIntervalMs: 5, requireTemplateFilesOnDisk: false, textLocator: locator);
+
+        var result = await driver.PlaceBuyOrderAsync(new TradingAction(TradingActionKind.PlaceBuyOrder, "Jade Gate Statuette", 13_000, 2, "test"), 1, 1);
+
+        Assert.Equal(TradingActionStatus.Failed, result.Status);
+        Assert.Contains("did not apply", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(input.Clicks, click => click.X == 407); // no result row clicked
     }
 
     [Fact]

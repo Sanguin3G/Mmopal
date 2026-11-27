@@ -63,7 +63,7 @@ stays: yours, a young one, or one at the top bid. A blurred first row counts onl
 to any other order of yours. A row whose name cannot be read is cancelled only when it is the one row shown, at a price no other order of yours has. An item it cannot find on screen twice is left for an hour, then 2, 4, 8 and 16. An order for
 another item, placed at that second and price, is Mmopal's mistake and is cancelled too.
 
-**Relist** does the same for listings, not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
+**Relist** does the same for listings, clicking the Cancel of the row whose price is the listing's (read by drawing the numbers between the coin icons; `Relist skipped for X: no row shows its listing at …` otherwise), not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
 
 ## Popups over the item window
 

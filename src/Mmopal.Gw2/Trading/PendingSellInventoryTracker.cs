@@ -66,7 +66,9 @@ public sealed class PendingSellInventoryTracker
 
     // The bags and listings the API reports are up to ~5 min old: a just-listed item still shows in the bags, and an item
     // in no bag this long after pickup is not there any more. The 22-23 Nov run searched 146 times for such items.
-    private static readonly TimeSpan ApiLag = TimeSpan.FromMinutes(6);
+    // The bags and the trade history the API reports trail the game by up to ~10 minutes: with orders of 4 filling one unit
+    // at a time, a listed unit came back as "to list" three times in 20 minutes (Superior Sigil of Celerity, 26 Nov).
+    private static readonly TimeSpan ApiLag = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan UnseenDropAge = TimeSpan.FromMinutes(10);
 
     public int Count => _entries.Count;
@@ -245,15 +247,17 @@ public sealed class PendingSellInventoryTracker
 
         var name = raw.Trim();
         _suppressedUntilUtc.Remove(name);
+        // Just listed: the report may be of the unit that went up. Tried once the bags can tell.
+        var when = _listedAtUtc.TryGetValue(name, out var listedAt) && nowUtc - listedAt < ApiLag ? listedAt + ApiLag : nowUtc;
         if (_entries.TryGetValue(name, out var existing))
         {
             existing.MissCount = 0;
             existing.LastConfirmedUtc = nowUtc;
-            existing.NextEligibleAttemptUtc = nowUtc;
+            existing.NextEligibleAttemptUtc = when;
         }
         else
         {
-            _entries[name] = new PendingEntry(name, nowUtc, nowUtc);
+            _entries[name] = new PendingEntry(name, nowUtc, when);
         }
     }
 

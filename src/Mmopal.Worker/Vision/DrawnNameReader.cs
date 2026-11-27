@@ -36,7 +36,41 @@ public static class DrawnNameReader
     private const int MinCellWidth = 6;
     private const int BlankAfter = 10;
 
-    public static NameMatch Compare(AutomationFrame frame, NameField field, string name)
+    public static NameMatch Compare(AutomationFrame frame, NameField field, string name) => Compare(frame, field, name, BlankAfter);
+
+    /// <summary>
+    /// The text whose ink starts at (<paramref name="inkLeft"/>, <paramref name="inkTop"/>): for a number found on screen,
+    /// whose pen position is not known. Something may follow it (a coin icon), so the end is not checked.
+    /// </summary>
+    public static NameMatch CompareAtInk(AutomationFrame frame, int inkLeft, int inkTop, double em, string text)
+    {
+        if (GameFont.Draw(text) is not { } drawn || Ink(drawn) is not var (left, top))
+        {
+            return NameMatch.None;
+        }
+
+        var scale = em / GameFont.Em;
+        var field = new NameField(inkLeft - (left - drawn.LetterX[0]) * scale, inkTop - top * scale, em);
+        return Compare(frame, field, text, 0) with { EndsThere = true };
+    }
+
+    private static (int Left, int Top)? Ink(DrawnText drawn)
+    {
+        var (left, top) = (int.MaxValue, int.MaxValue);
+        for (var y = 0; y < drawn.Height; y++)
+        {
+            for (var x = 0; x < drawn.Width; x++)
+            {
+                if (drawn.Pixels[y * drawn.Width + x] < 128) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+            }
+        }
+
+        return left == int.MaxValue ? null : (left, top);
+    }
+
+    private static NameMatch Compare(AutomationFrame frame, NameField field, string name, int blankAfter)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(field);
@@ -49,7 +83,7 @@ public static class DrawnNameReader
         // Window of the frame that holds the name: from just before the pen to a little past its end.
         var left = (int)Math.Floor(field.PenX) - 4;
         var top = (int)Math.Floor(field.Top) - 3;
-        var width = (int)Math.Ceiling((drawn.LetterX[^1] - drawn.LetterX[0]) * scale) + 8 + BlankAfter;
+        var width = (int)Math.Ceiling((drawn.LetterX[^1] - drawn.LetterX[0]) * scale) + (blankAfter > 0 ? 8 : 5) + blankAfter;
         var height = (int)Math.Ceiling(drawn.Height * scale * 0.86) + 6;
         if (Brightness(frame, left, top, width, height, field.DarkestChannel) is not { } seen)
         {
@@ -64,7 +98,7 @@ public static class DrawnNameReader
             {
                 var (x, y) = (field.PenX + dx - left, field.Top + dy - top);
                 var picture = Shrink(drawn, integral, scale, x, y, width, height);
-                var score = Correlation(picture, seen, width, 0, width - BlankAfter, height, 0);
+                var score = Correlation(picture, seen, width, 0, width - blankAfter, height, 0);
                 if (score > best.Score) best = (score, x, y, picture);
             }
         }

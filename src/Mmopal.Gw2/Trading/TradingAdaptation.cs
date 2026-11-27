@@ -124,11 +124,11 @@ public sealed class BuyCompetitionTracker
 public sealed record SellRelist(Transaction Listing, long NewPriceCopper, string Reason);
 
 /// <summary>
-/// When to cancel and relist an undercut listing. Each relist pays a new 5% listing fee (the old one is lost), so this
-/// is deliberately narrow: listed 12 h+, undercut, an item that actually trades (on the scanner's shopping list; any
-/// item after 24 h),
-/// relisted at most once a day, and only when the new price still covers what was paid plus the lost listing fee
-/// after the new 5% + 10% fees. Anything else waits: a listing that sits costs nothing more.
+/// When to cancel and relist an undercut listing. Each relist pays a new 5% listing fee, so this is narrow: the listing is
+/// 12 h+ old and undercut, the item still trades (on the scanner's shopping list; any item after 24 h), and the new price
+/// still covers what was paid (plus the old listing's lost fee while it is under two days old). Each listing is judged on
+/// its own, since the cancel clicks the row that shows its price: an item bought again and again always has a fresh
+/// listing, which kept its 62 h old one up (Jade Gate Statuette, 27 Nov).
 /// </summary>
 public static class SellRelistPolicy
 {
@@ -138,13 +138,16 @@ public static class SellRelistPolicy
     /// 5% an hour up to a day, 0.5% after it. 40g sat that way for 30 h+, every one sellable at a profit.
     /// </summary>
     public static readonly TimeSpan StaleListingAge = TimeSpan.FromHours(24);
-    public static readonly TimeSpan MinTimeBetweenRelists = TimeSpan.FromHours(24);
+    /// <summary>
+    /// From here the old listing's fee no longer counts: it is spent whether or not the listing is cancelled. Counting it
+    /// kept 8 listings two to four days old up that still sold above cost (27 Nov).
+    /// </summary>
+    public static readonly TimeSpan SunkFeeAge = TimeSpan.FromHours(48);
 
     public static IReadOnlyList<SellRelist> Select(
         IReadOnlyList<Transaction> orders,
         IReadOnlyDictionary<string, long> paidByItem,
         IReadOnlySet<string> tradedItems,
-        IReadOnlyDictionary<string, DateTimeOffset> lastRelistedUtc,
         int undercutCopper,
         DateTimeOffset nowUtc,
         int maxPerPass)
@@ -156,35 +159,24 @@ public static class SellRelistPolicy
             return picks;
         }
 
-        var sellsByItem = orders
-            .Where(order => order.Type == TransactionType.Sell && !string.IsNullOrWhiteSpace(order.ItemName))
-            .GroupBy(order => order.ItemName.Trim(), StringComparer.OrdinalIgnoreCase);
-        foreach (var group in sellsByItem.OrderBy(g => g.Min(order => order.Created)))
+        foreach (var listing in orders
+                     .Where(order => order.Type == TransactionType.Sell && !string.IsNullOrWhiteSpace(order.ItemName))
+                     .OrderBy(order => order.Created))
         {
             if (picks.Count >= maxPerPass) break;
-            var name = group.Key;
-            // The cancel flow clicks the first Cancel button its search lists. With several of our listings that is often
-            // not the stale one: on 22 Nov Pyre Dye (3 listings) was "cancelled" twice while its 41 h old 1g 39s 88c
-            // listing stayed up. So every listing must qualify (undercut, old enough), and the fee counted as lost is
-            // the most expensive one's. Skipping these items altogether left 51 of 79 listings never relisted.
-            var dearest = group.OrderByDescending(order => order.PriceCopper).First();
-            var age = nowUtc - group.Max(order => order.Created);
-            if (group.Any(order => order.MinimumSellPriceCopper is not { } ask || ask <= 0 || ask >= order.PriceCopper))
-            {
-                continue; // one of our listings is at (or is) the lowest ask, or the market is unknown: it can still sell
-            }
-
-            if (age < MinListingAge ||
+            var name = listing.ItemName.Trim();
+            var age = nowUtc - listing.Created;
+            if (listing.MinimumSellPriceCopper is not { } lowestAsk || lowestAsk <= 0 || lowestAsk >= listing.PriceCopper ||
+                age < MinListingAge ||
                 (age < StaleListingAge && !tradedItems.Contains(name)) ||
                 !paidByItem.TryGetValue(name, out var paid) || paid <= 0 ||
-                (lastRelistedUtc.TryGetValue(name, out var last) && nowUtc - last < MinTimeBetweenRelists))
+                picks.Any(pick => pick.Listing.ItemName.Trim().Equals(name, StringComparison.OrdinalIgnoreCase) && pick.Listing.PriceCopper == listing.PriceCopper))
             {
-                continue;
+                continue; // at (or is) the lowest ask, young, unknown, or the same listing twice
             }
 
-            var lowestAsk = dearest.MinimumSellPriceCopper!.Value;
             var newPrice = Math.Max(1, lowestAsk - Math.Max(0, undercutCopper));
-            var lostFee = TradingIncomeAnalytics.CalculateListingFee(dearest.PriceCopper);
+            var lostFee = age < SunkFeeAge ? TradingIncomeAnalytics.CalculateListingFee(listing.PriceCopper) : 0;
             var newNet = TradingIncomeAnalytics.CalculateNetSaleUnitPrice(newPrice);
             if (newNet < paid + lostFee)
             {
@@ -192,10 +184,10 @@ public static class SellRelistPolicy
             }
 
             picks.Add(new SellRelist(
-                dearest,
+                listing,
                 newPrice,
-                $"listed {(int)age.TotalHours} h at {Coins(dearest.PriceCopper)}, undercut to {Coins(lowestAsk)}; " +
-                $"relisting at {Coins(newPrice)} still nets {Coins(newNet)} vs {Coins(paid)} paid + {Coins(lostFee)} lost fee"));
+                $"listed {(int)age.TotalHours} h at {Coins(listing.PriceCopper)}, undercut to {Coins(lowestAsk)}; " +
+                $"relisting at {Coins(newPrice)} still nets {Coins(newNet)} vs {Coins(paid)} paid" + (lostFee > 0 ? $" + {Coins(lostFee)} lost fee" : string.Empty)));
         }
 
         return picks;
