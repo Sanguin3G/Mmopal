@@ -157,7 +157,11 @@ public partial class MainWindow : Window
 
         IsLoadingUi = true;
         _cycleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
-        _cycleTimer.Tick += (_, _) => UpdateMarketCycleDisplay();
+        _cycleTimer.Tick += (_, _) =>
+        {
+            UpdateMarketCycleDisplay();
+            SessionPage.StartIfScheduled(DateTime.Now);
+        };
         _sessionClockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _sessionClockTimer.Tick += (_, _) => SessionPage.UpdateSessionClockDisplay();
 
@@ -1010,23 +1014,20 @@ public partial class MainWindow : Window
         IsLoadingUi = wasLoading;
     }
 
-    /// <summary>Shows the active account's Gold for you row.</summary>
+    /// <summary>Shows the gold the active account keeps out of trading.</summary>
     private void SelectActiveAccountGoldGoal()
     {
-        var entry = ApiKeyVault.ActiveEntry;
         var wasLoading = IsLoadingUi;
         IsLoadingUi = true;
-        SessionPage.KeepGoldBox.Text = entry?.KeepGold is { } keep ? keep.ToString(CultureInfo.CurrentCulture) : string.Empty;
-        SessionPage.FreeGoldBox.Text = entry?.FreeGold is { } free ? free.ToString(CultureInfo.CurrentCulture) : string.Empty;
-        SessionPage.FreeGoldByBox.Text = entry?.FreeGoldBy ?? string.Empty;
+        SettingsPage.KeepGoldBox.Text = ApiKeyVault.ActiveEntry?.KeepGold is { } keep ? keep.ToString(CultureInfo.CurrentCulture) : string.Empty;
         IsLoadingUi = wasLoading;
     }
 
-    internal void RememberGoldGoalForActiveAccount(decimal? keep, decimal? free, string? by)
+    internal void RememberKeepGoldForActiveAccount(decimal? keep)
     {
-        if (ApiKeyVault.ActiveEntry is { } active && (active.KeepGold != keep || active.FreeGold != free || active.FreeGoldBy != by))
+        if (ApiKeyVault.ActiveEntry is { } active && active.KeepGold != keep)
         {
-            UpdateVaultEntry(active.Id, entry => entry with { KeepGold = keep, FreeGold = free, FreeGoldBy = by });
+            UpdateVaultEntry(active.Id, entry => entry with { KeepGold = keep });
         }
     }
 

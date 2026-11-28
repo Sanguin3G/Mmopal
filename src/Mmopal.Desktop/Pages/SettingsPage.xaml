@@ -408,6 +408,17 @@
                                 <Grid Margin="0,0,0,10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="3*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,10,0">
+                                        <TextBlock Text="KEEP FOR ME (GOLD)" Style="{StaticResource FieldLabel}" />
+                                        <TextBox x:Name="KeepGoldBox" TextChanged="KeepGold_TextChanged" ToolTip="Gold Mmopal never trades with, for this account. It stays in the wallet on top of the gold floor, and Auto-Tune sizes everything from the rest. Empty: none." />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="Kept on top of the gold floor and left out of Auto-Tune, for this account only." Style="{StaticResource HintText}" VerticalAlignment="Bottom" Margin="0,0,0,6" TextWrapping="Wrap" />
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />

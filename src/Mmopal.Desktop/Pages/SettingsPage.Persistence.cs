@@ -137,6 +137,8 @@ public partial class SettingsPage
         CaptureFramesCheckBox.IsChecked = settings.CaptureFrames;
         Host.ScannerPage.ScanVelocityCheckBox.IsChecked = settings.EnableDataWarsVelocity;
         Host.SessionPage.AutoSellInventoryCheckBox.IsChecked = settings.AutoListBoughtFlipItems;
+        Host.SessionPage.ScheduledStartCheckBox.IsChecked = settings.ScheduledStart is not null;
+        if (settings.ScheduledStart is { } scheduled) Host.SessionPage.ScheduledStartBox.Text = scheduled;
         Host.ScannerPage.AutoRescanHoursBox.Text = settings.AutoRescanHours.ToString(CultureInfo.CurrentCulture);
         Host.ScannerPage.ApplyScannerUiState(settings.Scanner);
         AutomateOnLaunchCheckBox.IsChecked = settings.AutomateOnLaunch;
@@ -268,7 +270,8 @@ public partial class SettingsPage
             AutomateOnLaunch: AutomateOnLaunchCheckBox.IsChecked == true,
             LastAutoTunedPreset: _lastAutoTunedPreset,
             AutoTuneEachSession: AutoTuneEachSessionCheckBox.IsChecked == true,
-            AutoTuneKeeps: _autoTuneKeeps.Count == 0 ? null : _autoTuneKeeps.OrderBy(key => key, StringComparer.Ordinal).ToArray());
+            AutoTuneKeeps: _autoTuneKeeps.Count == 0 ? null : _autoTuneKeeps.OrderBy(key => key, StringComparer.Ordinal).ToArray(),
+            ScheduledStart: Host.SessionPage.ScheduledStartTime?.ToString("HH:mm", CultureInfo.InvariantCulture));
         Host.ReportsPage.UpdateReportRulesSummary(settings.ToSessionReportPolicy());
         return true;
     }

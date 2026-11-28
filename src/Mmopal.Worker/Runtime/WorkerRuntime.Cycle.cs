@@ -185,7 +185,7 @@ public sealed partial class WorkerRuntime
         var canceledOutbidBuys = 0;
         if (driver is not null && session.Request.EnableOutbidBuyRefresh && result.Market is not null)
         {
-            canceledOutbidBuys = await RefreshOutbidBuysAsync(session, driver, result.Market.Transactions, result.Market.Balance?.Copper, cancellationToken);
+            canceledOutbidBuys = await RefreshOutbidBuysAsync(session, driver, result.Market.Transactions, cancellationToken);
             MarkStep(session, "cancel");
         }
 
@@ -725,29 +725,19 @@ public sealed partial class WorkerRuntime
         TradingSession session,
         Gw2TradingPostUiDriver driver,
         IReadOnlyList<Transaction> orders,
-        long? walletCopper,
         CancellationToken cancellationToken)
     {
         // Only Mmopal's own buy orders are cancelled; orders placed by hand stay, outbid or old.
         var placed = (await _store.GetPlacedBuyOrdersAsync(_utcNow().AddDays(-60), cancellationToken).ConfigureAwait(false))
             .Select(order => new PlacedBuyOrder(order.ItemName, order.PlacedAt, order.UnitCopper, order.Quantity))
             .ToArray();
-        var freeing = walletCopper is { } wallet
-            ? session.Goal.OrdersToCancel(orders, wallet, order => OwnedStock.IsMmopalsOrder(order, placed)).ToHashSet()
-            : [];
-        ReportGoldGoal(session, orders, walletCopper, placed);
         // The driver still sees the hand-placed orders: a search that lists one of them next to ours is not safe.
         var canceledOutbidBuys = await driver.CancelOutbidBuyOrdersAsync(
             orders,
-            freeing.Count > 0 ? Math.Max(session.PerPass, Math.Min(freeing.Count, 5)) : session.PerPass,
+            session.PerPass,
             order => OwnedStock.IsMmopalsOrder(order, placed),
             cancellationToken,
-            session.GoldCapReached,
-            freeing.Count > 0 ? freeing.Contains : null);
-        foreach (var item in driver.LastFreedItems)
-        {
-            RecordEvent(session, "goal", "freed", item, activity: $"Cancelled the buy order for {item} to free gold for you");
-        }
+            session.GoldCapReached);
         _buyCompetition.PauseSlowItems(driver.LastCanceledStaleItems, _utcNow());
         foreach (var paused in _buyCompetition.RecordOutbidCancels(driver.LastCanceledOutbidItems, _utcNow()))
         {
@@ -768,41 +758,6 @@ public sealed partial class WorkerRuntime
         RecordUnconfirmedCancels(session, driver);
 
         return canceledOutbidBuys;
-    }
-
-    /// <summary>Says where the free-gold goal stands when it changes, and at least every 15 minutes while it is open.</summary>
-    private void ReportGoldGoal(TradingSession session, IReadOnlyList<Transaction> orders, long? walletCopper, IReadOnlyList<PlacedBuyOrder> placed)
-    {
-        if (session.Goal.FreeCopper <= 0 || walletCopper is not { } wallet)
-        {
-            return;
-        }
-
-        static long Value(Transaction order) => Math.Max(0, order.PriceCopper) * Math.Max(1, order.Quantity);
-        var mine = orders.Where(order => order.Type == TransactionType.Buy && OwnedStock.IsMmopalsOrder(order, placed)).Sum(Value);
-        var listed = (long)(orders.Where(order => order.Type == TransactionType.Sell).Sum(Value) * 0.85m);
-        var now = _utcNow();
-        if (session.Goal.Describe(wallet, mine, listed, now) is not { } note)
-        {
-            return;
-        }
-
-        var reached = wallet >= session.Goal.FreeCopper;
-        if (note != session.LastGoalNote && (reached || now - session.LastGoalLogUtc >= TimeSpan.FromMinutes(15)))
-        {
-            session.LastGoalNote = note;
-            session.LastGoalLogUtc = now;
-            _logger.LogInformation("{Note}", note);
-            RecordEvent(session, "goal", reached ? "reached" : "freeing", detail: note, activity: note);
-        }
-
-        if (!session.GoalTimeLogged && session.Goal.FreeByUtc is { } by && now >= by)
-        {
-            session.GoalTimeLogged = true;
-            var at = $"It is {by.ToLocalTime():HH:mm}: {MarketScanItem.FormatCoins(wallet)} of the {MarketScanItem.FormatCoins(session.Goal.FreeCopper)} you asked for is free.";
-            _logger.LogInformation("{Note}", at);
-            RecordEvent(session, "goal", reached ? "on-time" : "late", detail: at, activity: at);
-        }
     }
 
     private void RecordUnconfirmedCancels(TradingSession session, Gw2TradingPostUiDriver driver)

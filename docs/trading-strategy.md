@@ -78,14 +78,10 @@ Runs at launch and before each session, never during one (Settings → Trading &
 
 Min ROI stays within 8–25%, Min trades/day within 5–50. Values you set by hand are kept until you click **Auto-Tune**.
 
-## Gold for you
+## Gold kept for you
 
-Session page, remembered per account:
-
-- **Keep X g:** never touched. It stays in the wallet on top of the reserve, and Auto-Tune sizes everything from the rest.
-- **Free X g by HH:mm:** no buy order takes the wallet below X; Mmopal's own buy orders are cancelled (free) as far as
-  needed, outbid ones first, then the oldest, also in the reset window; listings sell as usual, never below what was paid.
-  The log says where it stands (`Gold for you: …`) and at the time, how much is free. Empty time: as soon as it can.
+**Keep for me** (Settings → Trading & Portfolio, per account): gold Mmopal never trades with. It stays in the wallet on top
+of the gold floor, and Auto-Tune sizes everything from the rest.
 
 ## Lists
 

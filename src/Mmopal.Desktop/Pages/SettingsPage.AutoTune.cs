@@ -109,6 +109,25 @@ public partial class SettingsPage
 
     private string? _lastAutoTuneLogged;
 
+    private void KeepGold_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (Loading)
+        {
+            return;
+        }
+
+        var text = KeepGoldBox.Text.Trim();
+        decimal? keep = text.Length == 0
+            ? null
+            : decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out var gold) && gold >= 0 ? gold : (decimal?)(-1);
+        if (keep is -1)
+        {
+            return; // not a number (yet): nothing changes
+        }
+
+        Host.RememberKeepGoldForActiveAccount(keep);
+    }
+
     /// <summary>Re-tune right before a session from the last synced wallet and orders (no network call).</summary>
     internal void TuneBeforeSession()
     {

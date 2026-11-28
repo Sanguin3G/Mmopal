@@ -43,7 +43,9 @@ public sealed record OperatorSettings(
     // Smart Auto-Tune at every launch and every Start session (never mid-session). For operators who do not tune by hand.
     bool AutoTuneEachSession = true,
     // Settings the operator typed by hand ("GoldFloor", "MaxBuy", …): Auto-Tune leaves these alone.
-    IReadOnlyList<string>? AutoTuneKeeps = null)
+    IReadOnlyList<string>? AutoTuneKeeps = null,
+    // Start the session by itself at this time of day ("HH:mm"); null = off.
+    string? ScheduledStart = null)
 {
     public SessionReportPolicySettings ToSessionReportPolicy() => new(
         SaveSessionReports: SaveSessionReports,

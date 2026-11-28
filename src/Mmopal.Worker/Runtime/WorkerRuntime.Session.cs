@@ -34,11 +34,8 @@ public sealed partial class WorkerRuntime
         public required TradingPostMarketReader? ObservationReader { get; init; }
         public required FileTradingObservationRecorder? Recorder { get; init; }
         public required long MinBalanceCopper { get; init; }
-        /// <summary>Gold the player asked to keep or have free.</summary>
+        /// <summary>Gold the player keeps out of trading.</summary>
         public GoldGoal Goal { get; init; } = new();
-        public string? LastGoalNote { get; set; }
-        public DateTimeOffset LastGoalLogUtc { get; set; } = DateTimeOffset.MinValue;
-        public bool GoalTimeLogged { get; set; }
         /// <summary>What the account's trades say about each item (refreshed with the proven items).</summary>
         public ItemMemory Memory { get; set; } = ItemMemory.Empty;
         public required int MaxRecoveryRetries { get; init; }
@@ -265,13 +262,12 @@ public sealed partial class WorkerRuntime
 
         var apiTimeoutSeconds = Math.Max(15, effectiveClientSettings.ApiTimeoutSeconds);
         var minBalanceCopper = Math.Max(0L, request.MinimumBalanceCopper ?? 0L);
-        var goal = new GoldGoal(Math.Max(0, request.KeepGoldCopper), Math.Max(0, request.FreeGoldCopper), request.FreeGoldByUtc);
+        var goal = new GoldGoal(Math.Max(0, request.KeepGoldCopper));
         if (goal.IsSet)
         {
             _logger.LogInformation(
-                "Gold for you: {Keep} kept{Free}; no buy order takes the wallet below {Floor}.",
+                "Kept for you: {Keep}; no buy order takes the wallet below {Floor}.",
                 MarketScanItem.FormatCoins(goal.KeepCopper),
-                goal.FreeCopper > 0 ? $", {MarketScanItem.FormatCoins(goal.FreeCopper)} free" + (goal.FreeByUtc is { } by ? $" by {by.ToLocalTime():HH:mm}" : string.Empty) : string.Empty,
                 MarketScanItem.FormatCoins(goal.Floor(minBalanceCopper)));
         }
 

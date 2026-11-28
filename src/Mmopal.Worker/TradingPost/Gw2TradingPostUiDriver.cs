@@ -82,9 +82,6 @@ public sealed partial class Gw2TradingPostUiDriver
 
     private readonly List<string> _unconfirmedCancels = [];
 
-    /// <summary>Items whose buy orders the last Outbid Refresh pass cancelled to free gold for the player.</summary>
-    public IReadOnlyList<string> LastFreedItems { get; private set; } = Array.Empty<string>();
-
     /// <summary>Items whose old, unfilled top-bid buy orders the last Outbid Refresh pass cancelled.</summary>
     public IReadOnlyList<string> LastCanceledStaleItems { get; private set; } = Array.Empty<string>();
 

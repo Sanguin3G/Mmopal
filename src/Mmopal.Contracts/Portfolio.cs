@@ -61,10 +61,8 @@ public sealed record Gw2ApiKeyEntry(
     DateTimeOffset? LastVerifiedAt,
     string LaunchPlatform = "",
     int? ParkedCharacters = null,
-    // Gold the player wants for playing, per account: kept in the wallet, and freed by a time of day ("HH:mm").
-    decimal? KeepGold = null,
-    decimal? FreeGold = null,
-    string? FreeGoldBy = null)
+    // Gold the player keeps out of trading, per account.
+    decimal? KeepGold = null)
 {
     public string MaskedKey => ApiKey.Length > 18 ? ApiKey[..18] + "..." : ApiKey;
 

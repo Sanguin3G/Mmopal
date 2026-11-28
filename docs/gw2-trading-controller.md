@@ -63,7 +63,7 @@ stays: yours, a young one, or one at the top bid. A blurred first row counts onl
 to any other order of yours. A row whose name cannot be read is cancelled only when it is the one row shown, at a price no other order of yours has. An item it cannot find on screen twice is left for an hour, then 2, 4, 8 and 16. An order for
 another item, placed at that second and price, is Mmopal's mistake and is cancelled too.
 
-**Relist** does the same for listings, clicking the Cancel of the row whose price is the listing's (read by drawing the numbers between the coin icons; `Relist skipped for X: no row shows its listing at …` otherwise), not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
+**Relist** does the same for listings, clicking the Cancel of the row whose price is the listing's (read by drawing the numbers between the coin icons; `Relist skipped for X: …` says why otherwise, and that listing waits 2 h), not in the last 10 minutes of a timed session, and never for an item you listed copies of yourself.
 
 ## Popups over the item window
 
@@ -130,7 +130,7 @@ Behind it, `mmopal.db` keeps every live session for 180 days:
 | Table | One row per | Holds |
 | --- | --- | --- |
 | `cycle_metrics` | cycle | JSON: character, market phase, seconds per step, accepted and skip reasons, wallet, gold in orders (and over 12 h old), outbid and undercut counts, unsold units |
-| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search, reading, goal | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
+| `session_events` | buy, sell, cancel, relist, pickup, swap, pace change, frozen, search, reading | outcome code (`placed`, `listed`, `held`, `not-found`, `title-unreadable`, `unconfirmed`, …), item, character, price |
 
 ```sql
 -- what keeps failing, over all runs

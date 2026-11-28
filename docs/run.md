@@ -29,7 +29,7 @@ In Mmopal:
    **Parked chars** to how many characters you rotate.
 2. **Session → Launch & snap GW2** (the monitor icon) puts the game at 1024×768 in the top-left corner.
 3. Try **Observe only** first: the Game card should say **TP open**.
-4. Switch to **Live (Armed trading)**. Screen observe and **Arm live input** are set for you. Press **Start session**.
+4. Switch to **Live (Armed trading)**. Screen observe and **Arm live input** are set for you. Press **Start session**. To have it start by itself, tick **Start at** and set a time (23:00 by default); Mmopal must be open, in Live with Arm live input on.
 
 | Key | Button | Effect |
 | --- | --- | --- |

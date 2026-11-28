@@ -28,16 +28,14 @@ public sealed partial class Gw2TradingPostUiDriver
         out int keptYoungCount,
         Func<Transaction, bool>? mayCancel = null,
         Func<string, bool>? givenUp = null,
-        TimeSpan? minAge = null,
-        Func<Transaction, bool>? mustGo = null)
+        TimeSpan? minAge = null)
     {
         var buys = transactions
             .Where(tx => tx.Type == TransactionType.Buy && !string.IsNullOrWhiteSpace(tx.ItemName))
             .ToArray();
-        bool MustGo(Transaction tx) => mustGo?.Invoke(tx) == true;
-        bool IsDue(Transaction tx) => MustGo(tx) ||
+        bool IsDue(Transaction tx) =>
             (tx.MinimumBuyPriceCopper is { } topBid && topBid > tx.PriceCopper) || nowUtc - tx.Created >= StaleBuyOrderAge;
-        bool IsOldEnough(Transaction tx) => MustGo(tx) || nowUtc - tx.Created >= (minAge ?? MinOrderAgeBeforeOutbidCancel);
+        bool IsOldEnough(Transaction tx) => nowUtc - tx.Created >= (minAge ?? MinOrderAgeBeforeOutbidCancel);
         bool IsOurs(Transaction tx) => mayCancel?.Invoke(tx) ?? true;
         var skipped = new List<string>();
         var safe = new List<Transaction>();
@@ -109,8 +107,7 @@ public sealed partial class Gw2TradingPostUiDriver
         int maxCancelsPerPass,
         Func<Transaction, bool>? mayCancel = null,
         CancellationToken cancellationToken = default,
-        bool goldCapReached = false,
-        Func<Transaction, bool>? freeGold = null)
+        bool goldCapReached = false)
     {
         // Reset first: a pass that returns early (reset window) must not report the previous pass's cancels again.
         LastCanceledOutbidItems = Array.Empty<string>();
@@ -130,7 +127,7 @@ public sealed partial class Gw2TradingPostUiDriver
             // The reset window is when sellers dump into buy orders; keep every order standing to catch those fills.
             // Unless the gold cap is reached: then orders outbid for an hour are gold that nothing can be bought with
             // (39 of 60 cycles bought nothing in the window of 24 Nov, with 31-53 of 85 orders outbid).
-            if (!goldCapReached && !transactions.Any(order => freeGold?.Invoke(order) == true))
+            if (!goldCapReached)
             {
                 _logger.LogDebug("Outbid Refresh paused during the daily reset window.");
                 return 0;
@@ -139,7 +136,7 @@ public sealed partial class Gw2TradingPostUiDriver
             minAge = ResetWindowCancelAge;
         }
 
-        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp, minAge, freeGold);
+        var outbidBuys = SelectSafeOutbidCancels(transactions, maxCancelsPerPass, nowUtc, out var ambiguousNames, out var keptYoung, mayCancel, CancelSearchGivenUp, minAge);
         if (keptYoung > 0)
         {
             _logger.LogInformation(
@@ -178,7 +175,6 @@ public sealed partial class Gw2TradingPostUiDriver
         _cancelListNames = OwnNames(transactions, TransactionType.Buy);
         var canceledNames = new List<string>();
         var staleNames = new List<string>();
-        var freedNames = new List<string>();
         foreach (var order in outbidBuys)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -207,16 +203,7 @@ public sealed partial class Gw2TradingPostUiDriver
             {
                 await ClickCenterAndSettleAsync(confirmBtn, cancellationToken).ConfigureAwait(false);
                 NoteAnswer();
-                if (freeGold?.Invoke(order) == true)
-                {
-                    freedNames.Add(order.ItemName);
-                    _logger.LogInformation(
-                        "Freed {Gold} for you: cancelled the buy order for {Qty}x {Item}.",
-                        MarketScanItem.FormatCoins(Math.Max(0, order.PriceCopper) * Math.Max(1, order.Quantity)),
-                        order.Quantity,
-                        order.ItemName);
-                }
-                else if (order.MinimumBuyPriceCopper is { } top && top > order.PriceCopper)
+                if (order.MinimumBuyPriceCopper is { } top && top > order.PriceCopper)
                 {
                     canceledNames.Add(order.ItemName);
                     _logger.LogInformation(
@@ -242,8 +229,7 @@ public sealed partial class Gw2TradingPostUiDriver
         _cancelRowPrice = null;
         LastCanceledOutbidItems = canceledNames.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         LastCanceledStaleItems = staleNames;
-        LastFreedItems = freedNames;
-        return canceledNames.Count + staleNames.Count + freedNames.Count;
+        return canceledNames.Count + staleNames.Count;
     }
 
     /// <summary>
@@ -257,17 +243,40 @@ public sealed partial class Gw2TradingPostUiDriver
         CancellationToken cancellationToken = default)
     {
         var canceledNames = new List<string>();
-        if (relists.Count == 0 || !await ReadyTradingPostAsync("relist", cancellationToken).ConfigureAwait(false))
+        if (relists.Count == 0)
         {
+            return canceledNames;
+        }
+
+        // Whatever happens below, these are not tried again for a while: on 28 Nov the same relists were attempted in 88
+        // cycles, 27 s each, without a word in the log.
+        foreach (var relist in relists)
+        {
+            _relistTriedAtUtc[RelistKey(relist.Listing)] = _utcNow();
+        }
+
+        if (!await ReadyTradingPostAsync("relist", cancellationToken).ConfigureAwait(false))
+        {
+            _logger.LogInformation("Relist skipped: the Trading Post is not ready.");
             return canceledNames;
         }
 
         if (!await OpenCurrentTransactionsAsync(cancellationToken).ConfigureAwait(false))
         {
+            _logger.LogInformation("Relist skipped: My Transactions did not open.");
             return canceledNames;
         }
 
         var sellingBtn = await WaitForTemplateAsync("transactions_selling.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        if (sellingBtn is null &&
+            await TryFindOnceAsync("transactions_buying.png", CaptureRegion.FullScreen1024x768, 0.75m, cancellationToken).ConfigureAwait(false) is { } buyingBtn)
+        {
+            // The Selling button looks different while selected: still on Selling from the last relist, it was "not found"
+            // 16 times on 28 Nov. Going to Buying and back shows it again.
+            await ClickCenterAndSettleAsync(buyingBtn, cancellationToken).ConfigureAwait(false);
+            sellingBtn = await WaitForTemplateAsync("transactions_selling.png", CaptureRegion.FullScreen1024x768, 0.75m, _uiWaitMs, cancellationToken).ConfigureAwait(false);
+        }
+
         if (sellingBtn is null)
         {
             _logger.LogInformation("Relist skipped: the Selling list of Current transactions was not found.");
@@ -286,6 +295,7 @@ public sealed partial class Gw2TradingPostUiDriver
             _cancelRowPrice = UniquePrice(relist.Listing, orders);
             if (!await SearchItemAsync(relist.Listing.ItemName, cancellationToken, requireListedName: true).ConfigureAwait(false))
             {
+                _logger.LogInformation("Relist skipped for {Item}: its search in My Transactions was not confirmed.", relist.Listing.ItemName);
                 continue;
             }
 
@@ -304,6 +314,7 @@ public sealed partial class Gw2TradingPostUiDriver
             var confirmBtn = await FindTransactionConfirmButtonAsync(cancellationToken).ConfigureAwait(false);
             if (confirmBtn is null || IsPaused)
             {
+                _logger.LogInformation("Relist skipped for {Item}: the cancel was not confirmed.", relist.Listing.ItemName);
                 continue;
             }
 
@@ -321,6 +332,15 @@ public sealed partial class Gw2TradingPostUiDriver
     /// <summary>The order's unit price when no other order in its list has the same one.</summary>
     internal static long? UniquePrice(Transaction order, IEnumerable<Transaction> orders) =>
         orders.Count(other => other.Type == order.Type && other.PriceCopper == order.PriceCopper) == 1 ? order.PriceCopper : null;
+
+    private static readonly TimeSpan RelistRetryAfter = TimeSpan.FromHours(2);
+    private readonly Dictionary<string, DateTimeOffset> _relistTriedAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string RelistKey(Transaction listing) => $"{listing.ItemName.Trim()}|{listing.PriceCopper}|{listing.Created:O}";
+
+    /// <summary>This listing's relist was attempted in the last two hours (a cancelled one is gone anyway).</summary>
+    public bool RelistTriedRecently(Transaction listing) =>
+        _relistTriedAtUtc.TryGetValue(RelistKey(listing), out var at) && _utcNow() - at < RelistRetryAfter;
 
     private static string[] OwnNames(IEnumerable<Transaction> orders, TransactionType type) =>
         orders

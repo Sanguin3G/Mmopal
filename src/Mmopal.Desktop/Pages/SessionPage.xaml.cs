@@ -116,6 +116,44 @@ public partial class SessionPage : UserControl
         }
     }
 
+    private DateOnly? _scheduledStartDoneOn;
+
+    private void ScheduledStart_Changed(object sender, RoutedEventArgs e)
+    {
+        if (Loading) return;
+        Host.SettingsPage.SaveAllSettingsSilently();
+    }
+
+    /// <summary>The scheduled start time, or null when it is off or not a time.</summary>
+    internal TimeOnly? ScheduledStartTime =>
+        ScheduledStartCheckBox.IsChecked == true &&
+        TimeOnly.TryParse(ScheduledStartBox.Text.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var at)
+            ? at
+            : null;
+
+    /// <summary>
+    /// Called every minute: starts the session once a day, within 15 minutes after the scheduled time, when none runs. Live
+    /// mode still needs Arm live input ticked, as for a click on Start session.
+    /// </summary>
+    internal void StartIfScheduled(DateTime now)
+    {
+        if (ScheduledStartTime is not { } at || _scheduledStartDoneOn == DateOnly.FromDateTime(now) ||
+            Host.LastWorkerState is not (WorkerState.Idle or WorkerState.Stopped))
+        {
+            return;
+        }
+
+        var since = TimeOnly.FromDateTime(now) - at; // wraps past midnight
+        if (since > TimeSpan.FromMinutes(15))
+        {
+            return;
+        }
+
+        _scheduledStartDoneOn = DateOnly.FromDateTime(now);
+        AddLog($"Scheduled start ({at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}).");
+        Start_Click(this, new RoutedEventArgs());
+    }
+
     private void AutoSellInventory_Changed(object sender, RoutedEventArgs e)
     {
         if (Loading) return;

@@ -141,22 +141,11 @@
                         <Button x:Name="StopSessionButton" Content="Stop" Tag="&#xE71A;" Click="Stop_Click" IsEnabled="False" Margin="0,0,8,4" ToolTip="Finish the current step (an order being typed, a listing), then stop and save the session report." />
                         <Button x:Name="EmergencyStopButton" Content="Emergency stop" Tag="&#xE7BA;" Style="{StaticResource DangerButton}" Click="EmergencyStop_Click" IsEnabled="False" Margin="0,0,14,4" ToolTip="Stop instantly, even in the middle of an action. Use Stop for a normal end." />
                         <CheckBox x:Name="ArmLiveInputCheckBox" Content="Arm live input" IsChecked="False" Checked="ArmLiveInput_Changed" Unchecked="ArmLiveInput_Changed" VerticalAlignment="Center" Margin="0,0,14,4" ToolTip="Safety interlock: allows real mouse/keyboard input in Live mode." />
-                        <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought items" IsChecked="False" Checked="AutoSellInventory_Changed" Unchecked="AutoSellInventory_Changed" VerticalAlignment="Center" Margin="0,0,0,4" ToolTip="Lists only items Mmopal bought: items it placed buy orders for in the last 30 days and the current shopping list. Other bag items are never touched. Needs an API key with the characters and inventories permissions." />
+                        <CheckBox x:Name="AutoSellInventoryCheckBox" Content="Auto-list bought items" IsChecked="False" Checked="AutoSellInventory_Changed" Unchecked="AutoSellInventory_Changed" VerticalAlignment="Center" Margin="0,0,14,4" ToolTip="Lists only items Mmopal bought: items it placed buy orders for in the last 30 days and the current shopping list. Other bag items are never touched. Needs an API key with the characters and inventories permissions." />
+                        <CheckBox x:Name="ScheduledStartCheckBox" Content="Start at" IsChecked="False" Checked="ScheduledStart_Changed" Unchecked="ScheduledStart_Changed" VerticalAlignment="Center" Margin="0,0,6,4" ToolTip="Starts the session by itself at this time of day, with the settings shown here, when Mmopal is open and no session runs. The best hours are just after midnight: a session started at 03:36 missed them (28 Nov)." />
+                        <TextBox x:Name="ScheduledStartBox" Text="23:00" Width="52" VerticalAlignment="Center" Margin="0,0,0,4" TextChanged="ScheduledStart_Changed" ToolTip="Time of day, HH:mm." />
                     </WrapPanel>
                 </DockPanel>
-
-                <!-- Gold the player wants for playing: kept, and freed by a time. Remembered per account. -->
-                <WrapPanel x:Name="GoldForYouPanel" Orientation="Horizontal" Margin="0,6,0,0">
-                    <TextBlock Text="GOLD FOR YOU" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <TextBlock Text="Keep" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <TextBox x:Name="KeepGoldBox" Width="64" VerticalAlignment="Center" ToolTip="Gold Mmopal never touches: it stays in the wallet on top of the reserve, and Auto-Tune sizes everything from the rest." />
-                    <TextBlock Text="g" VerticalAlignment="Center" Margin="4,0,16,0" />
-                    <TextBlock Text="Free" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <TextBox x:Name="FreeGoldBox" Width="64" VerticalAlignment="Center" ToolTip="Gold you want in the wallet, for example to play or buy something. No buy order takes the wallet below it; Mmopal cancels its own buy orders (free) as far as needed, and listings sell as usual, never below what was paid." />
-                    <TextBlock Text="g by" VerticalAlignment="Center" Margin="4,0,6,0" />
-                    <TextBox x:Name="FreeGoldByBox" Width="56" VerticalAlignment="Center" ToolTip="Time of day (HH:mm), today or else tomorrow. Empty: as soon as it can." />
-                    <TextBlock x:Name="GoldForYouHint" Text="Remembered per account; empty = none." Style="{StaticResource HintText}" VerticalAlignment="Center" Margin="12,0,0,0" />
-                </WrapPanel>
             </StackPanel>
         </Border>
 

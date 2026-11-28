@@ -161,14 +161,6 @@ public partial class SessionPage
         if (!Host.SettingsPage.TryReadLimits(out var limits)) return;
         if (!Host.SettingsPage.TryReadClientSettings(out var clientSettings)) return;
         if (!Host.SettingsPage.TryReadOperatorSettings(out var opSettings)) return;
-        if (!TryReadGoldGoal(DateTimeOffset.Now, out var goldGoal, out var goldError))
-        {
-            StatusText.Text = goldError;
-            AddLog(goldError);
-            return;
-        }
-
-        Host.RememberGoldGoalForActiveAccount(ParseGold(KeepGoldBox.Text), ParseGold(FreeGoldBox.Text), NullIfBlank(FreeGoldByBox.Text));
 
         Host.SaveLimits(limits);
         Host.SaveClientSettings(clientSettings);
@@ -225,46 +217,8 @@ public partial class SessionPage
             ReportSettings: opSettings.ToSessionReportPolicy(),
             AutoRescanFilter: autoRescanFilter,
             AutoRescanIntervalMinutes: autoRescanFilter is null ? 0 : (int)Math.Round(Host.ScannerPage.ReadAutoRescanHours() * 60m),
-            KeepGoldCopper: goldGoal.KeepCopper,
-            FreeGoldCopper: goldGoal.FreeCopper,
-            FreeGoldByUtc: goldGoal.FreeByUtc), MainWindow.PayloadJson);
+            KeepGoldCopper: Host.KeptGoldCopper), MainWindow.PayloadJson);
         await Host.SendAsync(new WorkerCommand(WorkerCommandTypes.Start, Guid.NewGuid().ToString("N"), bot, mode, profile, payload));
-    }
-
-    /// <summary>Gold in a box ("120" or "120,5"); null when empty or not a number.</summary>
-    internal static decimal? ParseGold(string? text) =>
-        decimal.TryParse(text?.Trim(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var gold) && gold >= 0 ? gold : null;
-
-    /// <summary>The Gold for you row as a goal: the free-by time is the next time that clock time comes.</summary>
-    internal bool TryReadGoldGoal(DateTimeOffset now, out GoldGoal goal, out string error)
-    {
-        goal = new GoldGoal();
-        error = string.Empty;
-        foreach (var (box, label) in new[] { (KeepGoldBox, "Keep"), (FreeGoldBox, "Free") })
-        {
-            if (!string.IsNullOrWhiteSpace(box.Text) && ParseGold(box.Text) is null)
-            {
-                error = $"Gold for you: '{box.Text.Trim()}' in {label} is not an amount of gold.";
-                return false;
-            }
-        }
-
-        DateTimeOffset? by = null;
-        if (NullIfBlank(FreeGoldByBox.Text) is { } byText)
-        {
-            if (!TimeOnly.TryParse(byText, System.Globalization.CultureInfo.InvariantCulture, out var clock))
-            {
-                error = $"Gold for you: '{byText}' is not a time of day (HH:mm).";
-                return false;
-            }
-
-            var today = new DateTimeOffset(now.Date + clock.ToTimeSpan(), now.Offset);
-            by = (today > now ? today : today.AddDays(1)).ToUniversalTime();
-        }
-
-        static long Copper(decimal? gold) => gold is { } value ? (long)decimal.Round(value * 10_000m, 0, MidpointRounding.AwayFromZero) : 0;
-        goal = new GoldGoal(Copper(ParseGold(KeepGoldBox.Text)), Copper(ParseGold(FreeGoldBox.Text)), by);
-        return true;
     }
 
     private async void TryOfflineSample_Click(object sender, RoutedEventArgs e)

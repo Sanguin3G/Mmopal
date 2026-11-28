@@ -340,6 +340,7 @@ public sealed partial class WorkerRuntime
                 .Where(order => !session.SellQueue.WasJustListed(order.ItemName, now) && OwnedStock.ListingsAreMmopals(order.ItemName, held))
                 // Given-up items kept both slots of every pass: 16 relists in 10 h while 24 more listings qualified (24 Nov).
                 .Where(order => order.Type != TransactionType.Sell || !liveDriver.IsCancelSearchGivenUp(TransactionType.Sell, order.ItemName))
+                .Where(order => order.Type != TransactionType.Sell || !liveDriver.RelistTriedRecently(order))
                 .ToArray();
             var picks = SellRelistPolicy.Select(
                 relistable,
